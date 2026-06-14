@@ -207,11 +207,21 @@ const builtinModifiers: Record<string, ModifierFn> = {
   },
 };
 
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h} hour${h !== 1 ? "s" : ""}`);
+  if (m > 0 || h === 0) parts.push(`${m} minute${m !== 1 ? "s" : ""}`);
+  return parts.join(" ");
+}
+
 function formatValue(
   value: unknown,
   modifier?: string,
   modifierArg?: string,
   customModifiers?: Record<string, ModifierFn>,
+  attrType?: string,
 ): string {
   if (value == null) return "";
 
@@ -224,6 +234,7 @@ function formatValue(
     }
   }
 
+  if (attrType === "duration" && typeof value === "number") return formatDuration(value);
   if (typeof value === "number") return String(value);
   if (value instanceof Date) return value.toLocaleDateString();
   if (typeof value === "boolean") return value ? "yes" : "no";
@@ -270,7 +281,7 @@ function renderSegments(
             return null;
           }
         } else {
-          result += formatValue(getValue(item, seg.key, schemaMap), seg.modifier, seg.modifierArg, customModifiers);
+          result += formatValue(getValue(item, seg.key, schemaMap), seg.modifier, seg.modifierArg, customModifiers, schemaMap?.get(seg.key)?.type);
         }
         break;
       }
