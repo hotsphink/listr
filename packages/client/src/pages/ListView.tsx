@@ -12,6 +12,7 @@ import {
   updateList,
   deleteList,
 } from "../db/operations.js";
+import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
 
@@ -113,6 +114,10 @@ const ListView: Component = () => {
     return String(value);
   };
 
+  const initSortable = (el: HTMLElement, extraOptions?: Partial<import("sortablejs").default.Options>) => {
+    useSortable(el, () => items(), extraOptions);
+  };
+
   return (
     <div class="main">
       <Show when={list()} fallback={<div class="empty-state"><p>List not found.</p></div>}>
@@ -149,10 +154,11 @@ const ListView: Component = () => {
               <Switch>
                 <Match when={viewMode() === "list"}>
                   <div class="list-view-container">
-                    <ul class="list-view">
+                    <ul class="list-view" ref={(el) => initSortable(el)}>
                       <For each={items() ?? []}>
                         {(item) => (
                           <li class="list-view-item" onClick={() => setEditingItem(item)}>
+                            <span class="drag-handle" title="Drag to reorder">⠿</span>
                             {formatItem(item)}
                           </li>
                         )}
@@ -167,16 +173,18 @@ const ListView: Component = () => {
                     <table>
                       <thead>
                         <tr>
+                          <th style="width: 32px"></th>
                           <th>Title</th>
                           <For each={visibleSchema()}>
                             {(attr) => <th>{attr.label || attr.key}</th>}
                           </For>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody ref={(el) => initSortable(el)}>
                         <For each={items() ?? []}>
                           {(item) => (
                             <tr onClick={() => setEditingItem(item)}>
+                              <td class="drag-handle-cell"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
                               <td style="font-weight: 500">{formatItem(item)}</td>
                               <For each={visibleSchema()}>
                                 {(attr) => (
@@ -203,10 +211,11 @@ const ListView: Component = () => {
 
                 <Match when={viewMode() === "card"}>
                   <div class="card-container">
-                    <div class="card-grid">
+                    <div class="card-grid" ref={(el) => initSortable(el)}>
                       <For each={items() ?? []}>
                         {(item) => (
                           <div class="item-card" onClick={() => setEditingItem(item)}>
+                            <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
                             <div class="item-card-title">{formatItem(item)}</div>
                             <Show when={visibleSchema().length > 0}>
                               <div class="item-card-attrs">

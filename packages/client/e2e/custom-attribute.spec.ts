@@ -79,14 +79,14 @@ test.describe("custom attributes", () => {
     await expect(page.locator("tbody tr")).toHaveCount(1);
 
     const firstRow = page.locator("tbody tr").first();
-    await expect(firstRow.locator("td").first()).toContainText("Inception");
+    await expect(firstRow.locator("td").nth(1)).toContainText("Inception");
     await expect(firstRow.locator("td .stars")).toContainText("★★★★☆");
-    await expect(firstRow.locator("td").nth(2)).toContainText("sci-fi");
+    await expect(firstRow.locator("td").nth(3)).toContainText("sci-fi");
 
-    // Verify column headers
-    await expect(page.locator("thead th").nth(0)).toHaveText("Title");
-    await expect(page.locator("thead th").nth(1)).toHaveText("Rating");
-    await expect(page.locator("thead th").nth(2)).toHaveText("Genre");
+    // Verify column headers (nth(0) is the drag handle column)
+    await expect(page.locator("thead th").nth(1)).toHaveText("Title");
+    await expect(page.locator("thead th").nth(2)).toHaveText("Rating");
+    await expect(page.locator("thead th").nth(3)).toHaveText("Genre");
   });
 
   test("custom attribute appears in item edit modal", async ({ page }) => {
@@ -116,8 +116,8 @@ test.describe("custom attributes", () => {
 
     // Verify it shows in the table
     const row = page.locator("tbody tr").first();
-    await expect(row.locator("td").first()).toContainText("Blade Runner");
-    await expect(row.locator("td").nth(1)).toContainText("Ridley Scott");
+    await expect(row.locator("td").nth(1)).toContainText("Blade Runner");
+    await expect(row.locator("td").nth(2)).toContainText("Ridley Scott");
 
     // Click the row to open edit modal
     await row.click();
@@ -160,8 +160,8 @@ test.describe("custom attributes", () => {
     await page.locator(".modal .form-field").nth(1).locator("input").fill("1979");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
 
-    // The title column should show the formatted string
-    const titleCell = page.locator("tbody tr").first().locator("td").first();
+    // The title column should show the formatted string (td[0] is drag handle)
+    const titleCell = page.locator("tbody tr").first().locator("td").nth(1);
     await expect(titleCell).toContainText("Alien (1979)");
   });
 });

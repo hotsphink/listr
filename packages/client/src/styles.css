@@ -604,6 +604,53 @@ tbody tr {
   background: rgba(224, 85, 85, 0.1);
 }
 
+/* Drag and drop */
+.drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  user-select: none;
+  font-size: 14px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.drag-handle:hover {
+  color: var(--text-muted);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle-cell {
+  width: 32px;
+  padding: 8px 4px 8px 12px !important;
+}
+
+.card-drag-handle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.item-card {
+  position: relative;
+}
+
+.sortable-ghost {
+  opacity: 0.3;
+}
+
+.sortable-chosen {
+  cursor: grabbing;
+}
+
+.sortable-drag {
+  opacity: 0.9;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
 /* Stars */
 .stars {
   color: #f5c518;
