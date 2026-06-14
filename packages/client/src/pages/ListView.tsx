@@ -192,9 +192,6 @@ const ListView: Component = () => {
                     )}
                   </For>
                 </div>
-                <button class="btn-ghost" onClick={() => setShowEditList(true)}>
-                  Settings
-                </button>
               </div>
             </div>
 

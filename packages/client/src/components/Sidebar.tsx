@@ -8,7 +8,12 @@ import { createList, createCategory, updateList, deleteList, updateCategory, del
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import CategoryFormModal from "./CategoryFormModal.js";
 
-const Sidebar: Component = () => {
+interface Props {
+  open?: boolean;
+  onClose?: () => void;
+}
+
+const Sidebar: Component<Props> = (props) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -21,7 +26,7 @@ const Sidebar: Component = () => {
   const [editingCategory, setEditingCategory] = createSignal<Category | undefined>();
   const [showCreateCategory, setShowCreateCategory] = createSignal(false);
 
-  // Auto-expand the category containing the active list
+  // Auto-expand the category containing the active list; auto-close sidebar on mobile
   createEffect(() => {
     const path = location.pathname;
     const match = path.match(/^\/list\/(.+)/);
@@ -30,6 +35,7 @@ const Sidebar: Component = () => {
       const list = (lists() ?? []).find((l) => l.id === listId);
       if (list) setExpandedCategoryId(list.category_id);
     }
+    props.onClose?.();
   });
 
   const listsForCategory = (catId: string) =>
@@ -103,7 +109,7 @@ const Sidebar: Component = () => {
   };
 
   return (
-    <nav class="sidebar">
+    <nav class="sidebar" classList={{ open: props.open ?? false }}>
       <div
         class="sidebar-header"
         style="cursor: pointer"
