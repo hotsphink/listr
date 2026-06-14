@@ -1,5 +1,5 @@
-import { type Component, For, Show, createSignal, createMemo, Switch, Match } from "solid-js";
-import { useParams, useNavigate } from "@solidjs/router";
+import { type Component, For, Show, createSignal, createEffect, createMemo, Switch, Match } from "solid-js";
+import { useParams, useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import { renderFormatString } from "@listr/shared";
@@ -25,10 +25,18 @@ const VIEW_MODES: { mode: ViewMode; label: string }[] = [
 const ListView: Component = () => {
   const params = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [showAddItem, setShowAddItem] = createSignal(false);
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();
   const [showEditList, setShowEditList] = createSignal(false);
+
+  createEffect(() => {
+    if ((location.state as any)?.openSettings) {
+      setShowEditList(true);
+      navigate(location.pathname, { replace: true });
+    }
+  });
 
   const list = from(liveQuery(() => db.lists.get(params.id)));
   const items = from(
