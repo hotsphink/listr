@@ -230,3 +230,105 @@ describe("custom attribute in display", () => {
       .toBe("Tenet [no]");
   });
 });
+
+describe("ternary format syntax", () => {
+  function makeList(schema: AttributeDefinition[], formatString: string): List {
+    return {
+      id: "list-1",
+      category_id: null,
+      name: "Test",
+      icon: "",
+      position: 0,
+      format_string: formatString,
+      view_mode: "list",
+      schema,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+  }
+
+  const boolSchema: AttributeDefinition[] = [
+    { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
+  ];
+
+  it("renders true branch when value is truthy", () => {
+    const item = makeItem("Inception", { watched: true });
+    expect(renderFormatString("{title} - {watched:?Watched:Not yet watched}", item, boolSchema))
+      .toBe("Inception - Watched");
+  });
+
+  it("renders false branch when value is falsy", () => {
+    const item = makeItem("Inception", { watched: false });
+    expect(renderFormatString("{title} - {watched:?Watched:Not yet watched}", item, boolSchema))
+      .toBe("Inception - Not yet watched");
+  });
+
+  it("renders false branch for unset boolean", () => {
+    const item = makeItem("Inception", {});
+    expect(renderFormatString("{title} - {watched:?Watched:Not yet watched}", item, boolSchema))
+      .toBe("Inception - Not yet watched");
+  });
+
+  it("supports nested placeholders in branches", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
+      { key: "year", label: "Year", type: "number", required: false, position: 1 },
+    ];
+    const item = makeItem("Inception", { watched: true, year: 2010 });
+    expect(renderFormatString("{watched:?Watched in {year}:Unwatched}", item, schema))
+      .toBe("Watched in 2010");
+  });
+
+  it("supports nested placeholders in false branch", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
+      { key: "year", label: "Year", type: "number", required: false, position: 1 },
+    ];
+    const item = makeItem("Inception", { watched: false, year: 2010 });
+    expect(renderFormatString("{watched:?Seen it:Released {year}, not watched}", item, schema))
+      .toBe("Released 2010, not watched");
+  });
+
+  it("works with non-boolean truthy values", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
+    ];
+    const rated = makeItem("Inception", { rating: 5 });
+    expect(renderFormatString("{title} {rating:?({rating:stars}):unrated}", rated, schema))
+      .toBe("Inception (★★★★★)");
+
+    const unrated = makeItem("TBD", {});
+    expect(renderFormatString("{title} {rating:?({rating:stars}):unrated}", unrated, schema))
+      .toBe("TBD unrated");
+  });
+
+  it("handles empty true branch", () => {
+    const item = makeItem("Test", { watched: true });
+    expect(renderFormatString("{title}{watched:?:, not watched}", item, boolSchema))
+      .toBe("Test");
+  });
+
+  it("handles empty false branch", () => {
+    const item = makeItem("Test", { watched: false });
+    expect(renderFormatString("{title}{watched:? (seen):}", item, boolSchema))
+      .toBe("Test");
+
+    const seen = makeItem("Test", { watched: true });
+    expect(renderFormatString("{title}{watched:? (seen):}", seen, boolSchema))
+      .toBe("Test (seen)");
+  });
+
+  it("works inside conditional sections", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
+      { key: "year", label: "Year", type: "number", required: false, position: 1 },
+    ];
+    const item = makeItem("Inception", { watched: true, year: 2010 });
+    expect(renderFormatString("{title}{ ({year}) {watched:?Seen:Unseen}|}", item, schema))
+      .toBe("Inception (2010) Seen");
+
+    const noYear = makeItem("TBD", { watched: false });
+    expect(renderFormatString("{title}{ ({year}) {watched:?Seen:Unseen}|}", noYear, schema))
+      .toBe("TBD");
+  });
+});

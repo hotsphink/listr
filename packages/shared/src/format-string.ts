@@ -3,7 +3,8 @@ import type { AttributeDefinition, Item } from "./types.js";
 type Segment =
   | { kind: "literal"; text: string }
   | { kind: "placeholder"; key: string; modifier?: string; modifierArg?: string }
-  | { kind: "conditional"; body: Segment[]; fallback: Segment[] };
+  | { kind: "conditional"; body: Segment[]; fallback: Segment[] }
+  | { kind: "ternary"; key: string; trueBranch: Segment[]; falseBranch: Segment[] };
 
 export function parseFormatString(format: string): Segment[] {
   const segments: Segment[] = [];
@@ -78,8 +79,11 @@ export function parseFormatString(format: string): Segment[] {
     // Also check: a simple placeholder has only identifier chars and optional :modifier
     const toClose = format.substring(start, j);
     const isSimplePlaceholder = !hasPipe && /^[a-zA-Z_][a-zA-Z0-9_]*(:[a-zA-Z_]+(=[^}]*)?)?$/.test(toClose);
+    const isTernary = /^[a-zA-Z_][a-zA-Z0-9_]*:\?/.test(toClose);
 
-    if (isSimplePlaceholder) {
+    if (isTernary) {
+      return parseTernary();
+    } else if (isSimplePlaceholder) {
       return parsePlaceholder();
     } else {
       return parseConditional();
@@ -134,6 +138,29 @@ export function parseFormatString(format: string): Segment[] {
     }
 
     return { kind: "conditional", body, fallback };
+  }
+
+  function parseTernary(): Segment {
+    let key = "";
+    while (i < format.length && /[a-zA-Z0-9_]/.test(format[i])) {
+      key += format[i];
+      i++;
+    }
+    i += 2; // skip :?
+
+    const trueBranch = parseSegments(":}");
+    let falseBranch: Segment[] = [];
+
+    if (i < format.length && format[i] === ":") {
+      i++; // skip :
+      falseBranch = parseSegments("}");
+    }
+
+    if (i < format.length && format[i] === "}") {
+      i++; // skip }
+    }
+
+    return { kind: "ternary", key, trueBranch, falseBranch };
   }
 
   segments.push(...parseSegments(""));
@@ -257,6 +284,18 @@ function renderSegments(
           if (fallbackResult !== null) {
             result += fallbackResult;
           }
+        }
+        break;
+      }
+
+      case "ternary": {
+        const val = getValue(item, seg.key, schemaMap);
+        const branch = val ? seg.trueBranch : seg.falseBranch;
+        const branchResult = renderSegments(branch, item, customModifiers, strict, schemaMap);
+        if (branchResult !== null) {
+          result += branchResult;
+        } else if (strict) {
+          return null;
         }
         break;
       }
