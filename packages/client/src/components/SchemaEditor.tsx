@@ -1,4 +1,4 @@
-import { type Component, For, Index } from "solid-js";
+import { type Component, For, Index, Show, Switch, Match } from "solid-js";
 import type { AttributeDefinition, AttributeType } from "@listr/shared";
 
 const ATTRIBUTE_TYPES: { value: AttributeType; label: string }[] = [
@@ -52,18 +52,24 @@ const SchemaEditor: Component<Props> = (props) => {
           <div class="schema-entry">
             <input
               placeholder="Key"
+              title="Attribute key (used in format strings)"
               value={attr().key}
               onBlur={(e) => updateAt(i, { key: e.currentTarget.value })}
               style="max-width: 100px"
             />
             <input
               placeholder="Label"
+              title="Display label (shown in table headers and forms)"
               value={attr().label}
               onBlur={(e) => updateAt(i, { label: e.currentTarget.value })}
             />
             <select
+              title="Attribute type"
               value={attr().type}
-              onChange={(e) => updateAt(i, { type: e.currentTarget.value as AttributeType })}
+              onChange={(e) => {
+                const newType = e.currentTarget.value as AttributeType;
+                updateAt(i, { type: newType, default_value: undefined });
+              }}
               style="max-width: 110px"
             >
               <For each={ATTRIBUTE_TYPES}>
@@ -73,6 +79,7 @@ const SchemaEditor: Component<Props> = (props) => {
             {(attr().type === "enum" || attr().type === "tags") && (
               <input
                 placeholder="opt1, opt2, ..."
+                title="Options (comma-separated)"
                 value={(attr().options ?? []).join(", ")}
                 onBlur={(e) =>
                   updateAt(i, {
@@ -82,7 +89,13 @@ const SchemaEditor: Component<Props> = (props) => {
                 style="max-width: 160px"
               />
             )}
-            <button type="button" class="btn-icon" onClick={() => removeAt(i)} title="Remove">
+            <DefaultValueInput
+              type={attr().type}
+              value={attr().default_value}
+              options={attr().options}
+              onChange={(v) => updateAt(i, { default_value: v })}
+            />
+            <button type="button" class="btn-icon" onClick={() => removeAt(i)} title="Remove attribute">
               ×
             </button>
           </div>
@@ -92,6 +105,112 @@ const SchemaEditor: Component<Props> = (props) => {
         + Add attribute
       </button>
     </div>
+  );
+};
+
+interface DefaultValueInputProps {
+  type: AttributeType;
+  value: unknown;
+  options?: string[];
+  onChange: (value: unknown) => void;
+}
+
+const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
+  return (
+    <Switch fallback={
+      <input
+        placeholder="empty"
+        title="Default value for new items"
+        value={props.value != null ? String(props.value) : ""}
+        onBlur={(e) => props.onChange(e.currentTarget.value || undefined)}
+        style="max-width: 80px"
+      />
+    }>
+      <Match when={props.type === "url"}>
+        <input
+          placeholder="https://..."
+          title="Default value for new items"
+          value={props.value != null ? String(props.value) : ""}
+          onBlur={(e) => props.onChange(e.currentTarget.value || undefined)}
+          style="max-width: 80px"
+        />
+      </Match>
+      <Match when={props.type === "number"}>
+        <input
+          type="number"
+          placeholder="(none)"
+          title="Default value for new items"
+          value={props.value != null ? Number(props.value) : ""}
+          onBlur={(e) => {
+            const v = e.currentTarget.valueAsNumber;
+            props.onChange(isNaN(v) ? undefined : v);
+          }}
+          style="max-width: 80px"
+        />
+      </Match>
+      <Match when={props.type === "rating"}>
+        <input
+          type="number"
+          placeholder="(none)"
+          title="Default value for new items"
+          value={props.value != null ? Number(props.value) : ""}
+          min="0"
+          max="10"
+          onBlur={(e) => {
+            const v = e.currentTarget.valueAsNumber;
+            props.onChange(isNaN(v) ? undefined : v);
+          }}
+          style="max-width: 80px"
+        />
+      </Match>
+      <Match when={props.type === "boolean"}>
+        <select
+          title="Default value for new items"
+          value={props.value === true ? "true" : "false"}
+          onChange={(e) => props.onChange(e.currentTarget.value === "true")}
+          style="max-width: 80px"
+        >
+          <option value="false">No</option>
+          <option value="true">Yes</option>
+        </select>
+      </Match>
+      <Match when={props.type === "enum"}>
+        <select
+          title="Default value for new items"
+          value={props.value != null ? String(props.value) : ""}
+          onChange={(e) => props.onChange(e.currentTarget.value || undefined)}
+          style="max-width: 100px"
+        >
+          <option value="">(none)</option>
+          <For each={props.options ?? []}>
+            {(opt) => <option value={opt}>{opt}</option>}
+          </For>
+        </select>
+      </Match>
+      <Match when={props.type === "date" || props.type === "datetime"}>
+        <input
+          type={props.type === "datetime" ? "datetime-local" : "date"}
+          title="Default value for new items"
+          value={props.value != null ? String(props.value) : ""}
+          onChange={(e) => props.onChange(e.currentTarget.value || undefined)}
+          style="max-width: 100px"
+        />
+      </Match>
+      <Match when={props.type === "duration"}>
+        <input
+          type="number"
+          placeholder="(none)"
+          title="Default value for new items (in minutes)"
+          value={props.value != null ? Number(props.value) : ""}
+          min="0"
+          onBlur={(e) => {
+            const v = e.currentTarget.valueAsNumber;
+            props.onChange(isNaN(v) ? undefined : v);
+          }}
+          style="max-width: 80px"
+        />
+      </Match>
+    </Switch>
   );
 };
 
