@@ -259,12 +259,57 @@ function hasValue(item: Item, key: string, schemaMap?: Map<string, AttributeDefi
   return v != null && v !== "";
 }
 
+function collectPlaceholderKeys(segments: Segment[], keys: Set<string>): void {
+  for (const seg of segments) {
+    if (seg.kind === "placeholder") keys.add(seg.key);
+    else if (seg.kind === "conditional") {
+      collectPlaceholderKeys(seg.body, keys);
+      collectPlaceholderKeys(seg.fallback, keys);
+    } else if (seg.kind === "ternary") {
+      keys.add(seg.key);
+      collectPlaceholderKeys(seg.trueBranch, keys);
+      collectPlaceholderKeys(seg.falseBranch, keys);
+    }
+  }
+}
+
+function detectMacroCycle(macros: Record<string, string>): string | null {
+  const macroNames = new Set(Object.keys(macros));
+  const deps: Record<string, Set<string>> = {};
+  for (const [name, fmt] of Object.entries(macros)) {
+    const keys = new Set<string>();
+    collectPlaceholderKeys(parseFormatString(fmt), keys);
+    deps[name] = new Set([...keys].filter((k) => macroNames.has(k)));
+  }
+  const visited = new Set<string>();
+  const stack = new Set<string>();
+  function dfs(node: string): string | null {
+    if (stack.has(node)) return node;
+    if (visited.has(node)) return null;
+    stack.add(node);
+    for (const dep of deps[node] ?? []) {
+      const cycle = dfs(dep);
+      if (cycle) return cycle;
+    }
+    stack.delete(node);
+    visited.add(node);
+    return null;
+  }
+  for (const name of macroNames) {
+    const cycle = dfs(name);
+    if (cycle) return `Macro cycle detected involving "${cycle}"`;
+  }
+  return null;
+}
+
 function renderSegments(
   segments: Segment[],
   item: Item,
   customModifiers?: Record<string, ModifierFn>,
   strict?: boolean,
   schemaMap?: Map<string, AttributeDefinition>,
+  macros?: Record<string, string>,
+  visiting?: Set<string>,
 ): string | null {
   let result = "";
   for (const seg of segments) {
@@ -275,7 +320,21 @@ function renderSegments(
 
       case "placeholder": {
         if (!hasValue(item, seg.key, schemaMap)) {
-          if (seg.modifier === "fallback") {
+          if (macros && seg.key in macros && !visiting?.has(seg.key)) {
+            const visiting2 = new Set(visiting);
+            visiting2.add(seg.key);
+            const expanded = renderSegments(
+              parseFormatString(macros[seg.key]),
+              item, customModifiers, strict, schemaMap, macros, visiting2,
+            );
+            if (expanded !== null && expanded !== "") {
+              result += expanded;
+            } else if (strict) {
+              return null;
+            } else if (seg.modifier === "fallback") {
+              result += seg.modifierArg ?? "";
+            }
+          } else if (seg.modifier === "fallback") {
             result += seg.modifierArg ?? "";
           } else if (strict) {
             return null;
@@ -287,11 +346,11 @@ function renderSegments(
       }
 
       case "conditional": {
-        const bodyResult = renderSegments(seg.body, item, customModifiers, true, schemaMap);
+        const bodyResult = renderSegments(seg.body, item, customModifiers, true, schemaMap, macros, visiting);
         if (bodyResult !== null) {
           result += bodyResult;
         } else {
-          const fallbackResult = renderSegments(seg.fallback, item, customModifiers, true, schemaMap);
+          const fallbackResult = renderSegments(seg.fallback, item, customModifiers, true, schemaMap, macros, visiting);
           if (fallbackResult !== null) {
             result += fallbackResult;
           }
@@ -302,7 +361,7 @@ function renderSegments(
       case "ternary": {
         const val = getValue(item, seg.key, schemaMap);
         const branch = val ? seg.trueBranch : seg.falseBranch;
-        const branchResult = renderSegments(branch, item, customModifiers, strict, schemaMap);
+        const branchResult = renderSegments(branch, item, customModifiers, strict, schemaMap, macros, visiting);
         if (branchResult !== null) {
           result += branchResult;
         } else if (strict) {
@@ -320,8 +379,65 @@ export function renderFormatString(
   item: Item,
   schema?: AttributeDefinition[],
   customModifiers?: Record<string, ModifierFn>,
+  macros?: Record<string, string>,
 ): string {
   const schemaMap = new Map(schema?.map((d) => [d.key, d]));
   const segments = parseFormatString(format);
-  return renderSegments(segments, item, customModifiers, false, schemaMap) ?? item.title;
+  return renderSegments(segments, item, customModifiers, false, schemaMap, macros) ?? item.title;
+}
+
+export function validateFormatString(format: string, macros?: Record<string, string>): string | null {
+  let depth = 0;
+  for (let i = 0; i < format.length; i++) {
+    if (format[i] === "{" && i + 1 < format.length && format[i + 1] === "{") { i++; continue; }
+    if (format[i] === "}" && i + 1 < format.length && format[i + 1] === "}") { i++; continue; }
+    if (format[i] === "{") depth++;
+    else if (format[i] === "}") {
+      if (--depth < 0) return "Unexpected '}'";
+    }
+  }
+  if (depth > 0) return "Unclosed '{'";
+  if (macros) {
+    for (const [name, macroFormat] of Object.entries(macros)) {
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return `Invalid macro name: "${name}"`;
+      const macroErr = validateFormatString(macroFormat);
+      if (macroErr) return `Error in macro "${name}": ${macroErr}`;
+    }
+    return detectMacroCycle(macros);
+  }
+  return null;
+}
+
+export function parseAdvancedFormatText(text: string): {
+  format: string;
+  macros: Record<string, string>;
+  error: string | null;
+} {
+  const lines = text.split("\n");
+  const format = lines[0] ?? "";
+  const macros: Record<string, string> = {};
+  const errors: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+    const eqIdx = line.indexOf("=");
+    if (eqIdx < 1) {
+      errors.push(`Line ${i + 1}: expected "name=format", got "${line.trim()}"`);
+      continue;
+    }
+    const name = line.substring(0, eqIdx).trim();
+    const value = line.substring(eqIdx + 1);
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+      errors.push(`Line ${i + 1}: invalid macro name "${name}"`);
+      continue;
+    }
+    macros[name] = value;
+  }
+  if (errors.length > 0) return { format, macros, error: errors.join("\n") };
+  return { format, macros, error: validateFormatString(format, macros) };
+}
+
+export function serializeAdvancedFormatText(format: string, macros?: Record<string, string>): string {
+  if (!macros || Object.keys(macros).length === 0) return format;
+  return [format, ...Object.entries(macros).map(([k, v]) => `${k}=${v}`)].join("\n");
 }

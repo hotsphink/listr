@@ -208,7 +208,7 @@ const Sidebar: Component = () => {
         onClose={() => setEditingCategory(undefined)}
         onSave={async (data) => {
           const cat = editingCategory();
-          if (cat) await updateCategory(cat.id, data);
+          if (cat) await updateCategory(cat.id, { ...data, macros: data.macros });
           setEditingCategory(undefined);
         }}
         initial={editingCategory()}
@@ -218,7 +218,7 @@ const Sidebar: Component = () => {
         open={showCreateCategory()}
         onClose={() => setShowCreateCategory(false)}
         onSave={async (data) => {
-          await createCategory(data.name, data.color, data.schema, data.format_string);
+          await createCategory(data.name, data.color, data.schema, data.format_string, data.macros);
           setShowCreateCategory(false);
         }}
       />

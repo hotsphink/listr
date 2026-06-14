@@ -436,6 +436,55 @@ tbody tr {
   flex: 1;
 }
 
+.format-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.format-field-header label {
+  margin-bottom: 0;
+}
+
+.btn-xs {
+  font-size: 11px;
+  padding: 2px 8px;
+  height: auto;
+}
+
+.input-error {
+  border-color: var(--danger) !important;
+}
+
+.input-error:focus {
+  border-color: var(--danger) !important;
+}
+
+.field-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 3px;
+  white-space: pre-wrap;
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.field-hint code {
+  font-family: monospace;
+  color: var(--text-muted);
+}
+
+.format-advanced-textarea {
+  font-family: monospace;
+  font-size: 12px;
+  min-height: 120px;
+}
+
 /* Schema editor */
 .schema-entry {
   display: flex;

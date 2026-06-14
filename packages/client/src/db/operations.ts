@@ -16,6 +16,7 @@ export async function createCategory(
   color: string,
   schema: AttributeDefinition[] = [],
   formatString: string = "{title}",
+  macros?: Record<string, string>,
 ): Promise<Category> {
   const maxPos = await db.categories.orderBy("position").last();
   const category: Category = {
@@ -25,6 +26,7 @@ export async function createCategory(
     position: (maxPos?.position ?? -1) + 1,
     schema,
     format_string: formatString,
+    macros,
     created_at: now(),
     updated_at: now(),
   };
@@ -34,7 +36,7 @@ export async function createCategory(
 
 export async function updateCategory(
   id: string,
-  updates: Partial<Pick<Category, "name" | "color" | "position" | "schema" | "format_string">>,
+  updates: Partial<Pick<Category, "name" | "color" | "position" | "schema" | "format_string" | "macros">>,
 ): Promise<void> {
   await db.categories.update(id, { ...updates, updated_at: now() });
 }

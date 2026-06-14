@@ -57,12 +57,12 @@ const Dashboard: Component = () => {
     navigate(`/list/${list.id}`);
   };
 
-  const handleCreateCategory = async (data: { name: string; color: string; format_string: string; schema: any[] }) => {
-    await createCategory(data.name, data.color, data.schema, data.format_string);
+  const handleCreateCategory = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
+    await createCategory(data.name, data.color, data.schema, data.format_string, data.macros);
     setShowCreateCategory(false);
   };
 
-  const handleEditCategory = async (data: { name: string; color: string; format_string: string; schema: any[] }) => {
+  const handleEditCategory = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
     const cat = editingCategory();
     if (!cat) return;
     await updateCategory(cat.id, data);

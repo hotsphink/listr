@@ -34,6 +34,7 @@ export interface Category {
   position: number;
   schema: AttributeDefinition[];
   format_string: string;
+  macros?: Record<string, string>;
   created_at: number;
   updated_at: number;
 }

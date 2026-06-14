@@ -119,7 +119,7 @@ const ListView: Component = () => {
   };
 
   const formatItem = (item: Item): string => {
-    return renderFormatString(effectiveFormatString(), item, schema());
+    return renderFormatString(effectiveFormatString(), item, schema(), undefined, category()?.macros);
   };
 
   const formatCellValue = (value: unknown, type: string): string => {
