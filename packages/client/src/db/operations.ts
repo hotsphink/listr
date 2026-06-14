@@ -51,7 +51,7 @@ export async function createList(
     icon: "",
     position: (maxPos?.position ?? -1) + 1,
     format_string: "{title}",
-    view_mode: "table",
+    view_mode: "list",
     schema,
     created_at: now(),
     updated_at: now(),

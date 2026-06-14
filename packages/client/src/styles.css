@@ -410,6 +410,119 @@ tbody tr {
   margin-right: 4px;
 }
 
+/* List view */
+.list-view-container {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 24px;
+}
+
+.list-view {
+  list-style: none;
+}
+
+.list-view-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.15s;
+}
+
+.list-view-item:first-child {
+  border-top: 1px solid var(--border);
+}
+
+.list-view-item:hover {
+  background: var(--bg-hover);
+}
+
+/* View switcher */
+.view-switcher {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.view-switcher-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.view-switcher-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.view-switcher-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.view-switcher-btn + .view-switcher-btn {
+  border-left: 1px solid var(--border);
+}
+
+/* Card view */
+.card-container {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.item-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.item-card:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-hover);
+}
+
+.item-card-title {
+  font-weight: 500;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.item-card-attrs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.item-card-attr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.item-card-attr-label {
+  color: var(--text-muted);
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
 /* Stars */
 .stars {
   color: #f5c518;

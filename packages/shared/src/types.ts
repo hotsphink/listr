@@ -37,7 +37,7 @@ export interface Category {
   updated_at: number;
 }
 
-export type ViewMode = "table" | "board" | "card";
+export type ViewMode = "list" | "table" | "board" | "card";
 
 export interface List {
   id: string;

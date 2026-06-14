@@ -1,9 +1,9 @@
-import { type Component, For, Show, createSignal, createMemo } from "solid-js";
+import { type Component, For, Show, createSignal, createMemo, Switch, Match } from "solid-js";
 import { useParams, useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import { renderFormatString } from "@listr/shared";
-import type { Item, List } from "@listr/shared";
+import type { Item, List, ViewMode } from "@listr/shared";
 import { db } from "../db/database.js";
 import {
   createItem,
@@ -15,6 +15,12 @@ import {
 } from "../db/operations.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
+
+const VIEW_MODES: { mode: ViewMode; label: string }[] = [
+  { mode: "list", label: "List" },
+  { mode: "table", label: "Table" },
+  { mode: "card", label: "Cards" },
+];
 
 const ListView: Component = () => {
   const params = useParams();
@@ -34,6 +40,12 @@ const ListView: Component = () => {
     if (!l) return [];
     return [...l.schema].sort((a, b) => a.position - b.position);
   });
+
+  const viewMode = createMemo(() => list()?.view_mode ?? "list");
+
+  const setViewMode = async (mode: ViewMode) => {
+    await updateList(params.id, { view_mode: mode });
+  };
 
   const handleAddItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
     await createItem(params.id, data.title, data.attributes);
@@ -72,7 +84,7 @@ const ListView: Component = () => {
   };
 
   const formatCellValue = (value: unknown, type: string): string => {
-    if (value == null || value === "") return "—";
+    if (value == null || value === "") return "\u2014";
     if (type === "boolean") return value ? "Yes" : "No";
     if (type === "duration") {
       const n = Number(value);
@@ -82,7 +94,7 @@ const ListView: Component = () => {
     }
     if (type === "rating") {
       const n = Number(value);
-      return "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n));
+      return "\u2605".repeat(n) + "\u2606".repeat(Math.max(0, 5 - n));
     }
     if (type === "tags" && Array.isArray(value)) return value.join(", ");
     return String(value);
@@ -96,6 +108,22 @@ const ListView: Component = () => {
             <div class="page-header">
               <h1>{l().name}</h1>
               <div class="header-actions">
+                <div class="view-switcher" role="tablist" aria-label="View mode">
+                  <For each={VIEW_MODES}>
+                    {(vm) => (
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={viewMode() === vm.mode}
+                        class="view-switcher-btn"
+                        classList={{ active: viewMode() === vm.mode }}
+                        onClick={() => setViewMode(vm.mode)}
+                      >
+                        {vm.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
                 <button class="btn-ghost" onClick={() => setShowEditList(true)}>
                   Settings
                 </button>
@@ -105,53 +133,113 @@ const ListView: Component = () => {
               </div>
             </div>
 
-            <div class="table-container">
-              <Show
-                when={(items() ?? []).length > 0}
-                fallback={
-                  <div class="empty-state">
-                    <p>No items yet.</p>
-                    <button class="btn-primary" onClick={() => setShowAddItem(true)}>
-                      + Add Item
-                    </button>
-                  </div>
-                }
-              >
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Title</th>
-                      <For each={visibleSchema()}>
-                        {(attr) => <th>{attr.label || attr.key}</th>}
+            <Show
+              when={(items() ?? []).length > 0}
+              fallback={
+                <div class="empty-state">
+                  <p>No items yet.</p>
+                  <button class="btn-primary" onClick={() => setShowAddItem(true)}>
+                    + Add Item
+                  </button>
+                </div>
+              }
+            >
+              <Switch>
+                <Match when={viewMode() === "list"}>
+                  <div class="list-view-container">
+                    <ul class="list-view">
+                      <For each={items() ?? []}>
+                        {(item) => (
+                          <li class="list-view-item" onClick={() => setEditingItem(item)}>
+                            {formatItem(item)}
+                          </li>
+                        )}
                       </For>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={items() ?? []}>
-                      {(item) => (
-                        <tr onClick={() => setEditingItem(item)}>
-                          <td style="font-weight: 500">{formatItem(item)}</td>
+                    </ul>
+                  </div>
+                </Match>
+
+                <Match when={viewMode() === "table"}>
+                  <div class="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Title</th>
                           <For each={visibleSchema()}>
-                            {(attr) => (
-                              <td>
-                                <Show when={attr.type === "rating"}>
-                                  <span class="stars">
-                                    {formatCellValue(item.attributes[attr.key], attr.type)}
-                                  </span>
-                                </Show>
-                                <Show when={attr.type !== "rating"}>
-                                  {formatCellValue(item.attributes[attr.key], attr.type)}
-                                </Show>
-                              </td>
-                            )}
+                            {(attr) => <th>{attr.label || attr.key}</th>}
                           </For>
                         </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-              </Show>
-            </div>
+                      </thead>
+                      <tbody>
+                        <For each={items() ?? []}>
+                          {(item) => (
+                            <tr onClick={() => setEditingItem(item)}>
+                              <td style="font-weight: 500">{formatItem(item)}</td>
+                              <For each={visibleSchema()}>
+                                {(attr) => (
+                                  <td>
+                                    <Show when={attr.type === "rating"}>
+                                      <span class="stars">
+                                        {formatCellValue(item.attributes[attr.key], attr.type)}
+                                      </span>
+                                    </Show>
+                                    <Show when={attr.type !== "rating"}>
+                                      {formatCellValue(item.attributes[attr.key], attr.type)}
+                                    </Show>
+                                  </td>
+                                )}
+                              </For>
+                            </tr>
+                          )}
+                        </For>
+                      </tbody>
+                    </table>
+                  </div>
+                </Match>
+
+                <Match when={viewMode() === "card"}>
+                  <div class="card-container">
+                    <div class="card-grid">
+                      <For each={items() ?? []}>
+                        {(item) => (
+                          <div class="item-card" onClick={() => setEditingItem(item)}>
+                            <div class="item-card-title">{formatItem(item)}</div>
+                            <Show when={visibleSchema().length > 0}>
+                              <div class="item-card-attrs">
+                                <For each={visibleSchema()}>
+                                  {(attr) => {
+                                    const val = item.attributes[attr.key];
+                                    if (val == null || val === "") return null;
+                                    return (
+                                      <div class="item-card-attr">
+                                        <span class="item-card-attr-label">{attr.label || attr.key}</span>
+                                        <Show when={attr.type === "rating"}>
+                                          <span class="stars">{formatCellValue(val, attr.type)}</span>
+                                        </Show>
+                                        <Show when={attr.type === "tags" && Array.isArray(val)}>
+                                          <span>
+                                            <For each={val as string[]}>
+                                              {(t) => <span class="tag">{t}</span>}
+                                            </For>
+                                          </span>
+                                        </Show>
+                                        <Show when={attr.type !== "rating" && !(attr.type === "tags" && Array.isArray(val))}>
+                                          <span>{formatCellValue(val, attr.type)}</span>
+                                        </Show>
+                                      </div>
+                                    );
+                                  }}
+                                </For>
+                              </div>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Match>
+              </Switch>
+            </Show>
 
             <ItemFormModal
               open={showAddItem()}

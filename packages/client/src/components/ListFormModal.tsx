@@ -3,6 +3,12 @@ import type { AttributeDefinition, List } from "@listr/shared";
 import Modal from "./Modal.js";
 import SchemaEditor from "./SchemaEditor.js";
 
+function generateFormatString(schema: AttributeDefinition[]): string {
+  if (schema.length === 0) return "{title}";
+  const parts = schema.map((a) => `{${a.key}}`);
+  return `{title} (${parts.join(", ")})`;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -14,14 +20,23 @@ const ListFormModal: Component<Props> = (props) => {
   const [name, setName] = createSignal("");
   const [formatStr, setFormatStr] = createSignal("{title}");
   const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
+  const [formatManuallyEdited, setFormatManuallyEdited] = createSignal(false);
 
   createEffect(() => {
     if (props.open) {
       setName(props.initial?.name ?? "");
       setFormatStr(props.initial?.format_string ?? "{title}");
       setSchema(props.initial?.schema ?? []);
+      setFormatManuallyEdited(!!props.initial);
     }
   });
+
+  const handleSchemaChange = (newSchema: AttributeDefinition[]) => {
+    setSchema(newSchema);
+    if (!formatManuallyEdited()) {
+      setFormatStr(generateFormatString(newSchema));
+    }
+  };
 
   const handleSubmit = (e: Event) => {
     e.preventDefault();
@@ -49,7 +64,10 @@ const ListFormModal: Component<Props> = (props) => {
           <label>Format String</label>
           <input
             value={formatStr()}
-            onInput={(e) => setFormatStr(e.currentTarget.value)}
+            onInput={(e) => {
+              setFormatStr(e.currentTarget.value);
+              setFormatManuallyEdited(true);
+            }}
             placeholder="{title}"
           />
           <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px">
@@ -58,7 +76,7 @@ const ListFormModal: Component<Props> = (props) => {
         </div>
         <div class="form-field">
           <label>Attributes</label>
-          <SchemaEditor schema={schema()} onChange={setSchema} />
+          <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
         </div>
         <div class="modal-actions">
           <button type="button" class="btn-ghost" onClick={props.onClose}>

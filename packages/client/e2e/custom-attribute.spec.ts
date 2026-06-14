@@ -52,6 +52,9 @@ test.describe("custom attributes", () => {
     // Should navigate to the list view
     await expect(page.locator(".page-header h1")).toHaveText("Movies");
 
+    // Switch to table view to see attribute columns
+    await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
+
     // Click "+ Add Item"
     await page.getByRole("button", { name: "+ Add Item" }).first().click();
     await expect(page.locator(".modal h2")).toHaveText("New Item");
@@ -102,6 +105,9 @@ test.describe("custom attributes", () => {
     await page.getByRole("button", { name: "Create" }).click();
     await expect(page.locator(".page-header h1")).toHaveText("Films");
 
+    // Switch to table view
+    await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
+
     // Add an item
     await page.getByRole("button", { name: "+ Add Item" }).first().click();
     await page.locator(".modal .form-field input").first().fill("Blade Runner");
@@ -144,6 +150,9 @@ test.describe("custom attributes", () => {
 
     await page.getByRole("button", { name: "Create" }).click();
     await expect(page.locator(".page-header h1")).toHaveText("Rated Movies");
+
+    // Switch to table view
+    await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
 
     // Add item with year
     await page.getByRole("button", { name: "+ Add Item" }).first().click();
