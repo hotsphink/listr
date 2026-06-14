@@ -19,7 +19,7 @@ interface Props {
     format_string: string;
     schema: AttributeDefinition[];
     macros: Record<string, string>;
-  }) => void;
+  }) => Promise<void> | void;
   initial?: Category;
 }
 
@@ -30,7 +30,10 @@ const CategoryFormModal: Component<Props> = (props) => {
   const [macros, setMacros] = createSignal<Record<string, string>>({});
   const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
   const [formatManuallyEdited, setFormatManuallyEdited] = createSignal(false);
+  const [nameError, setNameError] = createSignal<string | null>(null);
   const [formatError, setFormatError] = createSignal<string | null>(null);
+  const [saveError, setSaveError] = createSignal<string | null>(null);
+  const [saving, setSaving] = createSignal(false);
   const [advancedMode, setAdvancedMode] = createSignal(false);
   const [advancedText, setAdvancedText] = createSignal("");
   const [advancedError, setAdvancedError] = createSignal<string | null>(null);
@@ -46,7 +49,10 @@ const CategoryFormModal: Component<Props> = (props) => {
       setMacros(props.initial?.macros ?? {});
       setSchema(props.initial?.schema ?? []);
       setFormatManuallyEdited(!!props.initial);
+      setNameError(null);
       setFormatError(null);
+      setSaveError(null);
+      setSaving(false);
       setAdvancedMode(false);
       setAdvancedError(null);
     }
@@ -90,9 +96,16 @@ const CategoryFormModal: Component<Props> = (props) => {
     return { format, macros: newMacros };
   };
 
-  const handleSubmit = (e: Event) => {
+  const handleSubmit = async (e: Event) => {
     e.preventDefault();
-    if (!name().trim()) return;
+    setSaveError(null);
+
+    const nameValue = name().trim();
+    if (!nameValue) {
+      setNameError("Name is required");
+      return;
+    }
+    setNameError(null);
 
     let currentFormat = formatStr();
     let currentMacros = macros();
@@ -107,13 +120,20 @@ const CategoryFormModal: Component<Props> = (props) => {
     const err = validateFormatString(currentFormat, currentMacros);
     if (err) { setFormatError(err); return; }
 
-    props.onSave({
-      name: name().trim(),
-      color: color(),
-      format_string: currentFormat,
-      schema: schema(),
-      macros: currentMacros,
-    });
+    setSaving(true);
+    try {
+      await props.onSave({
+        name: nameValue,
+        color: color(),
+        format_string: currentFormat,
+        schema: schema(),
+        macros: currentMacros,
+      });
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Save failed. Check that your browser allows storage.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const macroKeys = () => Object.keys(macros());
@@ -126,10 +146,14 @@ const CategoryFormModal: Component<Props> = (props) => {
           <div class="form-field" style="flex: 1">
             <label>Name</label>
             <input
+              classList={{ "input-error": nameError() !== null }}
               value={name()}
-              onInput={(e) => setName(e.currentTarget.value)}
+              onInput={(e) => { setName(e.currentTarget.value); setNameError(null); }}
               autofocus
             />
+            <Show when={nameError()}>
+              {(err) => <div class="field-error">{err()}</div>}
+            </Show>
           </div>
           <div class="form-field" style="flex: 0; min-width: 60px">
             <label>Color</label>
@@ -193,12 +217,15 @@ const CategoryFormModal: Component<Props> = (props) => {
           <label>Attributes</label>
           <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
         </div>
+        <Show when={saveError()}>
+          {(err) => <div class="field-error" style="margin-bottom: 8px">{err()}</div>}
+        </Show>
         <div class="modal-actions">
-          <button type="button" class="btn-ghost" onClick={props.onClose}>
+          <button type="button" class="btn-ghost" onClick={props.onClose} disabled={saving()}>
             Cancel
           </button>
-          <button type="submit" class="btn-primary">
-            {props.initial ? "Save" : "Create"}
+          <button type="submit" class="btn-primary" disabled={saving()}>
+            {saving() ? "Saving..." : props.initial ? "Save" : "Create"}
           </button>
         </div>
       </form>
