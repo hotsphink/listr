@@ -138,6 +138,7 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
       <Match when={props.type === "number"}>
         <input
           type="number"
+          step="any"
           placeholder="(none)"
           title="Default value for new items"
           value={props.value != null ? Number(props.value) : ""}

@@ -59,7 +59,7 @@ const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; c
     min={props.config?.min as number | undefined}
     max={props.config?.max as number | undefined}
     step={props.config?.step as number | undefined ?? "any"}
-    onInput={(e) => {
+    onBlur={(e) => {
       const v = e.currentTarget.valueAsNumber;
       props.onChange(isNaN(v) ? null : v);
     }}
@@ -136,6 +136,31 @@ const TagsInput: Component<{ value: unknown; onChange: (v: unknown) => void; opt
   );
 };
 
+function parseDurationText(text: string): number | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(/^(?:(\d+)\s*h)?\s*(\d+)?\s*m?$/i);
+  if (match) {
+    const h = match[1] ? parseInt(match[1], 10) : 0;
+    const m = match[2] ? parseInt(match[2], 10) : 0;
+    if (h > 0 || m > 0) return h * 60 + m;
+  }
+
+  const justMinutes = trimmed.match(/^(\d+)$/);
+  if (justMinutes) return parseInt(justMinutes[1], 10);
+
+  return null;
+}
+
+function formatDurationShort(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
 const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void }> = (props) => {
   const totalMinutes = () => Number(props.value ?? 0);
   const hours = () => Math.floor(totalMinutes() / 60);
@@ -160,6 +185,16 @@ const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void 
         onInput={(e) => props.onChange(hours() * 60 + (e.currentTarget.valueAsNumber || 0))}
       />
       <span style="color: var(--text-muted); font-size: 12px">m</span>
+      <input
+        type="text"
+        placeholder="e.g. 1h42m"
+        value={totalMinutes() > 0 ? formatDurationShort(totalMinutes()) : ""}
+        onBlur={(e) => {
+          const parsed = parseDurationText(e.currentTarget.value);
+          if (parsed !== null) props.onChange(parsed);
+        }}
+        style="width: 80px"
+      />
     </div>
   );
 };
