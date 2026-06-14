@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseFormatString, renderFormatString } from "./format-string.js";
-import type { AttributeDefinition, Item, List } from "./types.js";
+import type { AttributeDefinition, Item } from "./types.js";
 
 function makeItem(title: string, attrs: Record<string, unknown> = {}): Item {
   return {
@@ -152,19 +152,8 @@ describe("renderFormatString", () => {
 });
 
 describe("custom attribute in display", () => {
-  function makeList(schema: AttributeDefinition[], formatString: string): List {
-    return {
-      id: "list-1",
-      category_id: null,
-      name: "Movies",
-      icon: "",
-      position: 0,
-      format_string: formatString,
-      view_mode: "table",
-      schema,
-      created_at: Date.now(),
-      updated_at: Date.now(),
-    };
+  function makeCategory(schema: AttributeDefinition[], formatString: string) {
+    return { schema, format_string: formatString };
   }
 
   it("renders a movie list with rating, title, and conditional duration", () => {
@@ -173,18 +162,18 @@ describe("custom attribute in display", () => {
       { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
       { key: "genre", label: "Genre", type: "enum", required: false, options: ["action", "sci-fi", "drama"], position: 2 },
     ];
-    const list = makeList(schema, "{rating:stars} {title}{ ({duration:short})|}{ [{genre:upper}]|}");
+    const cat = makeCategory(schema, "{rating:stars} {title}{ ({duration:short})|}{ [{genre:upper}]|}");
 
     const inception = makeItem("Inception", { rating: 5, duration: 148, genre: "sci-fi" });
-    expect(renderFormatString(list.format_string, inception, list.schema))
+    expect(renderFormatString(cat.format_string, inception, cat.schema))
       .toBe("★★★★★ Inception (2h28m) [SCI-FI]");
 
     const noGenre = makeItem("Memento", { rating: 4, duration: 113 });
-    expect(renderFormatString(list.format_string, noGenre, list.schema))
+    expect(renderFormatString(cat.format_string, noGenre, cat.schema))
       .toBe("★★★★☆ Memento (1h53m)");
 
     const titleOnly = makeItem("TBD", {});
-    expect(renderFormatString(list.format_string, titleOnly, list.schema))
+    expect(renderFormatString(cat.format_string, titleOnly, cat.schema))
       .toBe(" TBD");
   });
 
@@ -193,14 +182,14 @@ describe("custom attribute in display", () => {
       { key: "director", label: "Director", type: "text", required: false, position: 0 },
       { key: "year", label: "Year", type: "number", required: false, position: 1 },
     ];
-    const list = makeList(schema, "{title} ({year}){ - dir. {director}|}");
+    const cat = makeCategory(schema, "{title} ({year}){ - dir. {director}|}");
 
     const item = makeItem("Blade Runner", { director: "Ridley Scott", year: 1982 });
-    expect(renderFormatString(list.format_string, item, list.schema))
+    expect(renderFormatString(cat.format_string, item, cat.schema))
       .toBe("Blade Runner (1982) - dir. Ridley Scott");
 
     const noDirector = makeItem("Blade Runner", { year: 1982 });
-    expect(renderFormatString(list.format_string, noDirector, list.schema))
+    expect(renderFormatString(cat.format_string, noDirector, cat.schema))
       .toBe("Blade Runner (1982)");
   });
 
@@ -208,10 +197,10 @@ describe("custom attribute in display", () => {
     const schema: AttributeDefinition[] = [
       { key: "tags", label: "Tags", type: "tags", required: false, options: ["must-see", "classic", "rewatchable"], position: 0 },
     ];
-    const list = makeList(schema, "{title}{ - {tags}|}");
+    const cat = makeCategory(schema, "{title}{ - {tags}|}");
 
     const item = makeItem("The Matrix", { tags: ["must-see", "classic"] });
-    expect(renderFormatString(list.format_string, item, list.schema))
+    expect(renderFormatString(cat.format_string, item, cat.schema))
       .toBe("The Matrix - must-see, classic");
   });
 
@@ -219,14 +208,14 @@ describe("custom attribute in display", () => {
     const schema: AttributeDefinition[] = [
       { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
     ];
-    const list = makeList(schema, "{title} [{watched:fallback=unwatched}]");
+    const cat = makeCategory(schema, "{title} [{watched:fallback=unwatched}]");
 
     const watched = makeItem("Inception", { watched: true });
-    expect(renderFormatString(list.format_string, watched, list.schema))
+    expect(renderFormatString(cat.format_string, watched, cat.schema))
       .toBe("Inception [yes]");
 
     const notSet = makeItem("Tenet", {});
-    expect(renderFormatString(list.format_string, notSet, list.schema))
+    expect(renderFormatString(cat.format_string, notSet, cat.schema))
       .toBe("Tenet [no]");
   });
 });

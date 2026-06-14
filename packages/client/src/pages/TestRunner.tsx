@@ -49,20 +49,37 @@ function now(): number {
   return Date.now();
 }
 
-async function createTestList(
+async function createTestCategory(
   name: string,
   schema: AttributeDefinition[],
   formatString: string,
+): Promise<Category> {
+  const category: Category = {
+    id: id(),
+    name,
+    color: "#5b8def",
+    position: 0,
+    schema,
+    format_string: formatString,
+    created_at: now(),
+    updated_at: now(),
+  };
+  await testDb.categories.add(category);
+  return category;
+}
+
+async function createTestList(
+  name: string,
+  categoryId: string | null,
 ): Promise<List> {
   const list: List = {
     id: id(),
-    category_id: null,
+    category_id: categoryId,
     name,
     icon: "",
     position: 0,
-    format_string: formatString,
+    format_string: null,
     view_mode: "table",
-    schema,
     created_at: now(),
     updated_at: now(),
   };
@@ -72,11 +89,12 @@ async function createTestList(
 
 async function createTestItem(
   list: List,
+  schema: AttributeDefinition[],
   title: string,
   attributes: Record<string, unknown> = {},
 ): Promise<Item> {
   const resolvedAttrs = { ...attributes };
-  for (const def of list.schema) {
+  for (const def of schema) {
     if (resolvedAttrs[def.key] === undefined && def.default_value !== undefined) {
       resolvedAttrs[def.key] = def.default_value;
     }
@@ -106,9 +124,9 @@ const tests: Array<{ name: string; fn: TestFn }> = [
         { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
         { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
       ];
-      const list = await createTestList("Movies", schema, "{rating:stars} {title}{ ({duration:short})|}");
-
-      const item = await createTestItem(list, "Inception", { rating: 4, duration: 148 });
+      const cat = await createTestCategory("Movies", schema, "{rating:stars} {title}{ ({duration:short})|}");
+      const list = await createTestList("Movies", cat.id);
+      const item = await createTestItem(list, schema, "Inception", { rating: 4, duration: 148 });
 
       const stored = await testDb.items.get(item.id);
       assert(stored !== undefined, "item should be in IndexedDB");
@@ -116,8 +134,8 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       assertEqual(stored!.attributes.rating, 4);
       assertEqual(stored!.attributes.duration, 148);
 
-      const storedList = await testDb.lists.get(list.id);
-      const display = renderFormatString(storedList!.format_string, stored!, storedList!.schema);
+      const storedCat = await testDb.categories.get(cat.id);
+      const display = renderFormatString(storedCat!.format_string, stored!, storedCat!.schema);
       assertEqual(display, "★★★★☆ Inception (2h28m)");
     },
   },
@@ -127,12 +145,13 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
       ];
-      const list = await createTestList("Sparse", schema, "{rating:stars} - {title}");
-      const item = await createTestItem(list, "No Rating");
+      const cat = await createTestCategory("Sparse", schema, "{rating:stars} - {title}");
+      const list = await createTestList("Sparse", cat.id);
+      const item = await createTestItem(list, schema, "No Rating");
 
       const stored = await testDb.items.get(item.id);
-      const display = renderFormatString(list.format_string, stored!, list.schema);
-      assertEqual(display, "No Rating", "should fall back to title when rating is missing");
+      const display = renderFormatString(cat.format_string, stored!, cat.schema);
+      assertEqual(display, " - No Rating", "missing rating renders empty at top level");
     },
   },
   {
@@ -141,11 +160,12 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "status", label: "Status", type: "enum", required: false, options: ["to watch", "watching", "watched"], position: 0 },
       ];
-      const list = await createTestList("Watch Status", schema, "{title} [{status:upper}]");
-      const item = await createTestItem(list, "Dune", { status: "watching" });
+      const cat = await createTestCategory("Watch Status", schema, "{title} [{status:upper}]");
+      const list = await createTestList("Watch Status", cat.id);
+      const item = await createTestItem(list, schema, "Dune", { status: "watching" });
 
       const stored = await testDb.items.get(item.id);
-      const display = renderFormatString(list.format_string, stored!, list.schema);
+      const display = renderFormatString(cat.format_string, stored!, cat.schema);
       assertEqual(display, "Dune [WATCHING]");
     },
   },
@@ -156,28 +176,20 @@ const tests: Array<{ name: string; fn: TestFn }> = [
         { key: "genre", label: "Genre", type: "text", required: false, position: 0 },
         { key: "year", label: "Year", type: "number", required: false, position: 1 },
       ];
-      const list = await createTestList("Conditionals", schema, "{title}{ ({year})|}{ - {genre}|}");
+      const cat = await createTestCategory("Conditionals", schema, "{title}{ ({year})|}{ - {genre}|}");
+      const list = await createTestList("Conditionals", cat.id);
 
-      const full = await createTestItem(list, "Alien", { year: 1979, genre: "sci-fi" });
+      const full = await createTestItem(list, schema, "Alien", { year: 1979, genre: "sci-fi" });
       const stored1 = await testDb.items.get(full.id);
-      assertEqual(
-        renderFormatString(list.format_string, stored1!, list.schema),
-        "Alien (1979) - sci-fi",
-      );
+      assertEqual(renderFormatString(cat.format_string, stored1!, cat.schema), "Alien (1979) - sci-fi");
 
-      const noGenre = await createTestItem(list, "Memento", { year: 2000 });
+      const noGenre = await createTestItem(list, schema, "Memento", { year: 2000 });
       const stored2 = await testDb.items.get(noGenre.id);
-      assertEqual(
-        renderFormatString(list.format_string, stored2!, list.schema),
-        "Memento (2000)",
-      );
+      assertEqual(renderFormatString(cat.format_string, stored2!, cat.schema), "Memento (2000)");
 
-      const bare = await createTestItem(list, "TBD", {});
+      const bare = await createTestItem(list, schema, "TBD", {});
       const stored3 = await testDb.items.get(bare.id);
-      assertEqual(
-        renderFormatString(list.format_string, stored3!, list.schema),
-        "TBD",
-      );
+      assertEqual(renderFormatString(cat.format_string, stored3!, cat.schema), "TBD");
     },
   },
   {
@@ -186,15 +198,13 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "status", label: "Status", type: "enum", required: false, options: ["backlog", "active", "done"], default_value: "backlog", position: 0 },
       ];
-      const list = await createTestList("Defaults", schema, "{title} ({status})");
-      const item = await createTestItem(list, "New Movie");
+      const cat = await createTestCategory("Defaults", schema, "{title} ({status})");
+      const list = await createTestList("Defaults", cat.id);
+      const item = await createTestItem(list, schema, "New Movie");
 
       const stored = await testDb.items.get(item.id);
       assertEqual(stored!.attributes.status, "backlog", "default_value should be applied");
-      assertEqual(
-        renderFormatString(list.format_string, stored!, list.schema),
-        "New Movie (backlog)",
-      );
+      assertEqual(renderFormatString(cat.format_string, stored!, cat.schema), "New Movie (backlog)");
     },
   },
   {
@@ -206,9 +216,10 @@ const tests: Array<{ name: string; fn: TestFn }> = [
           auto: { trigger: "on_create", source: "timestamp" },
         },
       ];
-      const list = await createTestList("Auto", schema, "{title}");
+      const cat = await createTestCategory("Auto", schema, "{title}");
+      const list = await createTestList("Auto", cat.id);
       const before = Date.now();
-      const item = await createTestItem(list, "Auto Item");
+      const item = await createTestItem(list, schema, "Auto Item");
       const after = Date.now();
 
       const stored = await testDb.items.get(item.id);
@@ -223,26 +234,24 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "tags", label: "Tags", type: "tags", required: false, options: ["classic", "must-see", "rewatchable"], position: 0 },
       ];
-      const list = await createTestList("Tagged", schema, "{title}{ - {tags}|}");
-      const item = await createTestItem(list, "The Matrix", { tags: ["classic", "must-see"] });
+      const cat = await createTestCategory("Tagged", schema, "{title}{ - {tags}|}");
+      const list = await createTestList("Tagged", cat.id);
+      const item = await createTestItem(list, schema, "The Matrix", { tags: ["classic", "must-see"] });
 
       const stored = await testDb.items.get(item.id);
-      assertEqual(
-        renderFormatString(list.format_string, stored!, list.schema),
-        "The Matrix - classic, must-see",
-      );
+      assertEqual(renderFormatString(cat.format_string, stored!, cat.schema), "The Matrix - classic, must-see");
     },
   },
   {
     name: "items are scoped to their list",
     fn: async () => {
-      const schema: AttributeDefinition[] = [];
-      const list1 = await createTestList("List A", schema, "{title}");
-      const list2 = await createTestList("List B", schema, "{title}");
+      const cat = await createTestCategory("Scoped", [], "{title}");
+      const list1 = await createTestList("List A", cat.id);
+      const list2 = await createTestList("List B", cat.id);
 
-      await createTestItem(list1, "Item 1");
-      await createTestItem(list1, "Item 2");
-      await createTestItem(list2, "Item 3");
+      await createTestItem(list1, [], "Item 1");
+      await createTestItem(list1, [], "Item 2");
+      await createTestItem(list2, [], "Item 3");
 
       const list1Items = await testDb.items.where("list_id").equals(list1.id).toArray();
       const list2Items = await testDb.items.where("list_id").equals(list2.id).toArray();

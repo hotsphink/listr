@@ -1,6 +1,6 @@
 # Listr
 
-Trello-like list management app with customizable per-list attribute schemas.
+Trello-like list management app with customizable per-category attribute schemas.
 
 ## Structure
 
@@ -15,11 +15,17 @@ Monorepo with npm workspaces:
 - `npm run build` — production build
 - `npm test` — run all workspace tests (vitest)
 - `npm run test --workspace=@listr/shared` — run shared package tests only
+- `npm run test:e2e` — run Playwright e2e tests (from root)
+- Run Playwright from `packages/client` directory, not root
 
 ## Key design decisions
 
 - SolidJS for fine-grained reactivity (no VDOM)
-- Dexie.js wraps IndexedDB; `liveQuery` + SolidJS `from()` for reactive data
+- Dexie.js wraps IndexedDB; reactive subscriptions via `createEffect` + `liveQuery`
 - `title` is a first-class Item field, not part of the dynamic schema
-- Format strings use `{key}`, `{key:modifier}`, `{content|}` conditional syntax
-- Attribute schema is embedded on the List entity (not a separate table)
+- Attribute schema and default format string live on Category, not List
+- Lists belong to Categories; a List can override the Category's format string
+- Format strings: `{key}`, `{key:modifier}`, `{content|}` conditionals, `{key:?true:false}` ternary
+- View modes: list (default), table, card, board (per-list, persisted)
+- Use `jj` for version control, not git
+- PWA with service worker for offline support

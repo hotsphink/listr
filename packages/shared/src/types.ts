@@ -32,6 +32,8 @@ export interface Category {
   name: string;
   color: string;
   position: number;
+  schema: AttributeDefinition[];
+  format_string: string;
   created_at: number;
   updated_at: number;
 }
@@ -44,9 +46,8 @@ export interface List {
   name: string;
   icon: string;
   position: number;
-  format_string: string;
+  format_string: string | null;
   view_mode: ViewMode;
-  schema: AttributeDefinition[];
   created_at: number;
   updated_at: number;
 }

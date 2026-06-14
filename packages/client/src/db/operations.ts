@@ -11,13 +11,20 @@ function now(): number {
 
 // --- Categories ---
 
-export async function createCategory(name: string, color: string): Promise<Category> {
+export async function createCategory(
+  name: string,
+  color: string,
+  schema: AttributeDefinition[] = [],
+  formatString: string = "{title}",
+): Promise<Category> {
   const maxPos = await db.categories.orderBy("position").last();
   const category: Category = {
     id: generateId(),
     name,
     color,
     position: (maxPos?.position ?? -1) + 1,
+    schema,
+    format_string: formatString,
     created_at: now(),
     updated_at: now(),
   };
@@ -25,13 +32,20 @@ export async function createCategory(name: string, color: string): Promise<Categ
   return category;
 }
 
-export async function updateCategory(id: string, updates: Partial<Pick<Category, "name" | "color" | "position">>): Promise<void> {
+export async function updateCategory(
+  id: string,
+  updates: Partial<Pick<Category, "name" | "color" | "position" | "schema" | "format_string">>,
+): Promise<void> {
   await db.categories.update(id, { ...updates, updated_at: now() });
 }
 
 export async function deleteCategory(id: string): Promise<void> {
-  await db.transaction("rw", [db.categories, db.lists], async () => {
-    await db.lists.where("category_id").equals(id).modify({ category_id: null });
+  await db.transaction("rw", [db.categories, db.lists, db.items], async () => {
+    const lists = await db.lists.where("category_id").equals(id).toArray();
+    for (const list of lists) {
+      await db.items.where("list_id").equals(list.id).delete();
+    }
+    await db.lists.where("category_id").equals(id).delete();
     await db.categories.delete(id);
   });
 }
@@ -40,7 +54,6 @@ export async function deleteCategory(id: string): Promise<void> {
 
 export async function createList(
   name: string,
-  schema: AttributeDefinition[] = [],
   categoryId: string | null = null,
 ): Promise<List> {
   const maxPos = await db.lists.orderBy("position").last();
@@ -50,9 +63,8 @@ export async function createList(
     name,
     icon: "",
     position: (maxPos?.position ?? -1) + 1,
-    format_string: "{title}",
+    format_string: null,
     view_mode: "list",
-    schema,
     created_at: now(),
     updated_at: now(),
   };
@@ -62,7 +74,7 @@ export async function createList(
 
 export async function updateList(
   id: string,
-  updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "schema" | "category_id">>,
+  updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "category_id">>,
 ): Promise<void> {
   await db.lists.update(id, { ...updates, updated_at: now() });
 }
@@ -76,16 +88,22 @@ export async function deleteList(id: string): Promise<void> {
 
 // --- Items ---
 
+async function getSchemaForList(listId: string): Promise<AttributeDefinition[]> {
+  const list = await db.lists.get(listId);
+  if (!list?.category_id) return [];
+  const category = await db.categories.get(list.category_id);
+  return category?.schema ?? [];
+}
+
 export async function createItem(
   listId: string,
   title: string,
   attributes: Record<string, unknown> = {},
 ): Promise<Item> {
-  const list = await db.lists.get(listId);
-  if (!list) throw new Error(`List ${listId} not found`);
+  const schema = await getSchemaForList(listId);
 
   const resolvedAttrs = { ...attributes };
-  for (const def of list.schema) {
+  for (const def of schema) {
     if (resolvedAttrs[def.key] === undefined && def.default_value !== undefined) {
       resolvedAttrs[def.key] = def.default_value;
     }
@@ -134,8 +152,7 @@ export async function bulkCreateItems(
   listId: string,
   items: Array<{ title: string; attributes?: Record<string, unknown> }>,
 ): Promise<Item[]> {
-  const list = await db.lists.get(listId);
-  if (!list) throw new Error(`List ${listId} not found`);
+  const schema = await getSchemaForList(listId);
 
   const maxPos = await db.items.where("list_id").equals(listId).last();
   let pos = (maxPos?.position ?? -1) + 1;
@@ -143,7 +160,7 @@ export async function bulkCreateItems(
 
   const newItems: Item[] = items.map((input) => {
     const resolvedAttrs = { ...input.attributes };
-    for (const def of list.schema) {
+    for (const def of schema) {
       if (resolvedAttrs[def.key] === undefined && def.default_value !== undefined) {
         resolvedAttrs[def.key] = def.default_value;
       }

@@ -1,0 +1,108 @@
+import { type Component, createSignal, createEffect } from "solid-js";
+import type { AttributeDefinition, Category } from "@listr/shared";
+import Modal from "./Modal.js";
+import SchemaEditor from "./SchemaEditor.js";
+
+function generateFormatString(schema: AttributeDefinition[]): string {
+  if (schema.length === 0) return "{title}";
+  const parts = schema.map((a) => `{${a.key}}`);
+  return `{title} (${parts.join(", ")})`;
+}
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  onSave: (data: { name: string; color: string; format_string: string; schema: AttributeDefinition[] }) => void;
+  initial?: Category;
+}
+
+const CategoryFormModal: Component<Props> = (props) => {
+  const [name, setName] = createSignal("");
+  const [color, setColor] = createSignal("#5b8def");
+  const [formatStr, setFormatStr] = createSignal("{title}");
+  const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
+  const [formatManuallyEdited, setFormatManuallyEdited] = createSignal(false);
+
+  createEffect(() => {
+    if (props.open) {
+      setName(props.initial?.name ?? "");
+      setColor(props.initial?.color ?? "#5b8def");
+      setFormatStr(props.initial?.format_string ?? "{title}");
+      setSchema(props.initial?.schema ?? []);
+      setFormatManuallyEdited(!!props.initial);
+    }
+  });
+
+  const handleSchemaChange = (newSchema: AttributeDefinition[]) => {
+    setSchema(newSchema);
+    if (!formatManuallyEdited()) {
+      setFormatStr(generateFormatString(newSchema));
+    }
+  };
+
+  const handleSubmit = (e: Event) => {
+    e.preventDefault();
+    if (!name().trim()) return;
+    props.onSave({
+      name: name().trim(),
+      color: color(),
+      format_string: formatStr(),
+      schema: schema(),
+    });
+  };
+
+  return (
+    <Modal open={props.open} onClose={props.onClose}>
+      <h2>{props.initial ? "Edit Category" : "New Category"}</h2>
+      <form onSubmit={handleSubmit}>
+        <div class="form-row">
+          <div class="form-field" style="flex: 1">
+            <label>Name</label>
+            <input
+              value={name()}
+              onInput={(e) => setName(e.currentTarget.value)}
+              autofocus
+            />
+          </div>
+          <div class="form-field" style="flex: 0; min-width: 60px">
+            <label>Color</label>
+            <input
+              type="color"
+              value={color()}
+              onInput={(e) => setColor(e.currentTarget.value)}
+              style="height: 32px; padding: 2px"
+            />
+          </div>
+        </div>
+        <div class="form-field">
+          <label>Format String</label>
+          <input
+            value={formatStr()}
+            onInput={(e) => {
+              setFormatStr(e.currentTarget.value);
+              setFormatManuallyEdited(true);
+            }}
+            placeholder="{title}"
+          />
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px">
+            Available: {"{title}"}, {schema().map((a) => `{${a.key}}`).join(", ") || "add attributes below"}
+          </div>
+        </div>
+        <div class="form-field">
+          <label>Attributes</label>
+          <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button type="submit" class="btn-primary">
+            {props.initial ? "Save" : "Create"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+export default CategoryFormModal;

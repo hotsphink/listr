@@ -1,50 +1,41 @@
-import { type Component, createSignal, createEffect } from "solid-js";
-import type { AttributeDefinition, List } from "@listr/shared";
+import { type Component, createSignal, createEffect, For, Show } from "solid-js";
+import type { Category, List } from "@listr/shared";
 import Modal from "./Modal.js";
-import SchemaEditor from "./SchemaEditor.js";
-
-function generateFormatString(schema: AttributeDefinition[]): string {
-  if (schema.length === 0) return "{title}";
-  const parts = schema.map((a) => `{${a.key}}`);
-  return `{title} (${parts.join(", ")})`;
-}
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (data: { name: string; format_string: string; schema: AttributeDefinition[] }) => void;
+  onSave: (data: { name: string; category_id: string | null; format_string: string | null }) => void;
+  categories: Category[];
   initial?: List;
+  defaultCategoryId?: string | null;
 }
 
 const ListFormModal: Component<Props> = (props) => {
   const [name, setName] = createSignal("");
-  const [formatStr, setFormatStr] = createSignal("{title}");
-  const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
-  const [formatManuallyEdited, setFormatManuallyEdited] = createSignal(false);
+  const [categoryId, setCategoryId] = createSignal<string | null>(null);
+  const [formatOverride, setFormatOverride] = createSignal("");
+  const [overrideFormat, setOverrideFormat] = createSignal(false);
 
   createEffect(() => {
     if (props.open) {
       setName(props.initial?.name ?? "");
-      setFormatStr(props.initial?.format_string ?? "{title}");
-      setSchema(props.initial?.schema ?? []);
-      setFormatManuallyEdited(!!props.initial);
+      setCategoryId(props.initial?.category_id ?? props.defaultCategoryId ?? null);
+      const hasOverride = props.initial?.format_string != null;
+      setOverrideFormat(hasOverride);
+      setFormatOverride(props.initial?.format_string ?? "");
     }
   });
 
-  const handleSchemaChange = (newSchema: AttributeDefinition[]) => {
-    setSchema(newSchema);
-    if (!formatManuallyEdited()) {
-      setFormatStr(generateFormatString(newSchema));
-    }
-  };
+  const selectedCategory = () => props.categories.find((c) => c.id === categoryId());
 
   const handleSubmit = (e: Event) => {
     e.preventDefault();
     if (!name().trim()) return;
     props.onSave({
       name: name().trim(),
-      format_string: formatStr(),
-      schema: schema(),
+      category_id: categoryId(),
+      format_string: overrideFormat() ? formatOverride() : null,
     });
   };
 
@@ -61,23 +52,50 @@ const ListFormModal: Component<Props> = (props) => {
           />
         </div>
         <div class="form-field">
-          <label>Format String</label>
-          <input
-            value={formatStr()}
-            onInput={(e) => {
-              setFormatStr(e.currentTarget.value);
-              setFormatManuallyEdited(true);
-            }}
-            placeholder="{title}"
-          />
-          <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px">
-            Available: {"{title}"}, {schema().map((a) => `{${a.key}}`).join(", ") || "add attributes below"}
-          </div>
+          <label>Category</label>
+          <select
+            value={categoryId() ?? ""}
+            onChange={(e) => setCategoryId(e.currentTarget.value || null)}
+          >
+            <option value="">None</option>
+            <For each={props.categories}>
+              {(cat) => <option value={cat.id}>{cat.name}</option>}
+            </For>
+          </select>
         </div>
-        <div class="form-field">
-          <label>Attributes</label>
-          <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
-        </div>
+        <Show when={selectedCategory()}>
+          {(cat) => (
+            <div class="form-field">
+              <div class="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={overrideFormat()}
+                  onChange={(e) => {
+                    setOverrideFormat(e.currentTarget.checked);
+                    if (e.currentTarget.checked && !formatOverride()) {
+                      setFormatOverride(cat().format_string);
+                    }
+                  }}
+                />
+                <label style="margin-bottom: 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text)">
+                  Override category format string
+                </label>
+              </div>
+              <Show when={overrideFormat()}>
+                <input
+                  value={formatOverride()}
+                  onInput={(e) => setFormatOverride(e.currentTarget.value)}
+                  placeholder={cat().format_string}
+                />
+              </Show>
+              <Show when={!overrideFormat()}>
+                <div style="font-size: 12px; color: var(--text-muted)">
+                  Using: {cat().format_string}
+                </div>
+              </Show>
+            </div>
+          )}
+        </Show>
         <div class="modal-actions">
           <button type="button" class="btn-ghost" onClick={props.onClose}>
             Cancel

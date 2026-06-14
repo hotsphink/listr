@@ -84,6 +84,24 @@ body {
   color: var(--accent);
 }
 
+.sidebar-category {
+  margin-bottom: 4px;
+}
+
+.sidebar-category-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: default;
+}
+
+.sidebar-category-lists .sidebar-item {
+  padding-left: 20px;
+}
+
 .sidebar-rename-input {
   background: var(--bg-input);
   border: 1px solid var(--border-focus);
@@ -125,6 +143,13 @@ body {
 .header-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.search-input {
+  width: 160px;
+  font-size: 12px;
+  padding: 5px 10px;
 }
 
 /* Buttons */
@@ -262,6 +287,17 @@ tbody tr {
 .dashboard h2 {
   font-size: 16px;
   color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.dashboard-category {
+  margin-bottom: 24px;
+}
+
+.dashboard-category-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
@@ -602,6 +638,84 @@ tbody tr {
 
 .context-menu-item.danger:hover {
   background: rgba(224, 85, 85, 0.1);
+}
+
+/* Board view */
+.board-container {
+  flex: 1;
+  overflow: auto;
+}
+
+.board-columns {
+  display: flex;
+  gap: 12px;
+  padding: 12px 24px 24px;
+  overflow-x: auto;
+  min-height: 200px;
+}
+
+.board-column {
+  min-width: 220px;
+  max-width: 300px;
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.board-column-header {
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.board-column-count {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.board-column-items {
+  padding: 8px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.board-item {
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.board-item:hover {
+  border-color: var(--border-focus);
+}
+
+.board-add {
+  padding: 6px 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: center;
+  border-radius: var(--radius);
+  transition: background 0.15s, color 0.15s;
+}
+
+.board-add:hover {
+  background: var(--bg-hover);
+  color: var(--text-muted);
 }
 
 /* Drag and drop */

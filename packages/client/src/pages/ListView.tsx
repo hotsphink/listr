@@ -1,13 +1,13 @@
 import { type Component, For, Show, createSignal, createEffect, createMemo, Switch, Match, onCleanup } from "solid-js";
 import { useParams, useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
+import { from } from "solid-js";
 import { renderFormatString } from "@listr/shared";
-import type { Item, List, ViewMode } from "@listr/shared";
+import type { AttributeDefinition, Category, Item, List, ViewMode } from "@listr/shared";
 import { db } from "../db/database.js";
 import {
   createItem,
   updateItem,
-  updateItemAttribute,
   deleteItem,
   updateList,
   deleteList,
@@ -20,6 +20,7 @@ const VIEW_MODES: { mode: ViewMode; label: string }[] = [
   { mode: "list", label: "List" },
   { mode: "table", label: "Table" },
   { mode: "card", label: "Cards" },
+  { mode: "board", label: "Board" },
 ];
 
 const ListView: Component = () => {
@@ -30,6 +31,7 @@ const ListView: Component = () => {
   const [showAddItem, setShowAddItem] = createSignal(false);
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();
   const [showEditList, setShowEditList] = createSignal(false);
+  const [searchQuery, setSearchQuery] = createSignal("");
 
   createEffect(() => {
     if ((location.state as any)?.openSettings) {
@@ -39,20 +41,39 @@ const ListView: Component = () => {
   });
 
   const [list, setList] = createSignal<List | undefined>();
-  const [items, setItems] = createSignal<Item[]>([]);
+  const [allItems, setAllItems] = createSignal<Item[]>([]);
+  const [category, setCategory] = createSignal<Category | undefined>();
+  const allCategories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
 
   createEffect(() => {
     const id = params.id;
     setEditingItem(undefined);
+    setSearchQuery("");
     const sub1 = liveQuery(() => db.lists.get(id)).subscribe((v) => setList(v));
-    const sub2 = liveQuery(() => db.items.where("list_id").equals(id).sortBy("position")).subscribe((v) => setItems(v));
+    const sub2 = liveQuery(() => db.items.where("list_id").equals(id).sortBy("position")).subscribe((v) => setAllItems(v));
     onCleanup(() => { sub1.unsubscribe(); sub2.unsubscribe(); });
   });
 
-  const visibleSchema = createMemo(() => {
+  createEffect(() => {
     const l = list();
-    if (!l) return [];
-    return [...l.schema].sort((a, b) => a.position - b.position);
+    if (l?.category_id) {
+      const sub = liveQuery(() => db.categories.get(l.category_id!)).subscribe((v) => setCategory(v));
+      onCleanup(() => sub.unsubscribe());
+    } else {
+      setCategory(undefined);
+    }
+  });
+
+  const schema = createMemo((): AttributeDefinition[] => {
+    const cat = category();
+    if (!cat) return [];
+    return [...cat.schema].sort((a, b) => a.position - b.position);
+  });
+
+  const effectiveFormatString = createMemo(() => {
+    const l = list();
+    const cat = category();
+    return l?.format_string || cat?.format_string || "{title}";
   });
 
   const viewMode = createMemo(() => list()?.view_mode ?? "list");
@@ -60,6 +81,18 @@ const ListView: Component = () => {
   const setViewMode = async (mode: ViewMode) => {
     await updateList(params.id, { view_mode: mode });
   };
+
+  const items = createMemo(() => {
+    const q = searchQuery().toLowerCase().trim();
+    if (!q) return allItems();
+    return allItems().filter((item) => {
+      if (item.title.toLowerCase().includes(q)) return true;
+      for (const val of Object.values(item.attributes)) {
+        if (val != null && String(val).toLowerCase().includes(q)) return true;
+      }
+      return false;
+    });
+  });
 
   const handleAddItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
     await createItem(params.id, data.title, data.attributes);
@@ -80,21 +113,13 @@ const ListView: Component = () => {
     setEditingItem(undefined);
   };
 
-  const handleEditList = async (data: { name: string; format_string: string; schema: any[] }) => {
+  const handleEditList = async (data: { name: string; category_id: string | null; format_string: string | null }) => {
     await updateList(params.id, data);
     setShowEditList(false);
   };
 
-  const handleDeleteList = async () => {
-    if (!confirm("Delete this list and all its items?")) return;
-    await deleteList(params.id);
-    navigate("/");
-  };
-
   const formatItem = (item: Item): string => {
-    const l = list();
-    if (!l) return item.title;
-    return renderFormatString(l.format_string, item, l.schema);
+    return renderFormatString(effectiveFormatString(), item, schema());
   };
 
   const formatCellValue = (value: unknown, type: string): string => {
@@ -110,9 +135,31 @@ const ListView: Component = () => {
     return String(value);
   };
 
-  const initSortable = (el: HTMLElement, extraOptions?: Partial<import("sortablejs").default.Options>) => {
-    useSortable(el, () => items(), extraOptions);
+  const initSortable = (el: HTMLElement) => {
+    useSortable(el, () => items());
   };
+
+  // Board view helpers
+  const boardGroupAttr = createMemo(() => {
+    return schema().find((a) => a.type === "enum");
+  });
+
+  const boardColumns = createMemo(() => {
+    const attr = boardGroupAttr();
+    if (!attr) return [];
+    const cols = (attr.options ?? []).map((opt) => ({
+      value: opt,
+      items: items().filter((item) => item.attributes[attr.key] === opt),
+    }));
+    cols.push({
+      value: "",
+      items: items().filter((item) => {
+        const v = item.attributes[attr?.key ?? ""];
+        return v == null || v === "" || !(attr?.options ?? []).includes(v as string);
+      }),
+    });
+    return cols;
+  });
 
   return (
     <div class="main">
@@ -122,6 +169,13 @@ const ListView: Component = () => {
             <div class="page-header">
               <h1>{l().name}</h1>
               <div class="header-actions">
+                <input
+                  class="search-input"
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery()}
+                  onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                />
                 <div class="view-switcher" role="tablist" aria-label="View mode">
                   <For each={VIEW_MODES}>
                     {(vm) => (
@@ -141,9 +195,6 @@ const ListView: Component = () => {
                 <button class="btn-ghost" onClick={() => setShowEditList(true)}>
                   Settings
                 </button>
-                <button class="btn-primary" onClick={() => setShowAddItem(true)}>
-                  + Add Item
-                </button>
               </div>
             </div>
 
@@ -151,7 +202,7 @@ const ListView: Component = () => {
                 <Match when={viewMode() === "list"}>
                   <div class="list-view-container">
                     <ul class="list-view" ref={(el) => initSortable(el)}>
-                      <For each={items() ?? []}>
+                      <For each={items()}>
                         {(item) => (
                           <li class="list-view-item" onClick={() => setEditingItem(item)}>
                             <span class="drag-handle" title="Drag to reorder">⠿</span>
@@ -171,18 +222,18 @@ const ListView: Component = () => {
                         <tr>
                           <th style="width: 32px"></th>
                           <th>Title</th>
-                          <For each={visibleSchema()}>
+                          <For each={schema()}>
                             {(attr) => <th>{attr.label || attr.key}</th>}
                           </For>
                         </tr>
                       </thead>
                       <tbody ref={(el) => initSortable(el)}>
-                        <For each={items() ?? []}>
+                        <For each={items()}>
                           {(item) => (
                             <tr onClick={() => setEditingItem(item)}>
                               <td class="drag-handle-cell"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
                               <td style="font-weight: 500">{formatItem(item)}</td>
-                              <For each={visibleSchema()}>
+                              <For each={schema()}>
                                 {(attr) => (
                                   <td>{formatCellValue(item.attributes[attr.key], attr.type)}</td>
                                 )}
@@ -199,14 +250,14 @@ const ListView: Component = () => {
                 <Match when={viewMode() === "card"}>
                   <div class="card-container">
                     <div class="card-grid" ref={(el) => initSortable(el)}>
-                      <For each={items() ?? []}>
+                      <For each={items()}>
                         {(item) => (
                           <div class="item-card" onClick={() => setEditingItem(item)}>
                             <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
                             <div class="item-card-title">{formatItem(item)}</div>
-                            <Show when={visibleSchema().length > 0}>
+                            <Show when={schema().length > 0}>
                               <div class="item-card-attrs">
-                                <For each={visibleSchema()}>
+                                <For each={schema()}>
                                   {(attr) => {
                                     const val = item.attributes[attr.key];
                                     if (val == null || val === "") return null;
@@ -235,13 +286,59 @@ const ListView: Component = () => {
                     </div>
                   </div>
                 </Match>
+
+                <Match when={viewMode() === "board"}>
+                  <div class="board-container">
+                    <Show
+                      when={boardGroupAttr()}
+                      fallback={
+                        <div class="empty-state">
+                          <p>Board view requires a Select attribute to group by.</p>
+                          <p style="font-size: 13px; color: var(--text-dim)">
+                            Add a Select attribute to the category to use board view.
+                          </p>
+                        </div>
+                      }
+                    >
+                      {(groupAttr) => (
+                        <>
+                          <div style="padding: 8px 24px 0; font-size: 12px; color: var(--text-muted)">
+                            Grouped by: {groupAttr().label || groupAttr().key}
+                          </div>
+                          <div class="board-columns">
+                            <For each={boardColumns()}>
+                              {(col) => (
+                                <div class="board-column">
+                                  <div class="board-column-header">
+                                    {col.value || "Unset"}
+                                    <span class="board-column-count">{col.items.length}</span>
+                                  </div>
+                                  <div class="board-column-items">
+                                    <For each={col.items}>
+                                      {(item) => (
+                                        <div class="board-item" onClick={() => setEditingItem(item)}>
+                                          {formatItem(item)}
+                                        </div>
+                                      )}
+                                    </For>
+                                    <div class="board-add" onClick={() => setShowAddItem(true)}>+</div>
+                                  </div>
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        </>
+                      )}
+                    </Show>
+                  </div>
+                </Match>
               </Switch>
 
             <ItemFormModal
               open={showAddItem()}
               onClose={() => setShowAddItem(false)}
               onSave={handleAddItem}
-              schema={l().schema}
+              schema={schema()}
             />
 
             <ItemFormModal
@@ -249,7 +346,7 @@ const ListView: Component = () => {
               onClose={() => setEditingItem(undefined)}
               onSave={handleEditItem}
               onDelete={handleDeleteItem}
-              schema={l().schema}
+              schema={schema()}
               initial={editingItem()}
             />
 
@@ -257,6 +354,7 @@ const ListView: Component = () => {
               open={showEditList()}
               onClose={() => setShowEditList(false)}
               onSave={handleEditList}
+              categories={allCategories() ?? []}
               initial={l()}
             />
           </>
