@@ -5,7 +5,7 @@ import Modal from "./Modal.js";
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (data: { name: string; category_id: string | null; format_string: string | null }) => void;
+  onSave: (data: { name: string; category_id: string; format_string: string | null }) => void;
   categories: Category[];
   initial?: List;
   defaultCategoryId?: string | null;
@@ -13,14 +13,14 @@ interface Props {
 
 const ListFormModal: Component<Props> = (props) => {
   const [name, setName] = createSignal("");
-  const [categoryId, setCategoryId] = createSignal<string | null>(null);
+  const [categoryId, setCategoryId] = createSignal("");
   const [formatOverride, setFormatOverride] = createSignal("");
   const [overrideFormat, setOverrideFormat] = createSignal(false);
 
   createEffect(() => {
     if (props.open) {
       setName(props.initial?.name ?? "");
-      setCategoryId(props.initial?.category_id ?? props.defaultCategoryId ?? null);
+      setCategoryId(props.initial?.category_id ?? props.defaultCategoryId ?? props.categories[0]?.id ?? "");
       const hasOverride = props.initial?.format_string != null;
       setOverrideFormat(hasOverride);
       setFormatOverride(props.initial?.format_string ?? "");
@@ -31,7 +31,7 @@ const ListFormModal: Component<Props> = (props) => {
 
   const handleSubmit = (e: Event) => {
     e.preventDefault();
-    if (!name().trim()) return;
+    if (!name().trim() || !categoryId()) return;
     props.onSave({
       name: name().trim(),
       category_id: categoryId(),
@@ -54,10 +54,9 @@ const ListFormModal: Component<Props> = (props) => {
         <div class="form-field">
           <label>Category</label>
           <select
-            value={categoryId() ?? ""}
-            onChange={(e) => setCategoryId(e.currentTarget.value || null)}
+            value={categoryId()}
+            onChange={(e) => setCategoryId(e.currentTarget.value)}
           >
-            <option value="">None</option>
             <For each={props.categories}>
               {(cat) => <option value={cat.id}>{cat.name}</option>}
             </For>

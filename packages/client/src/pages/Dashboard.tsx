@@ -34,6 +34,10 @@ const Dashboard: Component = () => {
       setShowCreateList(true);
       navigate("/", { replace: true });
     }
+    if (state?.openCreateCategory) {
+      setShowCreateCategory(true);
+      navigate("/", { replace: true });
+    }
     if (state?.editCategory) {
       const cat = (categories() ?? []).find((c) => c.id === state.editCategory);
       if (cat) setEditingCategory(cat);
@@ -44,10 +48,7 @@ const Dashboard: Component = () => {
   const listsForCategory = (catId: string) =>
     (lists() ?? []).filter((l) => l.category_id === catId);
 
-  const uncategorizedLists = () =>
-    (lists() ?? []).filter((l) => !l.category_id);
-
-  const handleCreateList = async (data: { name: string; category_id: string | null; format_string: string | null }) => {
+  const handleCreateList = async (data: { name: string; category_id: string; format_string: string | null }) => {
     const list = await createList(data.name, data.category_id);
     if (data.format_string != null) {
       await db.lists.update(list.id, { format_string: data.format_string });
@@ -130,14 +131,6 @@ const Dashboard: Component = () => {
             )}
           </For>
 
-          <Show when={uncategorizedLists().length > 0}>
-            <h2 style="color: var(--text-muted); margin-bottom: 12px">Uncategorized</h2>
-            <div class="list-grid">
-              <For each={uncategorizedLists()}>
-                {(list) => renderListCard(list)}
-              </For>
-            </div>
-          </Show>
         </Show>
       </div>
 

@@ -113,7 +113,7 @@ const ListView: Component = () => {
     setEditingItem(undefined);
   };
 
-  const handleEditList = async (data: { name: string; category_id: string | null; format_string: string | null }) => {
+  const handleEditList = async (data: { name: string; category_id: string; format_string: string | null }) => {
     await updateList(params.id, data);
     setShowEditList(false);
   };

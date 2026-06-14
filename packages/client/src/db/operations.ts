@@ -54,7 +54,7 @@ export async function deleteCategory(id: string): Promise<void> {
 
 export async function createList(
   name: string,
-  categoryId: string | null = null,
+  categoryId: string,
 ): Promise<List> {
   const maxPos = await db.lists.orderBy("position").last();
   const list: List = {

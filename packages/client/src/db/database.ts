@@ -23,9 +23,14 @@ export class ListrDB extends Dexie {
       const lists = await tx.table("lists").toArray();
       const categories = tx.table("categories");
       const listsTable = tx.table("lists");
+      const now = Date.now();
+
+      // Group lists: those with schemas get their own category,
+      // uncategorized lists without schemas go into a "General" category
+      let generalCatId: string | null = null;
 
       for (const list of lists) {
-        if (list.schema && list.schema.length > 0) {
+        if (list.schema && list.schema.length > 0 && !list.category_id) {
           const catId = crypto.randomUUID();
           await categories.add({
             id: catId,
@@ -37,10 +42,22 @@ export class ListrDB extends Dexie {
             created_at: list.created_at,
             updated_at: list.updated_at,
           });
-          await listsTable.update(list.id, {
-            category_id: catId,
-            format_string: null,
-          });
+          await listsTable.update(list.id, { category_id: catId, format_string: null });
+        } else if (!list.category_id) {
+          if (!generalCatId) {
+            generalCatId = crypto.randomUUID();
+            await categories.add({
+              id: generalCatId,
+              name: "General",
+              color: "#888888",
+              position: 999,
+              schema: [],
+              format_string: "{title}",
+              created_at: now,
+              updated_at: now,
+            });
+          }
+          await listsTable.update(list.id, { category_id: generalCatId, format_string: null });
         }
       }
 

@@ -42,7 +42,7 @@ export type ViewMode = "list" | "table" | "board" | "card";
 
 export interface List {
   id: string;
-  category_id: string | null;
+  category_id: string;
   name: string;
   icon: string;
   position: number;

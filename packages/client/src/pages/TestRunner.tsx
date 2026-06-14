@@ -70,7 +70,7 @@ async function createTestCategory(
 
 async function createTestList(
   name: string,
-  categoryId: string | null,
+  categoryId: string,
 ): Promise<List> {
   const list: List = {
     id: id(),
