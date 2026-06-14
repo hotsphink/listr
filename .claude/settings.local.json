@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(PLAYWRIGHT_BROWSERS_PATH=0 npx playwright *)",
+      "Bash(/usr/bin/firefox *)",
+      "Bash(npx playwright *)",
+      "Bash(npm ls *)",
+      "Bash(npm install *)",
+      "Bash(node -e \"console.log\\(require\\('@playwright/test/package.json'\\).version\\)\")"
+    ]
+  }
+}

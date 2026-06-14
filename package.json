@@ -1,0 +1,14 @@
+{
+  "name": "listr",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/client",
+    "packages/server"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@listr/client",
+    "build": "npm run build --workspace=@listr/client",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

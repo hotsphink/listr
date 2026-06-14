@@ -1,0 +1,224 @@
+import { describe, it, expect } from "vitest";
+import { parseFormatString, renderFormatString } from "./format-string.js";
+import type { AttributeDefinition, Item, List } from "./types.js";
+
+function makeItem(title: string, attrs: Record<string, unknown> = {}): Item {
+  return {
+    id: "test-id",
+    list_id: "test-list",
+    title,
+    position: 0,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    attributes: attrs,
+  };
+}
+
+describe("parseFormatString", () => {
+  it("parses plain text", () => {
+    const segments = parseFormatString("hello world");
+    expect(segments).toEqual([{ kind: "literal", text: "hello world" }]);
+  });
+
+  it("parses a single placeholder", () => {
+    const segments = parseFormatString("{title}");
+    expect(segments).toEqual([{ kind: "placeholder", key: "title", modifier: undefined, modifierArg: undefined }]);
+  });
+
+  it("parses placeholder with modifier", () => {
+    const segments = parseFormatString("{title:upper}");
+    expect(segments).toEqual([{ kind: "placeholder", key: "title", modifier: "upper", modifierArg: undefined }]);
+  });
+
+  it("parses placeholder with modifier and arg", () => {
+    const segments = parseFormatString("{rating:fallback=N/A}");
+    expect(segments).toEqual([{ kind: "placeholder", key: "rating", modifier: "fallback", modifierArg: "N/A" }]);
+  });
+
+  it("parses mixed literal and placeholders", () => {
+    const segments = parseFormatString("{rating} - {title}");
+    expect(segments).toHaveLength(3);
+    expect(segments[0]).toEqual({ kind: "placeholder", key: "rating", modifier: undefined, modifierArg: undefined });
+    expect(segments[1]).toEqual({ kind: "literal", text: " - " });
+    expect(segments[2]).toEqual({ kind: "placeholder", key: "title", modifier: undefined, modifierArg: undefined });
+  });
+
+  it("parses escaped braces", () => {
+    const segments = parseFormatString("{{literal}}");
+    expect(segments).toEqual([{ kind: "literal", text: "{literal}" }]);
+  });
+
+  it("parses conditional sections", () => {
+    const segments = parseFormatString("{ ({duration})|}");
+    expect(segments).toHaveLength(1);
+    expect(segments[0].kind).toBe("conditional");
+  });
+});
+
+describe("renderFormatString", () => {
+  it("renders title only", () => {
+    const item = makeItem("Inception");
+    expect(renderFormatString("{title}", item)).toBe("Inception");
+  });
+
+  it("renders mixed format", () => {
+    const item = makeItem("Inception", { rating: 4.5, duration: 148 });
+    expect(renderFormatString("{rating} - {title}", item)).toBe("4.5 - Inception");
+  });
+
+  it("falls back to title when a required placeholder is missing", () => {
+    const item = makeItem("Inception", {});
+    expect(renderFormatString("{rating} - {title}", item)).toBe("Inception");
+  });
+
+  it("applies upper modifier", () => {
+    const item = makeItem("Inception");
+    expect(renderFormatString("{title:upper}", item)).toBe("INCEPTION");
+  });
+
+  it("applies lower modifier", () => {
+    const item = makeItem("INCEPTION");
+    expect(renderFormatString("{title:lower}", item)).toBe("inception");
+  });
+
+  it("applies fallback modifier for missing values", () => {
+    const item = makeItem("Inception", {});
+    expect(renderFormatString("{rating:fallback=N/A} - {title}", item)).toBe("N/A - Inception");
+  });
+
+  it("applies stars modifier", () => {
+    const item = makeItem("Inception", { rating: 4 });
+    expect(renderFormatString("{rating:stars}", item)).toBe("★★★★☆");
+  });
+
+  it("renders conditional section when value present", () => {
+    const item = makeItem("Inception", { duration: 148 });
+    const result = renderFormatString("{title}{ ({duration})| }", item);
+    expect(result).toBe("Inception (148)");
+  });
+
+  it("renders conditional fallback when value missing", () => {
+    const item = makeItem("Inception", {});
+    const result = renderFormatString("{title}{ ({duration})| }", item);
+    expect(result).toBe("Inception ");
+  });
+
+  it("renders conditional with empty fallback", () => {
+    const item = makeItem("Inception", {});
+    const result = renderFormatString("{title}{ ({duration})|}",item);
+    expect(result).toBe("Inception");
+  });
+
+  it("applies short modifier to duration", () => {
+    const item = makeItem("Inception", { duration: 148 });
+    expect(renderFormatString("{duration:short}", item)).toBe("2h28m");
+  });
+
+  it("applies long modifier to duration", () => {
+    const item = makeItem("Inception", { duration: 148 });
+    expect(renderFormatString("{duration:long}", item)).toBe("2 hours 28 minutes");
+  });
+
+  it("handles escaped braces", () => {
+    const item = makeItem("Test");
+    expect(renderFormatString("{{hello}} {title}", item)).toBe("{hello} Test");
+  });
+
+  it("handles boolean values", () => {
+    const item = makeItem("Test", { watched: true });
+    expect(renderFormatString("{watched}", item)).toBe("yes");
+  });
+
+  it("handles array values", () => {
+    const item = makeItem("Test", { tags: ["action", "sci-fi"] });
+    expect(renderFormatString("{tags}", item)).toBe("action, sci-fi");
+  });
+
+  it("supports custom modifiers", () => {
+    const item = makeItem("Test", { name: "hello" });
+    const customModifiers = {
+      reverse: (v: unknown) => String(v).split("").reverse().join(""),
+    };
+    expect(renderFormatString("{name:reverse}", item, undefined, customModifiers)).toBe("olleh");
+  });
+});
+
+describe("custom attribute in display", () => {
+  function makeList(schema: AttributeDefinition[], formatString: string): List {
+    return {
+      id: "list-1",
+      category_id: null,
+      name: "Movies",
+      icon: "",
+      position: 0,
+      format_string: formatString,
+      view_mode: "table",
+      schema,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+  }
+
+  it("renders a movie list with rating, title, and conditional duration", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "rating", label: "Rating", type: "rating", required: false, position: 0 },
+      { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
+      { key: "genre", label: "Genre", type: "enum", required: false, options: ["action", "sci-fi", "drama"], position: 2 },
+    ];
+    const list = makeList(schema, "{rating:stars} {title}{ ({duration:short})|}{ [{genre:upper}]|}");
+
+    const inception = makeItem("Inception", { rating: 5, duration: 148, genre: "sci-fi" });
+    expect(renderFormatString(list.format_string, inception, list.schema))
+      .toBe("★★★★★ Inception (2h28m) [SCI-FI]");
+
+    const noGenre = makeItem("Memento", { rating: 4, duration: 113 });
+    expect(renderFormatString(list.format_string, noGenre, list.schema))
+      .toBe("★★★★☆ Memento (1h53m)");
+
+    const titleOnly = makeItem("TBD", {});
+    expect(renderFormatString(list.format_string, titleOnly, list.schema))
+      .toBe("TBD");
+  });
+
+  it("renders custom text attributes in format string", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "director", label: "Director", type: "text", required: false, position: 0 },
+      { key: "year", label: "Year", type: "number", required: false, position: 1 },
+    ];
+    const list = makeList(schema, "{title} ({year}){ - dir. {director}|}");
+
+    const item = makeItem("Blade Runner", { director: "Ridley Scott", year: 1982 });
+    expect(renderFormatString(list.format_string, item, list.schema))
+      .toBe("Blade Runner (1982) - dir. Ridley Scott");
+
+    const noDirector = makeItem("Blade Runner", { year: 1982 });
+    expect(renderFormatString(list.format_string, noDirector, list.schema))
+      .toBe("Blade Runner (1982)");
+  });
+
+  it("renders tags attribute", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "tags", label: "Tags", type: "tags", required: false, options: ["must-see", "classic", "rewatchable"], position: 0 },
+    ];
+    const list = makeList(schema, "{title}{ - {tags}|}");
+
+    const item = makeItem("The Matrix", { tags: ["must-see", "classic"] });
+    expect(renderFormatString(list.format_string, item, list.schema))
+      .toBe("The Matrix - must-see, classic");
+  });
+
+  it("renders boolean watched status with fallback", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
+    ];
+    const list = makeList(schema, "{title} [{watched:fallback=unwatched}]");
+
+    const watched = makeItem("Inception", { watched: true });
+    expect(renderFormatString(list.format_string, watched, list.schema))
+      .toBe("Inception [yes]");
+
+    const notSet = makeItem("Tenet", {});
+    expect(renderFormatString(list.format_string, notSet, list.schema))
+      .toBe("Tenet [unwatched]");
+  });
+});
