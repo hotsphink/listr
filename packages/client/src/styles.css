@@ -66,6 +66,14 @@ body {
   display: none;
 }
 
+.search-toggle-btn {
+  display: none;
+}
+
+.mobile-search-bar {
+  display: none;
+}
+
 .sidebar {
   width: 240px;
   background: var(--bg-surface);
@@ -228,19 +236,81 @@ body {
   }
 
   .page-header {
-    flex-wrap: wrap;
-    padding: 10px 16px 8px;
+    flex-wrap: nowrap;
+    padding: 10px 12px 10px 0;
     gap: 6px;
+    align-items: center;
   }
 
   .page-header h1 {
-    flex: 1 1 100%;
-    padding-left: 44px; /* clear the hamburger button */
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-left: 50px;
+    font-size: 17px;
   }
 
   .header-actions {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .header-actions .search-input {
+    display: none;
+  }
+
+  .search-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .search-toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .view-switcher-select {
+    display: block;
+    flex-shrink: 0;
+    width: auto;
+  }
+
+  .mobile-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px 10px;
+  }
+
+  .mobile-search-bar .search-input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+
+  .mobile-search-bar-close {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 6px;
+    line-height: 1;
   }
 }
 
@@ -678,13 +748,33 @@ tbody tr {
   color: var(--text);
 }
 
+@media (min-width: 769px) {
+  .view-switcher-select {
+    display: none;
+  }
+
+  .search-toggle-btn {
+    display: none;
+  }
+
+  .mobile-search-bar {
+    display: none;
+  }
+}
+
 /* View switcher */
 .view-switcher {
-  display: flex;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  display: none;
+}
+
+@media (min-width: 769px) {
+  .view-switcher {
+    display: flex;
+  }
 }
 
 .view-switcher-btn {

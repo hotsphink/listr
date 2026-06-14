@@ -32,6 +32,7 @@ const ListView: Component = () => {
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();
   const [showEditList, setShowEditList] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchOpen, setSearchOpen] = createSignal(false);
 
   createEffect(() => {
     if ((location.state as any)?.openSettings) {
@@ -49,6 +50,7 @@ const ListView: Component = () => {
     const id = params.id;
     setEditingItem(undefined);
     setSearchQuery("");
+    setSearchOpen(false);
     const sub1 = liveQuery(() => db.lists.get(id)).subscribe((v) => setList(v));
     const sub2 = liveQuery(() => db.items.where("list_id").equals(id).sortBy("position")).subscribe((v) => setAllItems(v));
     onCleanup(() => { sub1.unsubscribe(); sub2.unsubscribe(); });
@@ -176,6 +178,14 @@ const ListView: Component = () => {
                   value={searchQuery()}
                   onInput={(e) => setSearchQuery(e.currentTarget.value)}
                 />
+                <button
+                  class="search-toggle-btn"
+                  classList={{ active: searchOpen() }}
+                  onClick={() => setSearchOpen((v) => !v)}
+                  aria-label="Search"
+                >
+                  🔍
+                </button>
                 <div class="view-switcher" role="tablist" aria-label="View mode">
                   <For each={VIEW_MODES}>
                     {(vm) => (
@@ -192,8 +202,37 @@ const ListView: Component = () => {
                     )}
                   </For>
                 </div>
+                <select
+                  class="view-switcher-select"
+                  value={viewMode()}
+                  onChange={(e) => setViewMode(e.currentTarget.value as ViewMode)}
+                  aria-label="View mode"
+                >
+                  <For each={VIEW_MODES}>
+                    {(vm) => <option value={vm.mode}>{vm.label}</option>}
+                  </For>
+                </select>
               </div>
             </div>
+            <Show when={searchOpen()}>
+              <div class="mobile-search-bar">
+                <input
+                  class="search-input"
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery()}
+                  onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                  ref={(el) => setTimeout(() => el.focus(), 50)}
+                />
+                <button
+                  class="mobile-search-bar-close"
+                  onClick={() => { setSearchOpen(false); setSearchQuery(""); }}
+                  aria-label="Close search"
+                >
+                  ✕
+                </button>
+              </div>
+            </Show>
 
               <Switch>
                 <Match when={viewMode() === "list"}>
