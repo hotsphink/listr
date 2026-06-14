@@ -146,17 +146,6 @@ const ListView: Component = () => {
               </div>
             </div>
 
-            <Show
-              when={(items() ?? []).length > 0}
-              fallback={
-                <div class="empty-state">
-                  <p>No items yet.</p>
-                  <button class="btn-primary" onClick={() => setShowAddItem(true)}>
-                    + Add Item
-                  </button>
-                </div>
-              }
-            >
               <Switch>
                 <Match when={viewMode() === "list"}>
                   <div class="list-view-container">
@@ -168,6 +157,7 @@ const ListView: Component = () => {
                           </li>
                         )}
                       </For>
+                      <li class="list-view-add" onClick={() => setShowAddItem(true)}>+ Add Item</li>
                     </ul>
                   </div>
                 </Match>
@@ -207,6 +197,7 @@ const ListView: Component = () => {
                         </For>
                       </tbody>
                     </table>
+                    <div class="table-add" onClick={() => setShowAddItem(true)}>+ Add Item</div>
                   </div>
                 </Match>
 
@@ -248,11 +239,11 @@ const ListView: Component = () => {
                           </div>
                         )}
                       </For>
+                      <div class="item-card add-card" onClick={() => setShowAddItem(true)}>+ Add Item</div>
                     </div>
                   </div>
                 </Match>
               </Switch>
-            </Show>
 
             <ItemFormModal
               open={showAddItem()}

@@ -241,6 +241,19 @@ tbody tr {
   cursor: pointer;
 }
 
+.table-add {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.table-add:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 /* Dashboard */
 .dashboard {
   padding: 24px;
@@ -448,6 +461,19 @@ tbody tr {
   background: var(--bg-hover);
 }
 
+.list-view-add {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.list-view-add:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 /* View switcher */
 .view-switcher {
   display: flex;
@@ -507,6 +533,19 @@ tbody tr {
 .item-card:hover {
   border-color: var(--border-focus);
   background: var(--bg-hover);
+}
+
+.add-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  border-style: dashed;
+  min-height: 60px;
+}
+
+.add-card:hover {
+  color: var(--text);
 }
 
 .item-card-title {

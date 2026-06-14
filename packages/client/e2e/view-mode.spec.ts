@@ -72,7 +72,7 @@ test.describe("view mode switching", () => {
 
     // Card grid should appear
     await expect(page.locator(".card-grid")).toBeVisible();
-    await expect(page.locator(".item-card")).toHaveCount(2);
+    await expect(page.locator(".item-card:not(.add-card)")).toHaveCount(2);
 
     // Table should not be present
     await expect(page.locator("table")).toHaveCount(0);
