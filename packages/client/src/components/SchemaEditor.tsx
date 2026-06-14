@@ -4,7 +4,6 @@ import type { AttributeDefinition, AttributeType } from "@listr/shared";
 const ATTRIBUTE_TYPES: { value: AttributeType; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "number", label: "Number" },
-  { value: "rating", label: "Rating" },
   { value: "date", label: "Date" },
   { value: "datetime", label: "Date & Time" },
   { value: "boolean", label: "Yes/No" },
@@ -142,21 +141,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
           placeholder="(none)"
           title="Default value for new items"
           value={props.value != null ? Number(props.value) : ""}
-          onBlur={(e) => {
-            const v = e.currentTarget.valueAsNumber;
-            props.onChange(isNaN(v) ? undefined : v);
-          }}
-          style="max-width: 80px"
-        />
-      </Match>
-      <Match when={props.type === "rating"}>
-        <input
-          type="number"
-          placeholder="(none)"
-          title="Default value for new items"
-          value={props.value != null ? Number(props.value) : ""}
-          min="0"
-          max="10"
           onBlur={(e) => {
             const v = e.currentTarget.valueAsNumber;
             props.onChange(isNaN(v) ? undefined : v);

@@ -106,10 +106,6 @@ const ListView: Component = () => {
       const m = n % 60;
       return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
     }
-    if (type === "rating") {
-      const n = Number(value);
-      return "\u2605".repeat(n) + "\u2606".repeat(Math.max(0, 5 - n));
-    }
     if (type === "tags" && Array.isArray(value)) return value.join(", ");
     return String(value);
   };
@@ -188,16 +184,7 @@ const ListView: Component = () => {
                               <td style="font-weight: 500">{formatItem(item)}</td>
                               <For each={visibleSchema()}>
                                 {(attr) => (
-                                  <td>
-                                    <Show when={attr.type === "rating"}>
-                                      <span class="stars">
-                                        {formatCellValue(item.attributes[attr.key], attr.type)}
-                                      </span>
-                                    </Show>
-                                    <Show when={attr.type !== "rating"}>
-                                      {formatCellValue(item.attributes[attr.key], attr.type)}
-                                    </Show>
-                                  </td>
+                                  <td>{formatCellValue(item.attributes[attr.key], attr.type)}</td>
                                 )}
                               </For>
                             </tr>
@@ -226,18 +213,14 @@ const ListView: Component = () => {
                                     return (
                                       <div class="item-card-attr">
                                         <span class="item-card-attr-label">{attr.label || attr.key}</span>
-                                        <Show when={attr.type === "rating"}>
-                                          <span class="stars">{formatCellValue(val, attr.type)}</span>
-                                        </Show>
-                                        <Show when={attr.type === "tags" && Array.isArray(val)}>
+                                        <Show when={attr.type === "tags" && Array.isArray(val)}
+                                          fallback={<span>{formatCellValue(val, attr.type)}</span>}
+                                        >
                                           <span>
                                             <For each={val as string[]}>
                                               {(t) => <span class="tag">{t}</span>}
                                             </For>
                                           </span>
-                                        </Show>
-                                        <Show when={attr.type !== "rating" && !(attr.type === "tags" && Array.isArray(val))}>
-                                          <span>{formatCellValue(val, attr.type)}</span>
                                         </Show>
                                       </div>
                                     );

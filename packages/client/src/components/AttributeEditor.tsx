@@ -16,9 +16,6 @@ const AttributeEditor: Component<Props> = (props) => {
       <Match when={props.definition.type === "number"}>
         <NumberInput value={props.value} onChange={props.onChange} config={props.definition.config} />
       </Match>
-      <Match when={props.definition.type === "rating"}>
-        <RatingInput value={props.value} onChange={props.onChange} config={props.definition.config} />
-      </Match>
       <Match when={props.definition.type === "boolean"}>
         <BooleanInput value={props.value} onChange={props.onChange} />
       </Match>
@@ -65,23 +62,6 @@ const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; c
     }}
   />
 );
-
-const RatingInput: Component<{ value: unknown; onChange: (v: unknown) => void; config?: Record<string, unknown> }> = (props) => {
-  const max = () => (props.config?.max as number) ?? 5;
-  const current = () => Number(props.value ?? 0);
-
-  return (
-    <span class="stars" style="cursor: pointer; font-size: 18px">
-      <For each={Array.from({ length: max() }, (_, i) => i + 1)}>
-        {(n) => (
-          <span onClick={() => props.onChange(current() === n ? 0 : n)}>
-            {n <= current() ? "★" : "☆"}
-          </span>
-        )}
-      </For>
-    </span>
-  );
-};
 
 const BooleanInput: Component<{ value: unknown; onChange: (v: unknown) => void }> = (props) => (
   <input

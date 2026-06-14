@@ -36,7 +36,7 @@ test.describe("custom attributes", () => {
     await page.keyboard.press("Tab");
     await fillSchemaField(page, schemaEntry.locator("input").nth(1), "Rating");
     await page.keyboard.press("Tab");
-    await schemaEntry.locator("select").selectOption("rating");
+    await schemaEntry.locator("select").selectOption("number");
 
     // Add a second attribute: "genre" of type Text
     await page.getByRole("button", { name: "+ Add attribute" }).click();
@@ -67,8 +67,8 @@ test.describe("custom attributes", () => {
 
     // Fill in the item
     await page.locator(".modal .form-field input").first().fill("Inception");
-    // Click 4 stars for rating
-    await page.locator(".modal .stars span").nth(3).click();
+    // Fill rating as a number
+    await page.locator(".modal .form-field").nth(1).locator("input").fill("4");
     // Fill genre
     await page.locator(".modal .form-field").nth(2).locator("input").fill("sci-fi");
 
@@ -80,7 +80,7 @@ test.describe("custom attributes", () => {
 
     const firstRow = page.locator("tbody tr").first();
     await expect(firstRow.locator("td").nth(1)).toContainText("Inception");
-    await expect(firstRow.locator("td .stars")).toContainText("★★★★☆");
+    await expect(firstRow.locator("td").nth(2)).toContainText("4");
     await expect(firstRow.locator("td").nth(3)).toContainText("sci-fi");
 
     // Verify column headers (nth(0) is the drag handle column)

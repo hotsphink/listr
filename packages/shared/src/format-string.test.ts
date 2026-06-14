@@ -169,7 +169,7 @@ describe("custom attribute in display", () => {
 
   it("renders a movie list with rating, title, and conditional duration", () => {
     const schema: AttributeDefinition[] = [
-      { key: "rating", label: "Rating", type: "rating", required: false, position: 0 },
+      { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
       { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
       { key: "genre", label: "Genre", type: "enum", required: false, options: ["action", "sci-fi", "drama"], position: 2 },
     ];

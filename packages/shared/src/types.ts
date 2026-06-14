@@ -7,8 +7,7 @@ export type AttributeType =
   | "enum"
   | "tags"
   | "url"
-  | "duration"
-  | "rating";
+  | "duration";
 
 export interface AutoBehavior {
   trigger: "on_create" | "on_update" | "on_demand" | "periodic";

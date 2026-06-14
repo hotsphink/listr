@@ -103,7 +103,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
     name: "create a movie list with rating attribute and display formatted items",
     fn: async () => {
       const schema: AttributeDefinition[] = [
-        { key: "rating", label: "Rating", type: "rating", required: false, position: 0 },
+        { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
         { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
       ];
       const list = await createTestList("Movies", schema, "{rating:stars} {title}{ ({duration:short})|}");
@@ -125,7 +125,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
     name: "display falls back to title when custom attributes are missing",
     fn: async () => {
       const schema: AttributeDefinition[] = [
-        { key: "rating", label: "Rating", type: "rating", required: false, position: 0 },
+        { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
       ];
       const list = await createTestList("Sparse", schema, "{rating:stars} - {title}");
       const item = await createTestItem(list, "No Rating");
