@@ -1,5 +1,5 @@
-import { type Component, For, Show, createSignal } from "solid-js";
-import { useNavigate } from "@solidjs/router";
+import { type Component, For, Show, createSignal, createEffect } from "solid-js";
+import { useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import type { List, Item } from "@listr/shared";
@@ -9,7 +9,15 @@ import ListFormModal from "../components/ListFormModal.js";
 
 const Dashboard: Component = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [showCreate, setShowCreate] = createSignal(false);
+
+  createEffect(() => {
+    if ((location.state as any)?.openCreate) {
+      setShowCreate(true);
+      navigate("/", { replace: true });
+    }
+  });
 
   const lists = from(liveQuery(() => db.lists.orderBy("position").toArray()));
   const itemCounts = from(

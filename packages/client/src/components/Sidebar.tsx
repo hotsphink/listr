@@ -104,7 +104,7 @@ const Sidebar: Component = () => {
       <div class="sidebar-footer">
         <div
           class="sidebar-item"
-          onClick={() => navigate("/")}
+          onClick={() => navigate("/", { state: { openCreate: true } })}
         >
           + New List
         </div>

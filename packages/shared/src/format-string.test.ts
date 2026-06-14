@@ -66,9 +66,9 @@ describe("renderFormatString", () => {
     expect(renderFormatString("{rating} - {title}", item)).toBe("4.5 - Inception");
   });
 
-  it("falls back to title when a required placeholder is missing", () => {
+  it("renders empty for missing top-level placeholder", () => {
     const item = makeItem("Inception", {});
-    expect(renderFormatString("{rating} - {title}", item)).toBe("Inception");
+    expect(renderFormatString("{rating} - {title}", item)).toBe(" - Inception");
   });
 
   it("applies upper modifier", () => {
@@ -129,6 +129,14 @@ describe("renderFormatString", () => {
     expect(renderFormatString("{watched}", item)).toBe("yes");
   });
 
+  it("renders unset boolean as 'no' when schema is provided", () => {
+    const schema: AttributeDefinition[] = [
+      { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
+    ];
+    const item = makeItem("Test", {});
+    expect(renderFormatString("{title} [{watched}]", item, schema)).toBe("Test [no]");
+  });
+
   it("handles array values", () => {
     const item = makeItem("Test", { tags: ["action", "sci-fi"] });
     expect(renderFormatString("{tags}", item)).toBe("action, sci-fi");
@@ -177,7 +185,7 @@ describe("custom attribute in display", () => {
 
     const titleOnly = makeItem("TBD", {});
     expect(renderFormatString(list.format_string, titleOnly, list.schema))
-      .toBe("TBD");
+      .toBe(" TBD");
   });
 
   it("renders custom text attributes in format string", () => {
@@ -219,6 +227,6 @@ describe("custom attribute in display", () => {
 
     const notSet = makeItem("Tenet", {});
     expect(renderFormatString(list.format_string, notSet, list.schema))
-      .toBe("Tenet [unwatched]");
+      .toBe("Tenet [no]");
   });
 });

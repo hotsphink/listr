@@ -204,15 +204,20 @@ function formatValue(
   return String(value);
 }
 
-function getValue(item: Item, key: string): unknown {
+function getValue(item: Item, key: string, schemaMap?: Map<string, AttributeDefinition>): unknown {
   if (key === "title") return item.title;
   if (key === "created_at") return new Date(item.created_at);
   if (key === "updated_at") return new Date(item.updated_at);
-  return item.attributes[key];
+  const v = item.attributes[key];
+  if (v === undefined && schemaMap) {
+    const def = schemaMap.get(key);
+    if (def?.type === "boolean") return false;
+  }
+  return v;
 }
 
-function hasValue(item: Item, key: string): boolean {
-  const v = getValue(item, key);
+function hasValue(item: Item, key: string, schemaMap?: Map<string, AttributeDefinition>): boolean {
+  const v = getValue(item, key, schemaMap);
   return v != null && v !== "";
 }
 
@@ -220,6 +225,8 @@ function renderSegments(
   segments: Segment[],
   item: Item,
   customModifiers?: Record<string, ModifierFn>,
+  strict?: boolean,
+  schemaMap?: Map<string, AttributeDefinition>,
 ): string | null {
   let result = "";
   for (const seg of segments) {
@@ -229,24 +236,24 @@ function renderSegments(
         break;
 
       case "placeholder": {
-        if (!hasValue(item, seg.key)) {
+        if (!hasValue(item, seg.key, schemaMap)) {
           if (seg.modifier === "fallback") {
             result += seg.modifierArg ?? "";
-          } else {
+          } else if (strict) {
             return null;
           }
         } else {
-          result += formatValue(getValue(item, seg.key), seg.modifier, seg.modifierArg, customModifiers);
+          result += formatValue(getValue(item, seg.key, schemaMap), seg.modifier, seg.modifierArg, customModifiers);
         }
         break;
       }
 
       case "conditional": {
-        const bodyResult = renderSegments(seg.body, item, customModifiers);
+        const bodyResult = renderSegments(seg.body, item, customModifiers, true, schemaMap);
         if (bodyResult !== null) {
           result += bodyResult;
         } else {
-          const fallbackResult = renderSegments(seg.fallback, item, customModifiers);
+          const fallbackResult = renderSegments(seg.fallback, item, customModifiers, true, schemaMap);
           if (fallbackResult !== null) {
             result += fallbackResult;
           }
@@ -261,9 +268,10 @@ function renderSegments(
 export function renderFormatString(
   format: string,
   item: Item,
-  _schema?: AttributeDefinition[],
+  schema?: AttributeDefinition[],
   customModifiers?: Record<string, ModifierFn>,
 ): string {
+  const schemaMap = new Map(schema?.map((d) => [d.key, d]));
   const segments = parseFormatString(format);
-  return renderSegments(segments, item, customModifiers) ?? item.title;
+  return renderSegments(segments, item, customModifiers, false, schemaMap) ?? item.title;
 }

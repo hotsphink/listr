@@ -1,7 +1,6 @@
-import { type Component, For, Show, createSignal, createEffect, createMemo, Switch, Match } from "solid-js";
+import { type Component, For, Show, createSignal, createEffect, createMemo, Switch, Match, onCleanup } from "solid-js";
 import { useParams, useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
-import { from } from "solid-js";
 import { renderFormatString } from "@listr/shared";
 import type { Item, List, ViewMode } from "@listr/shared";
 import { db } from "../db/database.js";
@@ -38,10 +37,16 @@ const ListView: Component = () => {
     }
   });
 
-  const list = from(liveQuery(() => db.lists.get(params.id)));
-  const items = from(
-    liveQuery(() => db.items.where("list_id").equals(params.id).sortBy("position")),
-  );
+  const [list, setList] = createSignal<List | undefined>();
+  const [items, setItems] = createSignal<Item[]>([]);
+
+  createEffect(() => {
+    const id = params.id;
+    setEditingItem(undefined);
+    const sub1 = liveQuery(() => db.lists.get(id)).subscribe((v) => setList(v));
+    const sub2 = liveQuery(() => db.items.where("list_id").equals(id).sortBy("position")).subscribe((v) => setItems(v));
+    onCleanup(() => { sub1.unsubscribe(); sub2.unsubscribe(); });
+  });
 
   const visibleSchema = createMemo(() => {
     const l = list();
