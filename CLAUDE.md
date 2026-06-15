@@ -7,7 +7,7 @@ Trello-like list management app with customizable per-category attribute schemas
 Monorepo with npm workspaces:
 - `packages/shared` — TypeScript types, format string parser (no framework dependency)
 - `packages/client` — SolidJS + Vite frontend, Dexie.js for IndexedDB
-- `packages/server` — sync server (placeholder)
+- `packages/server` — sync server (Node.js + WebSocket + SQLite)
 
 ## Commands
 
@@ -17,6 +17,7 @@ Monorepo with npm workspaces:
 - `npm run test --workspace=@listr/shared` — run shared package tests only
 - `npm run test:e2e` — run Playwright e2e tests (from root)
 - Run Playwright from `packages/client` directory, not root
+- Sync server: `cd packages/server && npm install && npm run dev` — listens on port 10000 (all interfaces)
 
 ## Key design decisions
 
@@ -29,3 +30,4 @@ Monorepo with npm workspaces:
 - View modes: list (default), table, card, board (per-list, persisted)
 - Use `jj` for version control, not git
 - PWA with service worker for offline support
+- Sync: WebSocket LWW (document-level, updated_at wins). Server stores full entity snapshots + tombstones in SQLite. Client pushes local changes + pulls remote on connect; real-time broadcast thereafter. Sync key = shared secret namespace.

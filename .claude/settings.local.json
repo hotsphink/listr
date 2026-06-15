@@ -11,7 +11,9 @@
       "Bash(npm install *)",
       "Bash(node -e \"console.log\\(require\\('@playwright/test/package.json'\\).version\\)\")",
       "Bash(jj status *)",
-      "Bash(jj log *)"
+      "Bash(jj log *)",
+      "Bash(npx tsc *)",
+      "Bash(timeout 3 npx tsx src/index.ts)"
     ]
   }
 }

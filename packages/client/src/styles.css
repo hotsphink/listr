@@ -96,6 +96,60 @@ body {
   padding: 8px;
 }
 
+.sidebar-footer {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  flex-shrink: 0;
+}
+
+.sidebar-sync-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar-sync-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.sync-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.sync-status-text {
+  font-size: 13px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text);
+  margin-top: 4px;
+}
+
 .sidebar-item {
   display: flex;
   align-items: center;

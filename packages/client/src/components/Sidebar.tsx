@@ -7,6 +7,8 @@ import { db } from "../db/database.js";
 import { createList, createCategory, updateList, deleteList, updateCategory, deleteCategory } from "../db/operations.js";
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import CategoryFormModal from "./CategoryFormModal.js";
+import SyncSettingsModal from "./SyncSettingsModal.js";
+import { syncStatus } from "../sync/syncStore.js";
 
 interface Props {
   open?: boolean;
@@ -25,6 +27,7 @@ const Sidebar: Component<Props> = (props) => {
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [editingCategory, setEditingCategory] = createSignal<Category | undefined>();
   const [showCreateCategory, setShowCreateCategory] = createSignal(false);
+  const [showSync, setShowSync] = createSignal(false);
 
   // Auto-expand the category containing the active list; auto-close sidebar on mobile
   createEffect(() => {
@@ -197,6 +200,15 @@ const Sidebar: Component<Props> = (props) => {
           + New Category
         </div>
       </div>
+      <div class="sidebar-footer">
+        <div class="sidebar-sync-btn" onClick={() => setShowSync(true)}>
+          <span
+            class="sync-dot"
+            style={`background: ${syncStatus() === "connected" ? "var(--success)" : syncStatus() === "connecting" ? "#f0a500" : syncStatus() === "error" ? "var(--danger)" : "var(--text-dim)"}`}
+          />
+          Sync
+        </div>
+      </div>
 
       <Show when={contextMenu()}>
         {(ctx) => (
@@ -228,6 +240,8 @@ const Sidebar: Component<Props> = (props) => {
           setShowCreateCategory(false);
         }}
       />
+
+      <SyncSettingsModal open={showSync()} onClose={() => setShowSync(false)} />
     </nav>
   );
 };

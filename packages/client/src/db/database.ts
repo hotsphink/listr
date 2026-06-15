@@ -1,10 +1,28 @@
-import Dexie, { type EntityTable } from "dexie";
+import Dexie, { type EntityTable, type Table } from "dexie";
 import type { Category, Item, List } from "@listr/shared";
+
+export interface SyncConfig {
+  id: string; // always "default"
+  sync_url: string;
+  sync_key: string;
+  client_id: string;
+  enabled: boolean;
+  last_sync_at: number;
+}
+
+export interface LocalTombstone {
+  id: string; // `${entity_type}:${entity_id}`
+  entity_type: string;
+  entity_id: string;
+  deleted_at: number;
+}
 
 export class ListrDB extends Dexie {
   categories!: EntityTable<Category, "id">;
   lists!: EntityTable<List, "id">;
   items!: EntityTable<Item, "id">;
+  sync_config!: Table<SyncConfig, string>;
+  tombstones!: Table<LocalTombstone, string>;
 
   constructor() {
     super("listr");
@@ -25,8 +43,6 @@ export class ListrDB extends Dexie {
       const listsTable = tx.table("lists");
       const now = Date.now();
 
-      // Group lists: those with schemas get their own category,
-      // uncategorized lists without schemas go into a "General" category
       let generalCatId: string | null = null;
 
       for (const list of lists) {
@@ -64,6 +80,15 @@ export class ListrDB extends Dexie {
       await listsTable.toCollection().modify((list: any) => {
         delete list.schema;
       });
+    });
+
+    // Adds updated_at index (for incremental sync), sync_config, and tombstones tables
+    this.version(3).stores({
+      categories: "id, position, updated_at",
+      lists: "id, category_id, position, updated_at",
+      items: "id, list_id, position, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
     });
   }
 }

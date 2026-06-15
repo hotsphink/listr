@@ -1,4 +1,5 @@
 import { db } from "./database.js";
+import { syncClient } from "../sync/SyncClient.js";
 import type { Category, List, Item, AttributeDefinition, ViewMode } from "@listr/shared";
 
 function generateId(): string {
@@ -38,6 +39,7 @@ export async function createCategory(
     updated_at: now(),
   };
   await db.categories.add(category);
+  syncClient.pushEntity("category", category);
   return category;
 }
 
@@ -46,17 +48,29 @@ export async function updateCategory(
   updates: Partial<Pick<Category, "name" | "color" | "position" | "schema" | "format_string" | "macros">>,
 ): Promise<void> {
   await db.categories.update(id, { ...updates, updated_at: now() });
+  const updated = await db.categories.get(id);
+  if (updated) syncClient.pushEntity("category", updated);
 }
 
 export async function deleteCategory(id: string): Promise<void> {
+  const lists = await db.lists.where("category_id").equals(id).toArray();
+  const itemIds: string[] = [];
+  for (const list of lists) {
+    const items = await db.items.where("list_id").equals(list.id).toArray();
+    itemIds.push(...items.map((i) => i.id));
+  }
+
   await db.transaction("rw", [db.categories, db.lists, db.items], async () => {
-    const lists = await db.lists.where("category_id").equals(id).toArray();
     for (const list of lists) {
       await db.items.where("list_id").equals(list.id).delete();
     }
     await db.lists.where("category_id").equals(id).delete();
     await db.categories.delete(id);
   });
+
+  for (const itemId of itemIds) syncClient.pushDelete("item", itemId);
+  for (const list of lists) syncClient.pushDelete("list", list.id);
+  syncClient.pushDelete("category", id);
 }
 
 // --- Lists ---
@@ -78,6 +92,7 @@ export async function createList(
     updated_at: now(),
   };
   await db.lists.add(list);
+  syncClient.pushEntity("list", list);
   return list;
 }
 
@@ -86,13 +101,20 @@ export async function updateList(
   updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "category_id">>,
 ): Promise<void> {
   await db.lists.update(id, { ...updates, updated_at: now() });
+  const updated = await db.lists.get(id);
+  if (updated) syncClient.pushEntity("list", updated);
 }
 
 export async function deleteList(id: string): Promise<void> {
+  const items = await db.items.where("list_id").equals(id).toArray();
+
   await db.transaction("rw", [db.lists, db.items], async () => {
     await db.items.where("list_id").equals(id).delete();
     await db.lists.delete(id);
   });
+
+  for (const item of items) syncClient.pushDelete("item", item.id);
+  syncClient.pushDelete("list", id);
 }
 
 // --- Items ---
@@ -132,6 +154,7 @@ export async function createItem(
     attributes: resolvedAttrs,
   };
   await db.items.add(item);
+  syncClient.pushEntity("item", item);
   return item;
 }
 
@@ -140,6 +163,8 @@ export async function updateItem(
   updates: Partial<Pick<Item, "title" | "position" | "attributes">>,
 ): Promise<void> {
   await db.items.update(id, { ...updates, updated_at: now() });
+  const updated = await db.items.get(id);
+  if (updated) syncClient.pushEntity("item", updated);
 }
 
 export async function updateItemAttribute(
@@ -151,10 +176,13 @@ export async function updateItemAttribute(
   if (!item) throw new Error(`Item ${id} not found`);
   const attributes = { ...item.attributes, [key]: value };
   await db.items.update(id, { attributes, updated_at: now() });
+  const updated = await db.items.get(id);
+  if (updated) syncClient.pushEntity("item", updated);
 }
 
 export async function deleteItem(id: string): Promise<void> {
   await db.items.delete(id);
+  syncClient.pushDelete("item", id);
 }
 
 export async function bulkCreateItems(
@@ -190,5 +218,6 @@ export async function bulkCreateItems(
   });
 
   await db.items.bulkAdd(newItems);
+  for (const item of newItems) syncClient.pushEntity("item", item);
   return newItems;
 }

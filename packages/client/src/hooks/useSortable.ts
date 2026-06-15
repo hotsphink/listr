@@ -1,6 +1,10 @@
 import Sortable from "sortablejs";
 import { onCleanup } from "solid-js";
 import { db } from "../db/database.js";
+import { syncClient } from "../sync/SyncClient.js";
+import { computeReorder } from "./reorderLogic.js";
+
+export { computeReorder };
 
 export function useSortable(
   el: HTMLElement,
@@ -30,24 +34,29 @@ export function useSortable(
       const currentItems = getItems();
       if (oldIndex >= currentItems.length || newIndex >= currentItems.length) return;
 
+      // Revert the DOM move — SolidJS re-renders from reactive state
       const { item, from: container } = evt;
       if (evt.oldIndex! < evt.newIndex!) {
-        const ref = container.children[evt.oldIndex!];
-        container.insertBefore(item, ref);
+        container.insertBefore(item, container.children[evt.oldIndex!]);
       } else {
-        const ref = container.children[evt.oldIndex! + 1];
-        container.insertBefore(item, ref);
+        container.insertBefore(item, container.children[evt.oldIndex! + 1]);
       }
 
-      const reordered = [...currentItems];
-      const [moved] = reordered.splice(oldIndex, 1);
-      reordered.splice(newIndex, 0, moved);
+      const updates = computeReorder(currentItems, oldIndex, newIndex);
+      const timestamp = Date.now();
 
       await db.transaction("rw", db.items, async () => {
-        for (let i = 0; i < reordered.length; i++) {
-          await db.items.update(reordered[i].id, { position: i });
+        for (const { id, position } of updates) {
+          await db.items.update(id, { position, updated_at: timestamp });
         }
       });
+
+      // Push updated items to sync. Build from currentItems to avoid extra reads.
+      const byId = new Map((currentItems as any[]).map((it) => [it.id, it]));
+      for (const { id, position } of updates) {
+        const base = byId.get(id);
+        if (base) syncClient.pushEntity("item", { ...base, position, updated_at: timestamp });
+      }
     },
   });
 
