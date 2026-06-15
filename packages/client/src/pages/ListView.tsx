@@ -268,7 +268,7 @@ const ListView: Component = () => {
                           {(item) => (
                             <tr onClick={() => setEditingItem(item)}>
                               <td class="drag-handle-cell"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
-                              <td style="font-weight: 500">{formatItem(item)}</td>
+                              <td style="font-weight: 500">{item.title}</td>
                               <For each={schema()}>
                                 {(attr) => (
                                   <td>{formatCellValue(item.attributes[attr.key], attr.type)}</td>
