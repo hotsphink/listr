@@ -13,7 +13,8 @@
       "Bash(jj status *)",
       "Bash(jj log *)",
       "Bash(npx tsc *)",
-      "Bash(timeout 3 npx tsx src/index.ts)"
+      "Bash(timeout 3 npx tsx src/index.ts)",
+      "Bash(npm test *)"
     ]
   }
 }

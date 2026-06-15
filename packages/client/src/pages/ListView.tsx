@@ -2,7 +2,7 @@ import { type Component, For, Show, createSignal, createEffect, createMemo, Swit
 import { useParams, useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
-import { renderFormatString } from "@listr/shared";
+import { renderFormatStringHtml } from "@listr/shared";
 import type { AttributeDefinition, Category, Item, List, ViewMode } from "@listr/shared";
 import { db } from "../db/database.js";
 import {
@@ -15,6 +15,7 @@ import {
 import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
+import FormattedText from "../components/FormattedText.js";
 
 const VIEW_MODES: { mode: ViewMode; label: string }[] = [
   { mode: "list", label: "List" },
@@ -121,7 +122,7 @@ const ListView: Component = () => {
   };
 
   const formatItem = (item: Item): string => {
-    return renderFormatString(effectiveFormatString(), item, schema(), undefined, category()?.macros);
+    return renderFormatStringHtml(effectiveFormatString(), item, schema(), undefined, category()?.macros);
   };
 
   const formatCellValue = (value: unknown, type: string): string => {
@@ -242,7 +243,7 @@ const ListView: Component = () => {
                         {(item) => (
                           <li class="list-view-item" onClick={() => setEditingItem(item)}>
                             <span class="drag-handle" title="Drag to reorder">⠿</span>
-                            {formatItem(item)}
+                            <FormattedText html={formatItem(item)} />
                           </li>
                         )}
                       </For>
@@ -290,7 +291,7 @@ const ListView: Component = () => {
                         {(item) => (
                           <div class="item-card" onClick={() => setEditingItem(item)}>
                             <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
-                            <div class="item-card-title">{formatItem(item)}</div>
+                            <div class="item-card-title"><FormattedText html={formatItem(item)} /></div>
                             <Show when={schema().length > 0}>
                               <div class="item-card-attrs">
                                 <For each={schema()}>
@@ -353,7 +354,7 @@ const ListView: Component = () => {
                                     <For each={col.items}>
                                       {(item) => (
                                         <div class="board-item" onClick={() => setEditingItem(item)}>
-                                          {formatItem(item)}
+                                          <FormattedText html={formatItem(item)} />
                                         </div>
                                       )}
                                     </For>

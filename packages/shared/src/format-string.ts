@@ -167,6 +167,10 @@ export function parseFormatString(format: string): Segment[] {
   return segments;
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 type ModifierFn = (value: unknown, arg?: string) => string;
 
 const builtinModifiers: Record<string, ModifierFn> = {
@@ -310,6 +314,7 @@ function renderSegments(
   schemaMap?: Map<string, AttributeDefinition>,
   macros?: Record<string, string>,
   visiting?: Set<string>,
+  html?: boolean,
 ): string | null {
   let result = "";
   for (const seg of segments) {
@@ -325,32 +330,33 @@ function renderSegments(
             visiting2.add(seg.key);
             const expanded = renderSegments(
               parseFormatString(macros[seg.key]),
-              item, customModifiers, strict, schemaMap, macros, visiting2,
+              item, customModifiers, strict, schemaMap, macros, visiting2, html,
             );
             if (expanded !== null && expanded !== "") {
               result += expanded;
             } else if (strict) {
               return null;
             } else if (seg.modifier === "fallback") {
-              result += seg.modifierArg ?? "";
+              result += html ? escapeHtml(seg.modifierArg ?? "") : (seg.modifierArg ?? "");
             }
           } else if (seg.modifier === "fallback") {
-            result += seg.modifierArg ?? "";
+            result += html ? escapeHtml(seg.modifierArg ?? "") : (seg.modifierArg ?? "");
           } else if (strict) {
             return null;
           }
         } else {
-          result += formatValue(getValue(item, seg.key, schemaMap), seg.modifier, seg.modifierArg, customModifiers, schemaMap?.get(seg.key)?.type);
+          const val = formatValue(getValue(item, seg.key, schemaMap), seg.modifier, seg.modifierArg, customModifiers, schemaMap?.get(seg.key)?.type);
+          result += html ? escapeHtml(val) : val;
         }
         break;
       }
 
       case "conditional": {
-        const bodyResult = renderSegments(seg.body, item, customModifiers, true, schemaMap, macros, visiting);
+        const bodyResult = renderSegments(seg.body, item, customModifiers, true, schemaMap, macros, visiting, html);
         if (bodyResult !== null) {
           result += bodyResult;
         } else {
-          const fallbackResult = renderSegments(seg.fallback, item, customModifiers, true, schemaMap, macros, visiting);
+          const fallbackResult = renderSegments(seg.fallback, item, customModifiers, true, schemaMap, macros, visiting, html);
           if (fallbackResult !== null) {
             result += fallbackResult;
           }
@@ -361,7 +367,7 @@ function renderSegments(
       case "ternary": {
         const val = getValue(item, seg.key, schemaMap);
         const branch = val ? seg.trueBranch : seg.falseBranch;
-        const branchResult = renderSegments(branch, item, customModifiers, strict, schemaMap, macros, visiting);
+        const branchResult = renderSegments(branch, item, customModifiers, strict, schemaMap, macros, visiting, html);
         if (branchResult !== null) {
           result += branchResult;
         } else if (strict) {
@@ -384,6 +390,18 @@ export function renderFormatString(
   const schemaMap = new Map(schema?.map((d) => [d.key, d]));
   const segments = parseFormatString(format);
   return renderSegments(segments, item, customModifiers, false, schemaMap, macros) ?? item.title;
+}
+
+export function renderFormatStringHtml(
+  format: string,
+  item: Item,
+  schema?: AttributeDefinition[],
+  customModifiers?: Record<string, ModifierFn>,
+  macros?: Record<string, string>,
+): string {
+  const schemaMap = new Map(schema?.map((d) => [d.key, d]));
+  const segments = parseFormatString(format);
+  return renderSegments(segments, item, customModifiers, false, schemaMap, macros, undefined, true) ?? escapeHtml(item.title);
 }
 
 export function validateFormatString(format: string, macros?: Record<string, string>): string | null {
