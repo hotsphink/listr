@@ -1,14 +1,24 @@
-import { createServer } from "node:http";
+import { createServer } from "node:https";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince } from "./db.js";
 import type { EntityType } from "./db.js";
 
 const PORT = 10_000;
+const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
 
-const httpServer = createServer((_req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Listr sync server running\n");
-});
+const httpServer = createServer(
+  {
+    key: readFileSync(join(CERT_DIR, "tailscale.key")),
+    cert: readFileSync(join(CERT_DIR, "tailscale.crt")),
+  },
+  (_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Listr sync server running\n");
+  },
+);
 
 const wss = new WebSocketServer({ server: httpServer });
 
@@ -95,5 +105,5 @@ wss.on("connection", (ws: WebSocket) => {
 // Listen on all interfaces so phone can reach it over LAN
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Listr sync server on port ${PORT}`);
-  console.log(`Local: ws://localhost:${PORT}`);
+  console.log(`WSS: wss://finkripper.heron-moth.ts.net:${PORT}`);
 });

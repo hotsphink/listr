@@ -8,8 +8,8 @@ export default defineConfig({
     port: 3000,
     host: true,
     https: {
-      key: readFileSync(new URL("certs/tailscale.key", import.meta.url)),
-      cert: readFileSync(new URL("certs/tailscale.crt", import.meta.url)),
+      key: readFileSync(new URL("../../certs/tailscale.key", import.meta.url)),
+      cert: readFileSync(new URL("../../certs/tailscale.crt", import.meta.url)),
     },
   },
   build: {

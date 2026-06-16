@@ -4,6 +4,6 @@ dist/
 .vite/
 *.log
 packages/server/data/
-packages/client/certs/
+certs/
 pnpm-lock.yaml
 pnpm-workspace.yaml
