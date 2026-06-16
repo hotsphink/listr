@@ -12,6 +12,7 @@ import {
   updateList,
   deleteList,
 } from "../db/operations.js";
+import { assetUrls } from "../sync/assetStore.js";
 import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
@@ -122,7 +123,8 @@ const ListView: Component = () => {
   };
 
   const formatItem = (item: Item): string => {
-    return renderFormatStringHtml(effectiveFormatString(), item, schema(), undefined, category()?.macros);
+    const urls = assetUrls();
+    return renderFormatStringHtml(effectiveFormatString(), item, schema(), undefined, category()?.macros, (url) => urls[url] ?? url);
   };
 
   const formatCellValue = (value: unknown, type: string): string => {

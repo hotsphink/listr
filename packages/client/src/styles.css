@@ -706,6 +706,32 @@ tbody tr {
   min-height: 120px;
 }
 
+.format-advanced-dropzone {
+  position: relative;
+  border-radius: var(--radius);
+}
+
+.format-advanced-dropzone.dragging::after {
+  content: "Drop image to insert";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.format-advanced-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* Schema editor */
 .schema-entry {
   display: flex;
@@ -1047,6 +1073,14 @@ tbody tr {
 .sortable-drag {
   opacity: 0.9;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Formatted text */
+.formatted-text img {
+  height: 1.2em;
+  width: auto;
+  vertical-align: middle;
+  margin: 2px;
 }
 
 /* Stars */

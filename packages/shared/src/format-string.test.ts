@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseFormatString, renderFormatString } from "./format-string.js";
+import { parseFormatString, renderFormatString, renderFormatStringHtml, parseAdvancedFormatText } from "./format-string.js";
 import type { AttributeDefinition, Item } from "./types.js";
 
 function makeItem(title: string, attrs: Record<string, unknown> = {}): Item {
@@ -319,5 +319,83 @@ describe("ternary format syntax", () => {
     const noYear = makeItem("TBD", { watched: false });
     expect(renderFormatString("{title}{ ({year}) {watched:?Seen:Unseen}|}", noYear, schema))
       .toBe("TBD");
+  });
+});
+
+describe("image syntax", () => {
+  it("parses image segment", () => {
+    const segments = parseFormatString("![Logo](https://example.com/logo.png)");
+    expect(segments).toHaveLength(1);
+    expect(segments[0].kind).toBe("image");
+  });
+
+  it("renders image as <img> in html mode", () => {
+    const item = makeItem("Test");
+    expect(renderFormatStringHtml("![Logo](https://example.com/logo.png)", item))
+      .toBe('<img src="https://example.com/logo.png" alt="Logo">');
+  });
+
+  it("renders image as alt text in plain mode", () => {
+    const item = makeItem("Test");
+    expect(renderFormatString("![Logo](https://example.com/logo.png)", item))
+      .toBe("Logo");
+  });
+
+  it("renders image with placeholder in alt", () => {
+    const item = makeItem("Inception");
+    expect(renderFormatStringHtml("![{title}](https://example.com/logo.png)", item))
+      .toBe('<img src="https://example.com/logo.png" alt="Inception">');
+  });
+
+  it("renders image with placeholder in url", () => {
+    const item = makeItem("Test", { img: "https://example.com/pic.jpg" });
+    expect(renderFormatStringHtml("![Logo]({img})", item))
+      .toBe('<img src="https://example.com/pic.jpg" alt="Logo">');
+  });
+
+  it("html-escapes placeholder values in alt and url", () => {
+    const item = makeItem("A & B", { img: "https://x.com/?a=1&b=2" });
+    expect(renderFormatStringHtml("![{title}]({img})", item))
+      .toBe('<img src="https://x.com/?a=1&amp;b=2" alt="A &amp; B">');
+  });
+
+  it("renders image inside ternary true branch", () => {
+    const item = makeItem("Test", { imdb: "tt1234567" });
+    expect(renderFormatStringHtml("{imdb:? ![IMDB](https://example.com/imdb.svg):}", item))
+      .toBe(' <img src="https://example.com/imdb.svg" alt="IMDB">');
+  });
+
+  it("renders nothing for ternary false branch when imdb unset", () => {
+    const item = makeItem("Test", {});
+    expect(renderFormatStringHtml("{imdb:? ![IMDB](https://example.com/imdb.svg):}", item))
+      .toBe('');
+  });
+
+  it("renders image inside macro ternary (user scenario)", () => {
+    const item = makeItem("Inception", { imdb: "tt1375666" });
+    const macros = {
+      imdb_dpy: "{imdb:? <b><i>{imdb}</i></b>![IMDB](https://example.com/imdb.svg):}",
+    };
+    expect(renderFormatStringHtml("{title}{imdb_dpy}", item, undefined, undefined, macros))
+      .toBe('Inception <b><i>tt1375666</i></b><img src="https://example.com/imdb.svg" alt="IMDB">');
+  });
+
+  it("renders exact user format string via parseAdvancedFormatText", () => {
+    const advText = [
+      "{title}{duration_dpy}{imdb_dpy}{rt_dpy}",
+      "imdb_dpy={imdb:? <b><i>{imdb}</i></b>![IMDB](https://www.svgrepo.com/show/349409/imdb.svg):}",
+      "rt_dpy={rotten:? {rotten}% RT:}",
+      "duration_dpy={duration:? ({duration:short}):}",
+    ].join("\n");
+
+    const { format, macros, error } = parseAdvancedFormatText(advText);
+    expect(error).toBeNull();
+
+    const item = makeItem("Inception", { imdb: "tt1375666", rotten: 74, duration: 148 });
+    const result = renderFormatStringHtml(format, item, undefined, undefined, macros);
+    expect(result).toContain('<img src="https://www.svgrepo.com/show/349409/imdb.svg" alt="IMDB">');
+    expect(result).toContain('<b><i>tt1375666</i></b>');
+    expect(result).toContain('(2h28m)');
+    expect(result).toContain('74% RT');
   });
 });

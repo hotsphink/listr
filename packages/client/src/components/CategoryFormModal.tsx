@@ -3,6 +3,7 @@ import type { AttributeDefinition, Category } from "@listr/shared";
 import { validateFormatString, parseAdvancedFormatText, serializeAdvancedFormatText } from "@listr/shared";
 import Modal from "./Modal.js";
 import SchemaEditor from "./SchemaEditor.js";
+import { createAsset } from "../db/assets.js";
 
 function generateFormatString(schema: AttributeDefinition[]): string {
   if (schema.length === 0) return "{title}";
@@ -37,9 +38,25 @@ const CategoryFormModal: Component<Props> = (props) => {
   const [advancedMode, setAdvancedMode] = createSignal(false);
   const [advancedText, setAdvancedText] = createSignal("");
   const [advancedError, setAdvancedError] = createSignal<string | null>(null);
+  const [draggingOver, setDraggingOver] = createSignal(false);
+  const [assetUploading, setAssetUploading] = createSignal(false);
+  const [assetError, setAssetError] = createSignal<string | null>(null);
 
+  let fileInputRef!: HTMLInputElement;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   onCleanup(() => { if (debounceTimer) clearTimeout(debounceTimer); });
+
+  // Prevent browser from navigating to dropped URLs when in advanced mode
+  createEffect(() => {
+    if (!advancedMode()) return;
+    const block = (e: DragEvent) => e.preventDefault();
+    document.addEventListener("dragover", block);
+    document.addEventListener("drop", block);
+    onCleanup(() => {
+      document.removeEventListener("dragover", block);
+      document.removeEventListener("drop", block);
+    });
+  });
 
   createEffect(() => {
     if (props.open) {
@@ -55,6 +72,7 @@ const CategoryFormModal: Component<Props> = (props) => {
       setSaving(false);
       setAdvancedMode(false);
       setAdvancedError(null);
+      setAssetError(null);
     }
   });
 
@@ -94,6 +112,94 @@ const CategoryFormModal: Component<Props> = (props) => {
     setFormatError(null);
     setAdvancedMode(false);
     return { format, macros: newMacros };
+  };
+
+  const appendAssetMacro = (asset: { id: string; ext: string; filename: string }) => {
+    const prefix = "img" + asset.id.slice(0, 6);
+    const nameWithoutExt = asset.filename.includes(".") ? asset.filename.slice(0, asset.filename.lastIndexOf(".")) : asset.filename;
+    const macro = `${prefix}=![${nameWithoutExt}](hash://${asset.id}.${asset.ext})`;
+    const current = advancedText();
+    handleAdvancedInput(current ? `${current}\n${macro}` : macro);
+  };
+
+  const processImageFiles = async (files: Iterable<File>) => {
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      if (!advancedMode()) openAdvanced();
+      const asset = await createAsset(file);
+      appendAssetMacro(asset);
+    }
+  };
+
+  const handleAssetFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setAssetUploading(true);
+    try { await processImageFiles(files); }
+    finally { setAssetUploading(false); }
+  };
+
+  const handleUrlAsset = async (url: string) => {
+    setAssetUploading(true);
+    setAssetError(null);
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      if (!blob.type.startsWith("image/")) return;
+      const filename = url.split("/").pop()?.split("?")[0] || "image";
+      const file = new File([blob], filename, { type: blob.type });
+      if (!advancedMode()) openAdvanced();
+      const asset = await createAsset(file);
+      appendAssetMacro(asset);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAssetError(`Could not fetch image (${msg}). The site may block cross-origin requests — try right-clicking the image, choosing "Copy Image", and pasting here instead.`);
+    } finally {
+      setAssetUploading(false);
+    }
+  };
+
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    setDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: DragEvent) => {
+    const dropzone = e.currentTarget as HTMLElement;
+    if (!dropzone.contains(e.relatedTarget as Node)) {
+      setDraggingOver(false);
+    }
+  };
+
+  const handleDrop = async (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingOver(false);
+
+    // Local file drag (from filesystem)
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      await handleAssetFiles(e.dataTransfer.files);
+      return;
+    }
+
+    // URL drag from browser — Firefox uses text/x-moz-url, others use text/uri-list
+    const rawUrl =
+      e.dataTransfer?.getData("text/x-moz-url")?.split("\n")[0] ??
+      e.dataTransfer?.getData("text/uri-list")?.split("\n").find((l) => !l.startsWith("#")) ??
+      e.dataTransfer?.getData("text/plain");
+    if (rawUrl && /^https?:\/\//.test(rawUrl)) {
+      await handleUrlAsset(rawUrl);
+    }
+  };
+
+  const handlePaste = async (e: ClipboardEvent) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      e.preventDefault();
+      await handleAssetFiles(files);
+    }
   };
 
   const handleSubmit = async (e: Event) => {
@@ -197,19 +303,52 @@ const CategoryFormModal: Component<Props> = (props) => {
               </>
             }
           >
-            <textarea
-              class="format-advanced-textarea"
-              classList={{ "input-error": advancedError() !== null }}
-              value={advancedText()}
-              onInput={(e) => handleAdvancedInput(e.currentTarget.value)}
-              rows={6}
-              spellcheck={false}
-            />
+            <div
+              class="format-advanced-dropzone"
+              classList={{ dragging: draggingOver() }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <textarea
+                class="format-advanced-textarea"
+                classList={{ "input-error": advancedError() !== null }}
+                value={advancedText()}
+                onInput={(e) => handleAdvancedInput(e.currentTarget.value)}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onPaste={handlePaste}
+                rows={6}
+                spellcheck={false}
+              />
+            </div>
+            <div class="format-advanced-toolbar">
+              <button
+                type="button"
+                class="btn-ghost btn-xs"
+                disabled={assetUploading()}
+                onClick={() => fileInputRef.click()}
+              >
+                {assetUploading() ? "Uploading..." : "Insert image asset"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style="display: none"
+                onChange={(e) => { handleAssetFiles(e.currentTarget.files); e.currentTarget.value = ""; }}
+              />
+            </div>
+            <Show when={assetError()}>
+              {(err) => <div class="field-error">{err()}</div>}
+            </Show>
             <Show when={advancedError()}>
               {(err) => <div class="field-error">{err()}</div>}
             </Show>
             <div class="field-hint">
-              Line 1: format string. Lines 2+: <code>name=format</code> to define macros. Use <code>{"{name}"}</code> to reference them.
+              Line 1: format string. Lines 2+: <code>name=format</code> to define macros. Use <code>{"{name}"}</code> to reference them. Drop, paste, or upload images to insert as assets.
             </div>
           </Show>
         </div>

@@ -6,12 +6,14 @@ import ListView from "./pages/ListView.js";
 import TestRunner from "./pages/TestRunner.js";
 import { db } from "./db/database.js";
 import { syncClient } from "./sync/SyncClient.js";
+import { initAssetStore } from "./sync/assetStore.js";
 
 const Layout: Component<{ children?: any }> = (props) => {
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const close = () => setSidebarOpen(false);
 
   onMount(async () => {
+    await initAssetStore();
     const config = await db.sync_config.get("default");
     if (config?.enabled && config.sync_url && config.sync_key) {
       syncClient.connect(config.sync_url, config.sync_key, config.client_id);

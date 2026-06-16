@@ -14,7 +14,9 @@
       "Bash(jj log *)",
       "Bash(npx tsc *)",
       "Bash(timeout 3 npx tsx src/index.ts)",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "Bash(pnpm --filter @listr/client build)",
+      "Bash(pnpm dev *)"
     ]
   }
 }

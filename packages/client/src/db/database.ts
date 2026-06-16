@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
-import type { Category, Item, List } from "@listr/shared";
+import type { Asset, Category, Item, List } from "@listr/shared";
 
 export interface SyncConfig {
   id: string; // always "default"
@@ -21,6 +21,7 @@ export class ListrDB extends Dexie {
   categories!: EntityTable<Category, "id">;
   lists!: EntityTable<List, "id">;
   items!: EntityTable<Item, "id">;
+  assets!: EntityTable<Asset, "id">;
   sync_config!: Table<SyncConfig, string>;
   tombstones!: Table<LocalTombstone, string>;
 
@@ -89,6 +90,16 @@ export class ListrDB extends Dexie {
       items: "id, list_id, position, title, updated_at",
       sync_config: "id",
       tombstones: "id, entity_type, deleted_at",
+    });
+
+    // Adds global assets table for synced image/file storage
+    this.version(4).stores({
+      categories: "id, position, updated_at",
+      lists: "id, category_id, position, updated_at",
+      items: "id, list_id, position, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
     });
   }
 }

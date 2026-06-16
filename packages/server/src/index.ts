@@ -70,6 +70,7 @@ wss.on("connection", (ws: WebSocket) => {
         categories: getEntitiesSince("category", key, since),
         lists: getEntitiesSince("list", key, since),
         items: getEntitiesSince("item", key, since),
+        assets: getEntitiesSince("asset", key, since),
         tombstones: getTombstonesSince(key, since),
         server_time: Date.now(),
       }));

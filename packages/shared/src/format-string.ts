@@ -4,7 +4,8 @@ type Segment =
   | { kind: "literal"; text: string }
   | { kind: "placeholder"; key: string; modifier?: string; modifierArg?: string }
   | { kind: "conditional"; body: Segment[]; fallback: Segment[] }
-  | { kind: "ternary"; key: string; trueBranch: Segment[]; falseBranch: Segment[] };
+  | { kind: "ternary"; key: string; trueBranch: Segment[]; falseBranch: Segment[] }
+  | { kind: "image"; alt: Segment[]; url: Segment[] };
 
 export function parseFormatString(format: string): Segment[] {
   const segments: Segment[] = [];
@@ -43,6 +44,23 @@ export function parseFormatString(format: string): Segment[] {
         literal += "}";
         i += 2;
         continue;
+      }
+
+      // Image: ![alt](url) — peek to confirm closing ](
+      if (ch === "!" && i + 1 < format.length && format[i + 1] === "[") {
+        let j = i + 2;
+        while (j < format.length && format[j] !== "]") j++;
+        if (j < format.length && j + 1 < format.length && format[j + 1] === "(") {
+          if (literal) { result.push({ kind: "literal", text: literal }); literal = ""; }
+          i += 2; // skip ![
+          const alt = parseSegments("]");
+          if (i < format.length && format[i] === "]") i++; // skip ]
+          if (i < format.length && format[i] === "(") i++; // skip (
+          const url = parseSegments(")");
+          if (i < format.length && format[i] === ")") i++; // skip )
+          result.push({ kind: "image", alt, url });
+          continue;
+        }
       }
 
       literal += ch;
@@ -273,6 +291,9 @@ function collectPlaceholderKeys(segments: Segment[], keys: Set<string>): void {
       keys.add(seg.key);
       collectPlaceholderKeys(seg.trueBranch, keys);
       collectPlaceholderKeys(seg.falseBranch, keys);
+    } else if (seg.kind === "image") {
+      collectPlaceholderKeys(seg.alt, keys);
+      collectPlaceholderKeys(seg.url, keys);
     }
   }
 }
@@ -315,6 +336,7 @@ function renderSegments(
   macros?: Record<string, string>,
   visiting?: Set<string>,
   html?: boolean,
+  urlResolver?: (url: string) => string,
 ): string | null {
   let result = "";
   for (const seg of segments) {
@@ -330,7 +352,7 @@ function renderSegments(
             visiting2.add(seg.key);
             const expanded = renderSegments(
               parseFormatString(macros[seg.key]),
-              item, customModifiers, strict, schemaMap, macros, visiting2, html,
+              item, customModifiers, strict, schemaMap, macros, visiting2, html, urlResolver,
             );
             if (expanded !== null && expanded !== "") {
               result += expanded;
@@ -352,11 +374,11 @@ function renderSegments(
       }
 
       case "conditional": {
-        const bodyResult = renderSegments(seg.body, item, customModifiers, true, schemaMap, macros, visiting, html);
+        const bodyResult = renderSegments(seg.body, item, customModifiers, true, schemaMap, macros, visiting, html, urlResolver);
         if (bodyResult !== null) {
           result += bodyResult;
         } else {
-          const fallbackResult = renderSegments(seg.fallback, item, customModifiers, true, schemaMap, macros, visiting, html);
+          const fallbackResult = renderSegments(seg.fallback, item, customModifiers, true, schemaMap, macros, visiting, html, urlResolver);
           if (fallbackResult !== null) {
             result += fallbackResult;
           }
@@ -367,11 +389,23 @@ function renderSegments(
       case "ternary": {
         const val = getValue(item, seg.key, schemaMap);
         const branch = val ? seg.trueBranch : seg.falseBranch;
-        const branchResult = renderSegments(branch, item, customModifiers, strict, schemaMap, macros, visiting, html);
+        const branchResult = renderSegments(branch, item, customModifiers, strict, schemaMap, macros, visiting, html, urlResolver);
         if (branchResult !== null) {
           result += branchResult;
         } else if (strict) {
           return null;
+        }
+        break;
+      }
+
+      case "image": {
+        const altText = renderSegments(seg.alt, item, customModifiers, false, schemaMap, macros, visiting, true, urlResolver) ?? "";
+        if (html) {
+          const urlText = renderSegments(seg.url, item, customModifiers, false, schemaMap, macros, visiting, true, urlResolver) ?? "";
+          const resolvedUrl = urlResolver ? urlResolver(urlText) : urlText;
+          result += `<img src="${resolvedUrl}" alt="${altText}">`;
+        } else {
+          result += altText;
         }
         break;
       }
@@ -398,10 +432,11 @@ export function renderFormatStringHtml(
   schema?: AttributeDefinition[],
   customModifiers?: Record<string, ModifierFn>,
   macros?: Record<string, string>,
+  urlResolver?: (url: string) => string,
 ): string {
   const schemaMap = new Map(schema?.map((d) => [d.key, d]));
   const segments = parseFormatString(format);
-  return renderSegments(segments, item, customModifiers, false, schemaMap, macros, undefined, true) ?? escapeHtml(item.title);
+  return renderSegments(segments, item, customModifiers, false, schemaMap, macros, undefined, true, urlResolver) ?? escapeHtml(item.title);
 }
 
 export function validateFormatString(format: string, macros?: Record<string, string>): string | null {

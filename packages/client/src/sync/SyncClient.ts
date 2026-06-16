@@ -1,6 +1,7 @@
 import { db } from "../db/database.js";
 import { setSyncStatus, setSyncStatusMessage } from "./syncStore.js";
 import { applyIncomingEntity, type EntityType } from "./mergeLogic.js";
+import { assetToSync, assetFromSync, registerAsset } from "./assetStore.js";
 
 class SyncClient {
   private ws: WebSocket | null = null;
@@ -107,14 +108,16 @@ class SyncClient {
     const since = config?.last_sync_at ?? 0;
 
     // Push local changes since last sync
-    const [cats, lists, items] = await Promise.all([
+    const [cats, lists, items, assets] = await Promise.all([
       db.categories.where("updated_at").above(since).toArray(),
       db.lists.where("updated_at").above(since).toArray(),
       db.items.where("updated_at").above(since).toArray(),
+      db.assets.where("updated_at").above(since).toArray(),
     ]);
     for (const e of cats) this.send({ type: "push_entity", entity_type: "category", data: e });
     for (const e of lists) this.send({ type: "push_entity", entity_type: "list", data: e });
     for (const e of items) this.send({ type: "push_entity", entity_type: "item", data: e });
+    for (const a of assets) this.send({ type: "push_entity", entity_type: "asset", data: assetToSync(a) });
 
     const tombstones = await db.tombstones.where("deleted_at").above(since).toArray();
     for (const t of tombstones) {
@@ -129,6 +132,7 @@ class SyncClient {
     for (const e of msg.categories ?? []) await this.mergeEntity("category", e);
     for (const e of msg.lists ?? []) await this.mergeEntity("list", e);
     for (const e of msg.items ?? []) await this.mergeEntity("item", e);
+    for (const e of msg.assets ?? []) await this.mergeEntity("asset", e);
     for (const t of msg.tombstones ?? []) {
       await this.applyTombstone(t.entity_type, t.entity_id, t.deleted_at);
     }
@@ -138,6 +142,16 @@ class SyncClient {
   }
 
   private async mergeEntity(entityType: EntityType, incoming: any): Promise<void> {
+    if (entityType === "asset") {
+      const existing = await db.assets.get(incoming.id);
+      const toStore = applyIncomingEntity(entityType, incoming, existing as any);
+      if (toStore) {
+        const asset = assetFromSync(toStore as Record<string, unknown>);
+        await db.assets.put(asset);
+        registerAsset(asset).catch(console.error);
+      }
+      return;
+    }
     const table = entityType === "category" ? db.categories : entityType === "list" ? db.lists : db.items;
     const existing = await (table as any).get(incoming.id);
     const toStore = applyIncomingEntity(entityType, incoming, existing);

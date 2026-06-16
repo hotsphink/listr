@@ -1,6 +1,7 @@
 import { type Component, createEffect } from "solid-js";
 
-const ALLOWED_ELEMENTS = ["b", "i", "em", "strong", "u", "s", "span"];
+const ALLOWED_ELEMENTS = ["b", "i", "em", "strong", "u", "s", "span", "img"];
+const ALLOWED_ATTRIBUTES = { src: ["img"], alt: ["img"] };
 
 const FormattedText: Component<{ html: string; class?: string }> = (props) => {
   let el!: HTMLSpanElement;
@@ -8,13 +9,13 @@ const FormattedText: Component<{ html: string; class?: string }> = (props) => {
   createEffect(() => {
     const h = props.html;
     if (typeof (el as any).setHTML === "function") {
-      (el as any).setHTML(h, { sanitizer: new (window as any).Sanitizer({ allowElements: ALLOWED_ELEMENTS }) });
+      (el as any).setHTML(h, { sanitizer: new (window as any).Sanitizer({ allowElements: ALLOWED_ELEMENTS, allowAttributes: ALLOWED_ATTRIBUTES }) });
     } else {
       el.innerHTML = h;
     }
   });
 
-  return <span ref={el} class={props.class} />;
+  return <span ref={el} class={`formatted-text${props.class ? ` ${props.class}` : ""}`} />;
 };
 
 export default FormattedText;

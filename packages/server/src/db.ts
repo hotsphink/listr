@@ -27,6 +27,12 @@ sql.exec(`
     updated_at INTEGER NOT NULL,
     data TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS assets (
+    id TEXT PRIMARY KEY,
+    sync_key TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    data TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS tombstones (
     id TEXT PRIMARY KEY,
     sync_key TEXT NOT NULL,
@@ -37,14 +43,16 @@ sql.exec(`
   CREATE INDEX IF NOT EXISTS idx_categories ON categories(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_lists ON lists(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_items ON items(sync_key, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_assets ON assets(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_tombstones ON tombstones(sync_key, deleted_at);
 `);
 
-export type EntityType = "category" | "list" | "item";
+export type EntityType = "category" | "list" | "item" | "asset";
 
 function tableFor(type: EntityType): string {
   if (type === "category") return "categories";
   if (type === "list") return "lists";
+  if (type === "asset") return "assets";
   return "items";
 }
 

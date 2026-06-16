@@ -62,3 +62,14 @@ export interface Item {
   updated_at: number;
   attributes: Record<string, unknown>;
 }
+
+export interface Asset {
+  id: string;        // first 20 hex chars of SHA-256(data)
+  data: Uint8Array;  // binary content
+  mime_type: string;
+  ext: string;
+  filename: string;
+  size: number;
+  created_at: number;
+  updated_at: number;
+}

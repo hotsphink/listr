@@ -1,4 +1,4 @@
-export type EntityType = "category" | "list" | "item";
+export type EntityType = "category" | "list" | "item" | "asset";
 
 /**
  * Decides whether an incoming entity from sync should be applied locally.
