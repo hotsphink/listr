@@ -47,13 +47,14 @@ const SyncSettingsModal: Component<Props> = (props) => {
     setSaving(true);
     try {
       const existing = await db.sync_config.get("default");
+      const serverChanged = url().trim() !== existing?.sync_url || key().trim() !== existing?.sync_key;
       const config: SyncConfig = {
         id: "default",
         sync_url: url().trim(),
         sync_key: key().trim(),
         client_id: existing?.client_id ?? (savedClientId() || makeClientId()),
         enabled: enabled(),
-        last_sync_at: existing?.last_sync_at ?? 0,
+        last_sync_at: serverChanged ? 0 : (existing?.last_sync_at ?? 0),
       };
       await db.sync_config.put(config);
       if (config.enabled && config.sync_url && config.sync_key) {
