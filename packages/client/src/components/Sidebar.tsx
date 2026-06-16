@@ -10,6 +10,7 @@ import CategoryFormModal from "./CategoryFormModal.js";
 import SyncSettingsModal from "./SyncSettingsModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
 import { syncStatus } from "../sync/syncStore.js";
+import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
 
 interface Props {
   open?: boolean;
@@ -39,16 +40,15 @@ const Sidebar: Component<Props> = (props) => {
   const [showCreateCategory, setShowCreateCategory] = createSignal(false);
   const [showSync, setShowSync] = createSignal(false);
   const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
-  const [selectedListIds, setSelectedListIds] = createSignal<Set<string>>(new Set());
+  const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
   // Auto-expand the category containing the active list; auto-close sidebar on mobile
   createEffect(() => {
     const path = location.pathname;
-    const match = path.match(/^\/list\/(.+)/);
-    if (match) {
-      const listId = match[1];
-      const list = (lists() ?? []).find((l) => l.id === listId);
+    const listMatch = path.match(/^\/list\/(.+)/);
+    if (listMatch) {
+      const list = (lists() ?? []).find((l) => l.id === listMatch[1]);
       if (list) setExpandedCategoryId(list.category_id);
     }
     props.onClose?.();
@@ -143,12 +143,34 @@ const Sidebar: Component<Props> = (props) => {
   };
 
   const handleListClick = (e: MouseEvent, list: List) => {
+    if (e.shiftKey && anchorListId()) {
+      const catLists = listsForCategory(list.category_id);
+      const ids = catLists.map((l) => l.id);
+      const a = ids.indexOf(anchorListId()!);
+      const b = ids.indexOf(list.id);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a <= b ? [a, b] : [b, a];
+        const rangeIds = new Set(ids.slice(lo, hi + 1));
+        if (e.ctrlKey || e.metaKey) {
+          setSelectedListIds((prev) => new Set([...prev, ...rangeIds]));
+        } else {
+          setSelectedListIds(rangeIds);
+        }
+        return;
+      }
+    }
     if (e.ctrlKey || e.metaKey) {
+      setAnchorListId(list.id);
       setSelectedListIds((prev) => {
         const next = new Set(prev);
         next.has(list.id) ? next.delete(list.id) : next.add(list.id);
         return next;
       });
+      return;
+    }
+    setAnchorListId(list.id);
+    if (selectedListIds().size === 1 && selectedListIds().has(list.id)) {
+      setSelectedListIds(new Set());
     } else {
       setSelectedListIds(new Set([list.id]));
     }
@@ -193,7 +215,7 @@ const Sidebar: Component<Props> = (props) => {
                       class="sidebar-category-header"
                       classList={{ expanded: isExpanded() }}
                       style={`border-left: 3px solid ${cat.color}`}
-                      onClick={() => toggleCategory(cat.id)}
+                      onClick={() => { navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
                       onContextMenu={(e) => handleContextMenu(e, { kind: "category", category: cat })}
                     >
                       <span class="sidebar-category-chevron">{isExpanded() ? "▾" : "▸"}</span>

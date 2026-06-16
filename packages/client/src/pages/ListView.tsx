@@ -134,25 +134,29 @@ const ListView: Component = () => {
     setShowEditList(false);
   };
 
-  const handleItemClick = (e: MouseEvent, item: Item) => {
+  const handleItemClick = (e: MouseEvent, item: Item, contextItems: Item[]) => {
     e.stopPropagation();
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      handleItemContextMenu(e, item);
+      return;
+    }
     if (e.shiftKey && anchorId()) {
-      const ids = items().map((i) => i.id);
+      const ids = contextItems.map((i) => i.id);
       const a = ids.indexOf(anchorId()!);
       const b = ids.indexOf(item.id);
-      const [lo, hi] = a <= b ? [a, b] : [b, a];
-      setSelectedIds(new Set(ids.slice(lo, hi + 1)));
-    } else if (e.ctrlKey || e.metaKey) {
-      setAnchorId(item.id);
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
-        return next;
-      });
-    } else {
-      setAnchorId(item.id);
-      setSelectedIds(new Set([item.id]));
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a <= b ? [a, b] : [b, a];
+        const rangeIds = new Set(ids.slice(lo, hi + 1));
+        if (e.ctrlKey || e.metaKey) {
+          setSelectedIds((prev) => new Set([...prev, ...rangeIds]));
+        } else {
+          setSelectedIds(rangeIds);
+        }
+        return;
+      }
     }
+    setAnchorId(item.id);
+    setSelectedIds(new Set([item.id]));
   };
 
   const handleItemContextMenu = (e: MouseEvent, item: Item) => {
@@ -298,7 +302,7 @@ const ListView: Component = () => {
                     <ul class="list-view" ref={(el) => initSortable(el)}>
                       <For each={items()}>
                         {(item) => (
-                          <li class="list-view-item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
+                          <li class="list-view-item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item, items())} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                             <span class="drag-handle" title="Drag to reorder">⠿</span>
                             <FormattedText html={formatItem(item)} />
                           </li>
@@ -324,7 +328,7 @@ const ListView: Component = () => {
                       <tbody ref={(el) => initSortable(el)}>
                         <For each={items()}>
                           {(item) => (
-                            <tr classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
+                            <tr classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item, items())} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                               <td class="drag-handle-cell"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
                               <td style="font-weight: 500">{item.title}</td>
                               <For each={schema()}>
@@ -346,7 +350,7 @@ const ListView: Component = () => {
                     <div class="card-grid" ref={(el) => initSortable(el)}>
                       <For each={items()}>
                         {(item) => (
-                          <div class="card item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
+                          <div class="card item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item, items())} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                             <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
                             <div class="card-title"><FormattedText html={formatItem(item)} /></div>
                             <Show when={schema().length > 0}>
@@ -410,7 +414,7 @@ const ListView: Component = () => {
                                   <div class="board-column-items">
                                     <For each={col.items}>
                                       {(item) => (
-                                        <div class="board-item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
+                                        <div class="board-item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item, col.items)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                                           <FormattedText html={formatItem(item)} />
                                         </div>
                                       )}

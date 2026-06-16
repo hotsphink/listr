@@ -160,6 +160,7 @@ body {
   color: var(--text);
   text-decoration: none;
   font-size: 14px;
+  user-select: none;
 }
 
 .sidebar-item:hover {
@@ -599,6 +600,7 @@ tbody tr {
 
 .card.item {
   position: relative;
+  user-select: none;
 }
 
 .card.add {
@@ -852,6 +854,7 @@ tbody tr {
   cursor: pointer;
   font-size: 14px;
   transition: background 0.15s;
+  user-select: none;
 }
 
 .list-view-item:first-child {
@@ -1052,6 +1055,7 @@ tr.selected td,
   font-size: 13px;
   cursor: pointer;
   transition: border-color 0.15s;
+  user-select: none;
 }
 
 .board-item:hover {
@@ -1071,6 +1075,68 @@ tr.selected td,
 .board-add:hover {
   background: var(--bg-hover);
   color: var(--text-muted);
+}
+
+/* Multi-list view */
+.multi-list-view {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  padding: 12px 24px 24px;
+  overflow-x: auto;
+  align-items: flex-start;
+}
+
+.multi-list-column {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  max-height: calc(100vh - 100px);
+}
+
+.multi-list-column.active {
+  border-color: var(--accent);
+}
+
+.multi-list-column-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+  user-select: none;
+}
+
+.multi-list-column-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-list-column-count {
+  font-weight: 400;
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.multi-list-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  margin: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* Drag and drop */

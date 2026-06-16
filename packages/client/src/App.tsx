@@ -1,7 +1,9 @@
-import { type Component, createSignal, onMount } from "solid-js";
-import { Router, Route } from "@solidjs/router";
+import { type Component, createSignal, createEffect, onMount, Show } from "solid-js";
+import { Router, Route, useNavigate } from "@solidjs/router";
+import { liveQuery } from "dexie";
+import { from } from "solid-js";
 import Sidebar from "./components/Sidebar.js";
-import Dashboard from "./pages/Dashboard.js";
+import CategoryView from "./pages/CategoryView.js";
 import ListView from "./pages/ListView.js";
 import TestRunner from "./pages/TestRunner.js";
 import { db } from "./db/database.js";
@@ -38,9 +40,30 @@ const Layout: Component<{ children?: any }> = (props) => {
   );
 };
 
+const Home: Component = () => {
+  const navigate = useNavigate();
+  const categories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
+
+  createEffect(() => {
+    const cats = categories();
+    if (cats && cats.length > 0) navigate(`/category/${cats[0].id}`, { replace: true });
+  });
+
+  return (
+    <Show when={(categories() ?? []).length === 0}>
+      <div class="main">
+        <div class="empty-state">
+          <p>Create a category in the sidebar to get started.</p>
+        </div>
+      </div>
+    </Show>
+  );
+};
+
 const App: Component = () => (
   <Router root={Layout}>
-    <Route path="/" component={Dashboard} />
+    <Route path="/" component={Home} />
+    <Route path="/category/:id" component={CategoryView} />
     <Route path="/list/:id" component={ListView} />
     <Route path="/test" component={TestRunner} />
   </Router>
