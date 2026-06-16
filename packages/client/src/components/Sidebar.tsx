@@ -22,6 +22,15 @@ const Sidebar: Component<Props> = (props) => {
 
   const categories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
   const lists = from(liveQuery(() => db.lists.orderBy("position").toArray()));
+  const itemCounts = from(liveQuery(async () => {
+    const allLists = await db.lists.toArray();
+    const entries = await Promise.all(
+      allLists.map(async (l) => [l.id, await db.items.where("list_id").equals(l.id).count()] as const)
+    );
+    return new Map<string, number>(entries);
+  }));
+
+  const itemCountForList = (listId: string) => itemCounts()?.get(listId) ?? 0;
 
   const [expandedCategoryId, setExpandedCategoryId] = createSignal<string | null>(null);
   const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; target: { kind: "list"; list: List } | { kind: "category"; category: Category } } | null>(null);
@@ -187,6 +196,7 @@ const Sidebar: Component<Props> = (props) => {
                               onContextMenu={(e) => handleContextMenu(e, { kind: "list", list })}
                             >
                               {list.name}
+                              <span class="sidebar-item-count">{itemCountForList(list.id)}</span>
                             </div>
                           }
                         >

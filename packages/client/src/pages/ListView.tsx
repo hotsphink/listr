@@ -172,7 +172,7 @@ const ListView: Component = () => {
         {(l) => (
           <>
             <div class="page-header">
-              <h1>{l().name}</h1>
+              <h1>{l().name} <span class="item-count">{allItems().length}</span></h1>
               <div class="header-actions">
                 <input
                   class="search-input"
