@@ -17,7 +17,7 @@ import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
 import FormattedText from "../components/FormattedText.js";
-import ContextMenu from "../components/ContextMenu.js";
+import ContextMenu, { type MenuItem } from "../components/ContextMenu.js";
 
 const VIEW_MODES: { mode: ViewMode; label: string }[] = [
   { mode: "list", label: "List" },
@@ -39,6 +39,7 @@ const ListView: Component = () => {
   const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
   const [anchorId, setAnchorId] = createSignal<string | null>(null);
   const [selCtxMenu, setSelCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
+  const [prependNext, setPrependNext] = createSignal(false);
 
   createEffect(() => {
     if ((location.state as any)?.openSettings) {
@@ -111,8 +112,14 @@ const ListView: Component = () => {
   });
 
   const handleAddItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
-    await createItem(params.id, data.title, data.attributes);
+    if (prependNext()) {
+      const minPos = allItems().length > 0 ? Math.min(...allItems().map((i) => i.position)) - 1 : 0;
+      await createItem(params.id, data.title, data.attributes, minPos);
+    } else {
+      await createItem(params.id, data.title, data.attributes);
+    }
     setShowAddItem(false);
+    setPrependNext(false);
   };
 
   const handleEditItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
@@ -136,10 +143,6 @@ const ListView: Component = () => {
 
   const handleItemClick = (e: MouseEvent, item: Item, contextItems: Item[]) => {
     e.stopPropagation();
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
-      handleItemContextMenu(e, item);
-      return;
-    }
     if (e.shiftKey && anchorId()) {
       const ids = contextItems.map((i) => i.id);
       const a = ids.indexOf(anchorId()!);
@@ -155,8 +158,21 @@ const ListView: Component = () => {
         return;
       }
     }
+    if (e.ctrlKey || e.metaKey) {
+      setAnchorId(item.id);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+        return next;
+      });
+      return;
+    }
     setAnchorId(item.id);
-    setSelectedIds(new Set([item.id]));
+    if (selectedIds().size === 1 && selectedIds().has(item.id)) {
+      setSelectedIds(new Set<string>());
+    } else {
+      setSelectedIds(new Set([item.id]));
+    }
   };
 
   const handleItemContextMenu = (e: MouseEvent, item: Item) => {
@@ -177,6 +193,19 @@ const ListView: Component = () => {
     setSelectedIds(new Set<string>());
     setSelCtxMenu(null);
   };
+
+  const selCtxItems = createMemo((): MenuItem[] => {
+    const items: MenuItem[] = [];
+    if (selectedIds().size === 1) {
+      const id = [...selectedIds()][0];
+      const found = allItems().find((i) => i.id === id);
+      if (found) {
+        items.push({ label: "Edit Item", action: () => { setEditingItem(found); setSelCtxMenu(null); } });
+      }
+    }
+    items.push({ label: `Delete ${selectedIds().size} item${selectedIds().size !== 1 ? "s" : ""}`, danger: true, action: deleteSelected });
+    return items;
+  });
 
   const formatItem = (item: Item): string => {
     const urls = assetUrls();
@@ -300,6 +329,7 @@ const ListView: Component = () => {
                 <Match when={viewMode() === "list"}>
                   <div class="list-view-container">
                     <ul class="list-view" ref={(el) => initSortable(el)}>
+                      <li class="view-add" onClick={() => { setPrependNext(true); setShowAddItem(true); }}>+ Add Item</li>
                       <For each={items()}>
                         {(item) => (
                           <li class="list-view-item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item, items())} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
@@ -315,6 +345,7 @@ const ListView: Component = () => {
 
                 <Match when={viewMode() === "table"}>
                   <div class="table-container">
+                    <div class="view-add" onClick={() => { setPrependNext(true); setShowAddItem(true); }}>+ Add Item</div>
                     <table>
                       <thead>
                         <tr>
@@ -348,6 +379,7 @@ const ListView: Component = () => {
                 <Match when={viewMode() === "card"}>
                   <div class="card-container">
                     <div class="card-grid" ref={(el) => initSortable(el)}>
+                      <div class="card add" onClick={() => { setPrependNext(true); setShowAddItem(true); }}>+ Add Item</div>
                       <For each={items()}>
                         {(item) => (
                           <div class="card item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item, items())} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
@@ -437,7 +469,7 @@ const ListView: Component = () => {
                 <ContextMenu
                   x={pos().x}
                   y={pos().y}
-                  items={[{ label: `Delete ${selectedIds().size} item${selectedIds().size !== 1 ? "s" : ""}`, danger: true, action: deleteSelected }]}
+                  items={selCtxItems()}
                   onClose={() => setSelCtxMenu(null)}
                 />
               )}

@@ -21,7 +21,8 @@
       "Bash(curl -sk https://localhost:3000)",
       "Bash(pnpm exec *)",
       "Bash(pnpm test *)",
-      "Bash(pnpm test:e2e)"
+      "Bash(pnpm test:e2e)",
+      "Bash(pnpm test:e2e --reporter=line)"
     ]
   }
 }

@@ -193,6 +193,7 @@ body {
   cursor: pointer;
   border-radius: var(--radius);
   transition: background 0.15s;
+  user-select: none;
 }
 
 .sidebar-category-header:hover {

@@ -130,6 +130,7 @@ export async function createItem(
   listId: string,
   title: string,
   attributes: Record<string, unknown> = {},
+  position?: number,
 ): Promise<Item> {
   const schema = await getSchemaForList(listId);
 
@@ -143,12 +144,18 @@ export async function createItem(
     }
   }
 
-  const maxPos = await db.items.where("list_id").equals(listId).last();
+  let pos: number;
+  if (position !== undefined) {
+    pos = position;
+  } else {
+    const maxPos = await db.items.where("list_id").equals(listId).last();
+    pos = (maxPos?.position ?? -1) + 1;
+  }
   const item: Item = {
     id: generateId(),
     list_id: listId,
     title,
-    position: (maxPos?.position ?? -1) + 1,
+    position: pos,
     created_at: now(),
     updated_at: now(),
     attributes: resolvedAttrs,
