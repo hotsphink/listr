@@ -7,3 +7,4 @@ packages/server/data/
 certs/
 pnpm-lock.yaml
 pnpm-workspace.yaml
+work/

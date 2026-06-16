@@ -16,7 +16,9 @@
       "Bash(timeout 3 npx tsx src/index.ts)",
       "Bash(npm test *)",
       "Bash(pnpm --filter @listr/client build)",
-      "Bash(pnpm dev *)"
+      "Bash(pnpm dev *)",
+      "Bash(pnpm test:e2e --reporter=list)",
+      "Bash(curl -sk https://localhost:3000)"
     ]
   }
 }

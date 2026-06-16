@@ -8,6 +8,7 @@ import { createList, createCategory, updateList, deleteList, updateCategory, del
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import CategoryFormModal from "./CategoryFormModal.js";
 import SyncSettingsModal from "./SyncSettingsModal.js";
+import ImportModal, { type ImportScope } from "./ImportModal.js";
 import { syncStatus } from "../sync/syncStore.js";
 
 interface Props {
@@ -28,6 +29,7 @@ const Sidebar: Component<Props> = (props) => {
   const [editingCategory, setEditingCategory] = createSignal<Category | undefined>();
   const [showCreateCategory, setShowCreateCategory] = createSignal(false);
   const [showSync, setShowSync] = createSignal(false);
+  const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
 
   // Auto-expand the category containing the active list; auto-close sidebar on mobile
   createEffect(() => {
@@ -73,6 +75,15 @@ const Sidebar: Component<Props> = (props) => {
       return [
         { label: "Rename", action: () => setRenamingId(cat.id) },
         { label: "Configure", action: () => setEditingCategory(cat) },
+        { label: "Import", action: () => setImportScope({
+            type: "category",
+            id: cat.id,
+            name: cat.name,
+            schema: cat.schema,
+            format_string: cat.format_string,
+            macros: cat.macros ?? {},
+          })
+        },
         { label: "Delete", danger: true, action: async () => {
           const listCount = listsForCategory(cat.id).length;
           const msg = listCount > 0
@@ -199,6 +210,12 @@ const Sidebar: Component<Props> = (props) => {
         >
           + New Category
         </div>
+        <div
+          class="sidebar-item sidebar-new"
+          onClick={() => setImportScope({ type: "global" })}
+        >
+          ↓ Import
+        </div>
       </div>
       <div class="sidebar-footer">
         <div class="sidebar-sync-btn" onClick={() => setShowSync(true)}>
@@ -242,6 +259,12 @@ const Sidebar: Component<Props> = (props) => {
       />
 
       <SyncSettingsModal open={showSync()} onClose={() => setShowSync(false)} />
+
+      <Show when={importScope()}>
+        {(scope) => (
+          <ImportModal open={true} onClose={() => setImportScope(null)} scope={scope()} />
+        )}
+      </Show>
     </nav>
   );
 };

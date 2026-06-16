@@ -29,7 +29,7 @@ test.describe("sidebar context menu", () => {
 
     const menu = page.locator(".context-menu");
     await expect(menu).toBeVisible();
-    await expect(menu.locator(".context-menu-item")).toHaveCount(3);
+    await expect(menu.locator(".context-menu-item")).toHaveCount(4);
   });
 
   test("context menu closes on Escape", async ({ page }) => {

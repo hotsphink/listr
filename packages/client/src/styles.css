@@ -1075,6 +1075,83 @@ tbody tr {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
+/* Import modal */
+.import-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.import-dropzone:hover, .import-dropzone.dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.import-dropzone.loading { cursor: default; opacity: 0.7; }
+.import-dropzone-hint { color: var(--text-muted); }
+
+.import-summary {
+  padding: 10px 0 12px;
+  font-size: 14px;
+}
+.import-preview {
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.import-preview-category {
+  padding: 8px 10px 4px;
+  font-weight: 600;
+  font-size: 14px;
+  background: var(--bg-active);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+}
+.import-preview-list {
+  padding: 5px 10px 3px 20px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+.import-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 30px;
+  border-bottom: 1px solid var(--border);
+}
+.import-preview-item:last-child { border-bottom: none; }
+.import-preview-item.skip { opacity: 0.45; }
+
+.badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.badge-new { background: var(--accent-dim); color: var(--accent); }
+.badge-skip { background: var(--bg-active); color: var(--text-dim); }
+
+.import-item-title { flex: 1; }
+.import-attr-pill {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.text-muted { color: var(--text-muted); }
+
 /* Formatted text */
 .formatted-text img {
   height: 1.2em;

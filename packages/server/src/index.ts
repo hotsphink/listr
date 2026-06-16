@@ -2,19 +2,69 @@ import { createServer } from "node:https";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince } from "./db.js";
 import type { EntityType } from "./db.js";
+import { config } from "./config.js";
+import { extractFromImage } from "./gemini.js";
 
 const PORT = 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
+
+async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!config.gemini) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Gemini API key not configured on server" }));
+    return;
+  }
+  const body = await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    req.on("error", reject);
+  });
+  const { image, mime_type, scope } = JSON.parse(body);
+  const imageKB = Math.round(image.length * 0.75 / 1024);
+  console.log(`[import] ${new Date().toISOString()} scope=${scope.type} model=${config.gemini_model ?? "gemini-2.0-flash-lite"} image=${imageKB}KB`);
+  const t0 = Date.now();
+  const result = await extractFromImage(image, mime_type, scope, config.gemini, config.gemini_model);
+  console.log(`[import] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${result.categories?.length ?? 0} categories`);
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(result));
+}
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
 const httpServer = createServer(
   {
     key: readFileSync(join(CERT_DIR, "tailscale.key")),
     cert: readFileSync(join(CERT_DIR, "tailscale.crt")),
   },
-  (_req, res) => {
+  (req, res) => {
+    Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
+    if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+    if (req.method === "GET" && req.url === "/api/models") {
+      if (!config.gemini) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "No API key" })); return; }
+      (async () => {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${config.gemini}`);
+        const data = await r.json();
+        res.writeHead(r.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(data));
+      })().catch((err) => { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(err) })); });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/import") {
+      handleImport(req, res).catch((err) => {
+        if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      });
+      return;
+    }
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("Listr sync server running\n");
   },
