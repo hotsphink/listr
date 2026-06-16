@@ -75,7 +75,6 @@ test.describe("sidebar context menu", () => {
   });
 
   test("delete removes the list", async ({ page }) => {
-    await page.locator(".sidebar-header").click();
     await createListInCategory(page, "Books", "Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Books");
 

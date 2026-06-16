@@ -11,7 +11,7 @@ export async function clearDatabase(page: Page) {
     });
   });
   await page.reload();
-  await page.waitForSelector(".page-header");
+  await page.waitForSelector(".sidebar");
 }
 
 export async function fillSchemaField(page: Page, input: Locator, value: string) {
@@ -25,7 +25,7 @@ export async function createCategory(
   attributes?: Array<{ key: string; label: string; type?: string; options?: string }>,
   formatString?: string,
 ) {
-  await page.getByRole("button", { name: "+ Category" }).click();
+  await page.locator(".sidebar-item.sidebar-new.category").click();
   await expect(page.locator(".modal h2")).toHaveText("New Category");
 
   await page.locator(".modal .form-field input").first().fill(name);
@@ -50,8 +50,6 @@ export async function createCategory(
   }
 
   if (formatString) {
-    const formatInput = page.locator(".modal .form-field input").nth(1); // after name input, skipping color
-    // The format string field is the one with label "Format String"
     const formatField = page.locator(".modal .form-field").filter({ has: page.locator("label", { hasText: "Format String" }) });
     await formatField.locator("input").fill(formatString);
   }
@@ -64,14 +62,22 @@ export async function createListInCategory(
   name: string,
   categoryName?: string,
 ) {
-  await page.getByRole("button", { name: "+ New List" }).first().click();
-  await expect(page.locator(".modal h2")).toHaveText("New List");
-
-  await page.locator(".modal .form-field input").first().fill(name);
-
   if (categoryName) {
-    await page.locator(".modal select").first().selectOption({ label: categoryName });
+    const catSection = page.locator(".sidebar-category").filter({
+      has: page.locator(".sidebar-category-header", { hasText: categoryName }),
+    });
+    const listsDiv = catSection.locator(".sidebar-category-lists");
+    if (!(await listsDiv.isVisible())) {
+      await catSection.locator(".sidebar-category-header").click();
+      await listsDiv.waitFor({ state: "visible" });
+    }
+    await catSection.locator(".sidebar-item.sidebar-new").click();
+  } else {
+    await page.locator(".sidebar-category-lists .sidebar-item.sidebar-new").first().click();
   }
-
-  await page.getByRole("button", { name: "Create" }).click();
+  const renameInput = page.locator(".sidebar-rename-input").last();
+  await renameInput.waitFor({ state: "visible" });
+  await renameInput.fill(name);
+  await renameInput.press("Enter");
+  await page.waitForSelector(".page-header");
 }
