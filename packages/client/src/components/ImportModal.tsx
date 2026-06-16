@@ -6,7 +6,8 @@ import Modal from "./Modal.js";
 
 export type ImportScope =
   | { type: "global" }
-  | { type: "category"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> };
+  | { type: "category"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> }
+  | { type: "list"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> };
 
 interface ImportedItem { title: string; attributes: Record<string, unknown>; }
 interface ImportedList { name: string; items: ImportedItem[]; }
@@ -38,8 +39,8 @@ async function fetchExtraction(imageBase64: string, mimeType: string, scope: Imp
     body: JSON.stringify({
       image: imageBase64,
       mime_type: mimeType,
-      scope: scope.type === "category"
-        ? { type: "category", name: scope.name, schema: scope.schema }
+      scope: scope.type === "category" || scope.type === "list"
+        ? { type: scope.type, name: scope.name, schema: scope.schema }
         : { type: "global" },
     }),
   });
@@ -49,7 +50,7 @@ async function fetchExtraction(imageBase64: string, mimeType: string, scope: Imp
   return (data.categories ?? []) as ImportedCategory[];
 }
 
-async function buildPreview(extracted: ImportedCategory[]): Promise<PreviewCategory[]> {
+async function buildPreview(extracted: ImportedCategory[], scope: ImportScope): Promise<PreviewCategory[]> {
   console.log("[import] buildPreview: querying DB...");
   const [allCats, allLists, allItems] = await Promise.all([
     db.categories.toArray(),
@@ -57,6 +58,23 @@ async function buildPreview(extracted: ImportedCategory[]): Promise<PreviewCateg
     db.items.toArray(),
   ]);
   console.log("[import] buildPreview: DB query done", allCats.length, "cats", allLists.length, "lists", allItems.length, "items");
+
+  if (scope.type === "list") {
+    const existingTitles = new Set(
+      allItems.filter((i) => i.list_id === scope.id).map((i) => i.title.toLowerCase()),
+    );
+    const allExtracted = extracted.flatMap((cat) => cat.lists.flatMap((l) => l.items));
+    const items: PreviewItem[] = allExtracted.map((item) => ({
+      ...item,
+      attributes: item.attributes ?? {},
+      skip: existingTitles.has(item.title.toLowerCase()),
+    }));
+    return [{
+      name: scope.name,
+      existingId: scope.id,
+      lists: [{ name: scope.name, existingId: scope.id, items, newCount: items.filter((i) => !i.skip).length }],
+    }];
+  }
 
   return extracted.map((cat) => {
     const existingCat = allCats.find((c) => c.name.toLowerCase() === cat.name.toLowerCase());
@@ -86,6 +104,12 @@ async function buildPreview(extracted: ImportedCategory[]): Promise<PreviewCateg
 }
 
 async function performImport(preview: PreviewCategory[], scope: ImportScope): Promise<number> {
+  if (scope.type === "list") {
+    const newItems = preview.flatMap((c) => c.lists.flatMap((l) => l.items.filter((i) => !i.skip)));
+    if (newItems.length > 0) await bulkCreateItems(scope.id, newItems);
+    return newItems.length;
+  }
+
   let total = 0;
   for (const cat of preview) {
     let catId = cat.existingId;
@@ -162,7 +186,7 @@ const ImportModal: Component<Props> = (props) => {
       console.log("[import] fetchExtraction start");
       const extracted = await fetchExtraction(base64, file.type, props.scope);
       console.log("[import] fetchExtraction done, categories:", extracted.length);
-      const prev = await buildPreview(extracted);
+      const prev = await buildPreview(extracted, props.scope);
       console.log("[import] buildPreview done, preview categories:", prev.length);
       setPreview(prev);
       setPhase("preview");
@@ -200,7 +224,9 @@ const ImportModal: Component<Props> = (props) => {
   };
 
   const scopeLabel = () =>
-    props.scope.type === "category" ? `into "${props.scope.name}"` : "globally";
+    props.scope.type === "category" || props.scope.type === "list"
+      ? `into "${props.scope.name}"`
+      : "globally";
 
   return (
     <Modal open={props.open} onClose={handleClose}>
@@ -252,12 +278,14 @@ const ImportModal: Component<Props> = (props) => {
           <For each={preview()}>
             {(cat) => (
               <>
-                <div class="import-preview-category">
-                  {cat.name}
-                  <Show when={!cat.existingId}>
-                    {" "}<span class="badge badge-new">new category</span>
-                  </Show>
-                </div>
+                <Show when={props.scope.type !== "list"}>
+                  <div class="import-preview-category">
+                    {cat.name}
+                    <Show when={!cat.existingId}>
+                      {" "}<span class="badge badge-new">new category</span>
+                    </Show>
+                  </div>
+                </Show>
                 <For each={cat.lists}>
                   {(list) => (
                     <>

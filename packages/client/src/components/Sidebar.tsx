@@ -61,9 +61,19 @@ const Sidebar: Component<Props> = (props) => {
 
     if (ctx.target.kind === "list") {
       const list = ctx.target.list;
+      const cat = (categories() ?? []).find((c) => c.id === list.category_id);
       return [
         { label: "Rename", action: () => setRenamingId(list.id) },
         { label: "Configure", action: () => navigate(`/list/${list.id}`, { state: { openSettings: true } }) },
+        { label: "Import", action: () => cat && setImportScope({
+            type: "list",
+            id: list.id,
+            name: list.name,
+            schema: cat.schema,
+            format_string: list.format_string ?? cat.format_string,
+            macros: cat.macros ?? {},
+          })
+        },
         { label: "Delete", danger: true, action: async () => {
           if (!confirm(`Delete "${list.name}" and all its items?`)) return;
           await deleteList(list.id);

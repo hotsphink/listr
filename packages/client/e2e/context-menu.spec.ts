@@ -17,10 +17,11 @@ test.describe("sidebar context menu", () => {
     await expect(menu).toBeVisible();
 
     const items = menu.locator(".context-menu-item");
-    await expect(items).toHaveCount(3);
+    await expect(items).toHaveCount(4);
     await expect(items.nth(0)).toHaveText("Rename");
     await expect(items.nth(1)).toHaveText("Configure");
-    await expect(items.nth(2)).toHaveText("Delete");
+    await expect(items.nth(2)).toHaveText("Import");
+    await expect(items.nth(3)).toHaveText("Delete");
   });
 
   test("right-click category shows context menu", async ({ page }) => {

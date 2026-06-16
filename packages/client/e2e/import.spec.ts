@@ -201,6 +201,44 @@ test.describe("import modal", () => {
     await expect(page.locator(".import-attr-pill", { hasText: "imdb: 8.8" })).toBeVisible();
   });
 
+  test("list-scoped import opens from list context menu and adds items to that list", async ({ page }) => {
+    await createCategory(page, "Movies");
+    await setupSyncConfig(page);
+    // Gemini returns a flat list of items (list scope prompt)
+    await mockImportRoute(page, {
+      categories: [{ name: "items", lists: [{ name: "items", items: [{ title: "Inception" }, { title: "The Matrix" }] }] }],
+    });
+
+    // Create a list by clicking "+ New List" in the sidebar
+    await page.locator(".sidebar-category-header", { hasText: "Movies" }).click();
+    await page.locator(".sidebar-item.sidebar-new", { hasText: "+ New List" }).click();
+    // Inline rename appears — type name and confirm
+    const renameInput = page.locator(".sidebar-rename-input");
+    await renameInput.fill("Watchlist");
+    await renameInput.press("Enter");
+
+    // Right-click the list and choose Import
+    const listItem = page.locator(".sidebar-item", { hasText: "Watchlist" });
+    await listItem.click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Import" }).click();
+
+    await expect(page.locator(".modal h2")).toHaveText("Import from Screenshot");
+    await expect(page.locator(".modal")).toContainText('into "Watchlist"');
+
+    await uploadFakeImage(page);
+    await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
+    // Category header should NOT appear for list scope
+    await expect(page.locator(".import-preview-category")).toHaveCount(0);
+    await expect(page.locator(".import-summary")).toContainText("2 new items");
+
+    await page.getByRole("button", { name: /Import 2 items/ }).click();
+    await expect(page.locator(".modal")).toContainText("Imported 2 items successfully");
+
+    const titles = await getItemTitles(page);
+    expect(titles).toContain("Inception");
+    expect(titles).toContain("The Matrix");
+  });
+
   test("Back button returns to the upload screen", async ({ page }) => {
     await createCategory(page, "Movies");
     await setupSyncConfig(page);

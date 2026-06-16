@@ -5,7 +5,7 @@ interface AttributeHint {
 }
 
 export interface ImportScope {
-  type: "global" | "category";
+  type: "global" | "category" | "list";
   name?: string;
   schema?: AttributeHint[];
 }
@@ -46,18 +46,28 @@ function typeHint(type: string, key: string, label: string): string {
 function buildPrompt(scope: ImportScope): string {
   const lines: string[] = [];
 
-  lines.push("Extract structured data from this Trello board screenshot.");
-  lines.push("");
-  lines.push("Return a JSON object with this exact structure (no markdown fences):");
-  lines.push('{ "categories": [ { "name": "...", "lists": [ { "name": "...", "items": [ { "title": "..." } ] } ] } ] }');
-  lines.push("");
-
-  if (scope.type === "category" && scope.name) {
-    lines.push(`This board belongs to the category "${scope.name}". Use "${scope.name}" as the single category name.`);
+  if (scope.type === "list") {
+    lines.push("Extract all visible items from this screenshot.");
+    lines.push("");
+    lines.push("Return a JSON object with this exact structure (no markdown fences):");
+    lines.push('{ "categories": [ { "name": "items", "lists": [ { "name": "items", "items": [ { "title": "..." } ] } ] } ] }');
+    lines.push("");
+    lines.push("Extract every visible card or item into the single flat list. Do not split by board column or list name.");
+    lines.push("");
   } else {
-    lines.push("The board title becomes the category name. Each Trello list becomes a list within that category.");
+    lines.push("Extract structured data from this Trello board screenshot.");
+    lines.push("");
+    lines.push("Return a JSON object with this exact structure (no markdown fences):");
+    lines.push('{ "categories": [ { "name": "...", "lists": [ { "name": "...", "items": [ { "title": "..." } ] } ] } ] }');
+    lines.push("");
+
+    if (scope.type === "category" && scope.name) {
+      lines.push(`This board belongs to the category "${scope.name}". Use "${scope.name}" as the single category name.`);
+    } else {
+      lines.push("The board title becomes the category name. Each Trello list becomes a list within that category.");
+    }
+    lines.push("");
   }
-  lines.push("");
 
   if (scope.schema && scope.schema.length > 0) {
     lines.push("In addition to \"title\", each item object may include these typed attribute fields extracted from the card text:");
