@@ -171,6 +171,12 @@ body {
   color: var(--accent);
 }
 
+.sidebar-item.selected:not(.active) {
+  background: var(--bg-hover);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .sidebar-category {
   margin-bottom: 2px;
 }
@@ -305,9 +311,15 @@ body {
     align-items: center;
   }
 
-  .page-header h1 {
+  .page-title {
     flex: 1 1 auto;
     min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .page-header h1 {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -385,6 +397,12 @@ body {
   padding: 16px 24px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.page-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .page-header h1 {
@@ -842,6 +860,15 @@ tbody tr {
 
 .list-view-item:hover {
   background: var(--bg-hover);
+}
+
+.list-view-item.selected,
+tr.selected td,
+.card.item.selected,
+.board-item.selected {
+  background: var(--accent-dim);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 

@@ -75,16 +75,16 @@ test.describe("view mode switching", () => {
     await expect(page.locator(".card-grid")).toBeVisible();
   });
 
-  test("clicking a list item opens the edit modal", async ({ page }) => {
-    await page.locator(".list-view-item").first().click();
+  test("double-clicking a list item opens the edit modal", async ({ page }) => {
+    await page.locator(".list-view-item").first().dblclick();
     await expect(page.locator(".modal h2")).toHaveText("Edit Item");
     await expect(page.locator(".modal .form-field input").first()).toHaveValue("Inception");
   });
 
-  test("clicking a card opens the edit modal", async ({ page }) => {
+  test("double-clicking a card opens the edit modal", async ({ page }) => {
     await page.locator(".view-switcher-btn", { hasText: "Cards" }).click();
     await expect(page.locator(".card-grid")).toBeVisible();
-    await page.locator(".card.item").first().click();
+    await page.locator(".card.item").first().dblclick();
     await expect(page.locator(".modal h2")).toHaveText("Edit Item");
     await expect(page.locator(".modal .form-field input").first()).toHaveValue("Inception");
   });

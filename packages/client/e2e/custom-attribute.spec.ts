@@ -64,7 +64,7 @@ test.describe("custom attributes", () => {
     await expect(row.locator("td").nth(1)).toContainText("Blade Runner");
     await expect(row.locator("td").nth(2)).toContainText("Ridley Scott");
 
-    await row.click();
+    await row.dblclick();
     await expect(page.locator(".modal h2")).toHaveText("Edit Item");
     const directorInput = page.locator(".modal .form-field").nth(1).locator("input");
     await expect(directorInput).toHaveValue("Ridley Scott");

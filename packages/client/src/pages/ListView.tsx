@@ -17,6 +17,7 @@ import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
 import FormattedText from "../components/FormattedText.js";
+import ContextMenu from "../components/ContextMenu.js";
 
 const VIEW_MODES: { mode: ViewMode; label: string }[] = [
   { mode: "list", label: "List" },
@@ -35,6 +36,9 @@ const ListView: Component = () => {
   const [showEditList, setShowEditList] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
+  const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
+  const [anchorId, setAnchorId] = createSignal<string | null>(null);
+  const [selCtxMenu, setSelCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
   createEffect(() => {
     if ((location.state as any)?.openSettings) {
@@ -53,10 +57,18 @@ const ListView: Component = () => {
     setEditingItem(undefined);
     setSearchQuery("");
     setSearchOpen(false);
+    setSelectedIds(new Set<string>());
+    setAnchorId(null);
     const sub1 = liveQuery(() => db.lists.get(id)).subscribe((v) => setList(v));
     const sub2 = liveQuery(() => db.items.where("list_id").equals(id).sortBy("position")).subscribe((v) => setAllItems(v));
     onCleanup(() => { sub1.unsubscribe(); sub2.unsubscribe(); });
   });
+
+  const handleGlobalKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { setSelectedIds(new Set<string>()); setSelCtxMenu(null); }
+  };
+  document.addEventListener("keydown", handleGlobalKeyDown);
+  onCleanup(() => document.removeEventListener("keydown", handleGlobalKeyDown));
 
   createEffect(() => {
     const l = list();
@@ -122,6 +134,46 @@ const ListView: Component = () => {
     setShowEditList(false);
   };
 
+  const handleItemClick = (e: MouseEvent, item: Item) => {
+    e.stopPropagation();
+    if (e.shiftKey && anchorId()) {
+      const ids = items().map((i) => i.id);
+      const a = ids.indexOf(anchorId()!);
+      const b = ids.indexOf(item.id);
+      const [lo, hi] = a <= b ? [a, b] : [b, a];
+      setSelectedIds(new Set(ids.slice(lo, hi + 1)));
+    } else if (e.ctrlKey || e.metaKey) {
+      setAnchorId(item.id);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+        return next;
+      });
+    } else {
+      setAnchorId(item.id);
+      setSelectedIds(new Set([item.id]));
+    }
+  };
+
+  const handleItemContextMenu = (e: MouseEvent, item: Item) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedIds().has(item.id)) {
+      setAnchorId(item.id);
+      setSelectedIds(new Set([item.id]));
+    }
+    setSelCtxMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const deleteSelected = async () => {
+    const ids = [...selectedIds()];
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} item${ids.length !== 1 ? "s" : ""}?`)) return;
+    for (const id of ids) await deleteItem(id);
+    setSelectedIds(new Set<string>());
+    setSelCtxMenu(null);
+  };
+
   const formatItem = (item: Item): string => {
     const urls = assetUrls();
     return renderFormatStringHtml(effectiveFormatString(), item, schema(), undefined, category()?.macros, (url) => urls[url] ?? url);
@@ -172,7 +224,10 @@ const ListView: Component = () => {
         {(l) => (
           <>
             <div class="page-header">
-              <h1>{l().name} <span class="item-count">{allItems().length}</span></h1>
+              <div class="page-title">
+                <h1>{l().name}</h1>
+                <span class="item-count">{allItems().length}</span>
+              </div>
               <div class="header-actions">
                 <input
                   class="search-input"
@@ -243,7 +298,7 @@ const ListView: Component = () => {
                     <ul class="list-view" ref={(el) => initSortable(el)}>
                       <For each={items()}>
                         {(item) => (
-                          <li class="list-view-item" onClick={() => setEditingItem(item)}>
+                          <li class="list-view-item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                             <span class="drag-handle" title="Drag to reorder">⠿</span>
                             <FormattedText html={formatItem(item)} />
                           </li>
@@ -269,7 +324,7 @@ const ListView: Component = () => {
                       <tbody ref={(el) => initSortable(el)}>
                         <For each={items()}>
                           {(item) => (
-                            <tr onClick={() => setEditingItem(item)}>
+                            <tr classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                               <td class="drag-handle-cell"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
                               <td style="font-weight: 500">{item.title}</td>
                               <For each={schema()}>
@@ -291,7 +346,7 @@ const ListView: Component = () => {
                     <div class="card-grid" ref={(el) => initSortable(el)}>
                       <For each={items()}>
                         {(item) => (
-                          <div class="card item" onClick={() => setEditingItem(item)}>
+                          <div class="card item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                             <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
                             <div class="card-title"><FormattedText html={formatItem(item)} /></div>
                             <Show when={schema().length > 0}>
@@ -355,7 +410,7 @@ const ListView: Component = () => {
                                   <div class="board-column-items">
                                     <For each={col.items}>
                                       {(item) => (
-                                        <div class="board-item" onClick={() => setEditingItem(item)}>
+                                        <div class="board-item" classList={{ selected: selectedIds().has(item.id) }} onClick={(e) => handleItemClick(e, item)} onDblClick={() => setEditingItem(item)} onContextMenu={(e) => handleItemContextMenu(e, item)}>
                                           <FormattedText html={formatItem(item)} />
                                         </div>
                                       )}
@@ -372,6 +427,17 @@ const ListView: Component = () => {
                   </div>
                 </Match>
               </Switch>
+
+            <Show when={selCtxMenu()}>
+              {(pos) => (
+                <ContextMenu
+                  x={pos().x}
+                  y={pos().y}
+                  items={[{ label: `Delete ${selectedIds().size} item${selectedIds().size !== 1 ? "s" : ""}`, danger: true, action: deleteSelected }]}
+                  onClose={() => setSelCtxMenu(null)}
+                />
+              )}
+            </Show>
 
             <ItemFormModal
               open={showAddItem()}

@@ -39,6 +39,8 @@ const Sidebar: Component<Props> = (props) => {
   const [showCreateCategory, setShowCreateCategory] = createSignal(false);
   const [showSync, setShowSync] = createSignal(false);
   const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
+  const [selectedListIds, setSelectedListIds] = createSignal<Set<string>>(new Set());
+  const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
   // Auto-expand the category containing the active list; auto-close sidebar on mobile
   createEffect(() => {
@@ -61,6 +63,11 @@ const Sidebar: Component<Props> = (props) => {
 
   const handleContextMenu = (e: MouseEvent, target: { kind: "list"; list: List } | { kind: "category"; category: Category }) => {
     e.preventDefault();
+    if (target.kind === "list" && selectedListIds().size > 1 && selectedListIds().has(target.list.id)) {
+      setMultiListCtxMenu({ x: e.clientX, y: e.clientY });
+      return;
+    }
+    if (target.kind === "list") setSelectedListIds(new Set([target.list.id]));
     setContextMenu({ x: e.clientX, y: e.clientY, target });
   };
 
@@ -135,6 +142,29 @@ const Sidebar: Component<Props> = (props) => {
     }
   };
 
+  const handleListClick = (e: MouseEvent, list: List) => {
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedListIds((prev) => {
+        const next = new Set(prev);
+        next.has(list.id) ? next.delete(list.id) : next.add(list.id);
+        return next;
+      });
+    } else {
+      setSelectedListIds(new Set([list.id]));
+    }
+  };
+
+  const deleteSelectedLists = async () => {
+    const ids = [...selectedListIds()];
+    if (!confirm(`Delete ${ids.length} list${ids.length !== 1 ? "s" : ""} and all their items?`)) return;
+    for (const id of ids) {
+      await deleteList(id);
+      if (location.pathname === `/list/${id}`) navigate("/");
+    }
+    setSelectedListIds(new Set<string>());
+    setMultiListCtxMenu(null);
+  };
+
   const handleNewList = async (catId: string) => {
     const list = await createList("New List", catId);
     setRenamingId(list.id);
@@ -191,8 +221,9 @@ const Sidebar: Component<Props> = (props) => {
                           fallback={
                             <div
                               class="sidebar-item"
-                              classList={{ active: location.pathname === `/list/${list.id}` }}
-                              onClick={() => navigate(`/list/${list.id}`)}
+                              classList={{ active: location.pathname === `/list/${list.id}`, selected: selectedListIds().has(list.id) }}
+                              onClick={(e) => handleListClick(e, list)}
+                              onDblClick={() => navigate(`/list/${list.id}`)}
                               onContextMenu={(e) => handleContextMenu(e, { kind: "list", list })}
                             >
                               {list.name}
@@ -246,6 +277,17 @@ const Sidebar: Component<Props> = (props) => {
           Sync
         </div>
       </div>
+
+      <Show when={multiListCtxMenu()}>
+        {(pos) => (
+          <ContextMenu
+            x={pos().x}
+            y={pos().y}
+            items={[{ label: `Delete ${selectedListIds().size} lists`, danger: true, action: deleteSelectedLists }]}
+            onClose={() => setMultiListCtxMenu(null)}
+          />
+        )}
+      </Show>
 
       <Show when={contextMenu()}>
         {(ctx) => (

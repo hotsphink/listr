@@ -18,7 +18,8 @@
       "Bash(pnpm --filter @listr/client build)",
       "Bash(pnpm dev *)",
       "Bash(pnpm test:e2e --reporter=list)",
-      "Bash(curl -sk https://localhost:3000)"
+      "Bash(curl -sk https://localhost:3000)",
+      "Bash(pnpm exec *)"
     ]
   }
 }
