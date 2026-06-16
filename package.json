@@ -1,15 +1,11 @@
 {
   "name": "listr",
   "private": true,
-  "workspaces": [
-    "packages/shared",
-    "packages/client",
-    "packages/server"
-  ],
   "scripts": {
-    "dev": "npm run dev --workspace=@listr/client",
-    "build": "npm run build --workspace=@listr/client",
-    "test": "npm run test --workspaces --if-present",
-    "test:e2e": "npm run test:e2e --workspace=@listr/client"
+    "dev": "pnpm --filter @listr/client dev",
+    "build": "pnpm --filter @listr/client build",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @listr/client test:e2e",
+    "preinstall": "npx only-allow pnpm"
   }
 }

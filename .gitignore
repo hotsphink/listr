@@ -1,5 +1,9 @@
 node_modules/
+.pnpm-store/
 dist/
 .vite/
 *.log
 packages/server/data/
+packages/client/certs/
+pnpm-lock.yaml
+pnpm-workspace.yaml

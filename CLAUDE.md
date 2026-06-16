@@ -4,20 +4,20 @@ Trello-like list management app with customizable per-category attribute schemas
 
 ## Structure
 
-Monorepo with npm workspaces:
+Monorepo with pnpm workspaces:
 - `packages/shared` — TypeScript types, format string parser (no framework dependency)
 - `packages/client` — SolidJS + Vite frontend, Dexie.js for IndexedDB
 - `packages/server` — sync server (Node.js + WebSocket + SQLite)
 
 ## Commands
 
-- `npm run dev` — start Vite dev server on port 3000
-- `npm run build` — production build
-- `npm test` — run all workspace tests (vitest)
-- `npm run test --workspace=@listr/shared` — run shared package tests only
-- `npm run test:e2e` — run Playwright e2e tests (from root)
+- `pnpm dev` — start Vite dev server on port 3000
+- `pnpm build` — production build
+- `pnpm test` — run all workspace tests (vitest)
+- `pnpm --filter @listr/shared test` — run shared package tests only
+- `pnpm test:e2e` — run Playwright e2e tests (from root)
 - Run Playwright from `packages/client` directory, not root
-- Sync server: `cd packages/server && npm install && npm run dev` — listens on port 10000 (all interfaces)
+- Sync server: `cd packages/server && pnpm install && pnpm dev` — listens on port 10000 (all interfaces)
 
 ## Key design decisions
 

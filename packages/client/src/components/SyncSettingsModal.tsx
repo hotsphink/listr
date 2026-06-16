@@ -105,7 +105,7 @@ const SyncSettingsModal: Component<Props> = (props) => {
                 type="text"
                 value={url()}
                 onInput={(e) => setUrl(e.currentTarget.value)}
-                placeholder="ws://192.168.x.x:10000"
+                placeholder="wss://finkripper.heron-moth.ts.net:10000"
               />
             </div>
 
