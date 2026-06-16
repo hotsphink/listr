@@ -182,7 +182,7 @@ const Sidebar: Component<Props> = (props) => {
                       )}
                     </For>
                     <div
-                      class="sidebar-item sidebar-new-list"
+                      class="sidebar-item sidebar-new"
                       onClick={() => handleNewList(cat.id)}
                     >
                       + New List
@@ -194,7 +194,7 @@ const Sidebar: Component<Props> = (props) => {
           }}
         </For>
         <div
-          class="sidebar-item sidebar-new-category"
+          class="sidebar-item sidebar-new category"
           onClick={() => setShowCreateCategory(true)}
         >
           + New Category

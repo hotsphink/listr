@@ -70,9 +70,9 @@ const Dashboard: Component = () => {
   };
 
   const renderListCard = (list: List) => (
-    <a class="list-card" href={`/list/${list.id}`} onClick={(e) => { e.preventDefault(); navigate(`/list/${list.id}`); }}>
-      <div class="list-card-name">{list.name}</div>
-      <div class="list-card-count">
+    <a class="card list" href={`/list/${list.id}`} onClick={(e) => { e.preventDefault(); navigate(`/list/${list.id}`); }}>
+      <div class="card-name">{list.name}</div>
+      <div class="card-count">
         {itemCounts()?.[list.id] ?? 0} items
       </div>
     </a>

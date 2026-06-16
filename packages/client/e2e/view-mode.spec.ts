@@ -12,12 +12,12 @@ test.describe("view mode switching", () => {
     await expect(page.locator(".page-header h1")).toHaveText("My Movies");
 
     // Add two items
-    await page.locator(".list-view-add").click();
+    await page.locator(".view-add").click();
     await page.locator(".modal .form-field input").first().fill("Inception");
     await page.locator(".modal .form-field").nth(1).locator("input").fill("sci-fi");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
 
-    await page.locator(".list-view-add").click();
+    await page.locator(".view-add").click();
     await page.locator(".modal .form-field input").first().fill("The Godfather");
     await page.locator(".modal .form-field").nth(1).locator("input").fill("crime");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
@@ -39,10 +39,10 @@ test.describe("view mode switching", () => {
     await page.locator(".view-switcher-btn", { hasText: "Cards" }).click();
     await expect(page.locator(".view-switcher-btn.active")).toHaveText("Cards");
     await expect(page.locator(".card-grid")).toBeVisible();
-    await expect(page.locator(".item-card:not(.add-card)")).toHaveCount(2);
+    await expect(page.locator(".card.item")).toHaveCount(2);
     await expect(page.locator("table")).toHaveCount(0);
-    await expect(page.locator(".item-card-title").first()).toContainText("Inception");
-    await expect(page.locator(".item-card").first()).toContainText("sci-fi");
+    await expect(page.locator(".card-title").first()).toContainText("Inception");
+    await expect(page.locator(".card.item").first()).toContainText("sci-fi");
   });
 
   test("switches between all views", async ({ page }) => {
@@ -69,7 +69,7 @@ test.describe("view mode switching", () => {
     await page.locator(".sidebar-header").click();
     await expect(page.locator(".page-header h1")).toHaveText("Lists");
 
-    await page.locator(".list-card", { hasText: "My Movies" }).click();
+    await page.locator(".card.list", { hasText: "My Movies" }).click();
     await expect(page.locator(".page-header h1")).toHaveText("My Movies");
     await expect(page.locator(".view-switcher-btn.active")).toHaveText("Cards");
     await expect(page.locator(".card-grid")).toBeVisible();
@@ -84,7 +84,7 @@ test.describe("view mode switching", () => {
   test("clicking a card opens the edit modal", async ({ page }) => {
     await page.locator(".view-switcher-btn", { hasText: "Cards" }).click();
     await expect(page.locator(".card-grid")).toBeVisible();
-    await page.locator(".item-card:not(.add-card)").first().click();
+    await page.locator(".card.item").first().click();
     await expect(page.locator(".modal h2")).toHaveText("Edit Item");
     await expect(page.locator(".modal .form-field input").first()).toHaveValue("Inception");
   });

@@ -21,7 +21,7 @@ test.describe("custom attributes", () => {
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
 
     // Add an item via the table's add row
-    await page.locator(".table-add").click();
+    await page.locator(".view-add").click();
     await expect(page.locator(".modal h2")).toHaveText("New Item");
 
     const labels = page.locator(".modal .form-field label");
@@ -55,7 +55,7 @@ test.describe("custom attributes", () => {
 
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
 
-    await page.locator(".table-add").click();
+    await page.locator(".view-add").click();
     await page.locator(".modal .form-field input").first().fill("Blade Runner");
     await page.locator(".modal .form-field").nth(1).locator("input").fill("Ridley Scott");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
@@ -78,7 +78,7 @@ test.describe("custom attributes", () => {
     await expect(page.locator(".page-header h1")).toHaveText("Watchlist");
 
     // Default is list view — add an item
-    await page.locator(".list-view-add").click();
+    await page.locator(".view-add").click();
     await page.locator(".modal .form-field input").first().fill("Alien");
     await page.locator(".modal .form-field").nth(1).locator("input").fill("1979");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();

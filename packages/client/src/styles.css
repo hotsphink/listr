@@ -211,22 +211,17 @@ body {
   font-size: 13px;
 }
 
-.sidebar-new-list {
+.sidebar-new {
   color: var(--text-dim);
 }
 
-.sidebar-new-list:hover {
+.sidebar-new:hover {
   color: var(--text-muted);
 }
 
-.sidebar-new-category {
-  color: var(--text-dim);
+.sidebar-new.category {
   margin-top: 4px;
   font-size: 13px;
-}
-
-.sidebar-new-category:hover {
-  color: var(--text-muted);
 }
 
 .sidebar-rename-input {
@@ -509,7 +504,7 @@ tbody tr {
   cursor: pointer;
 }
 
-.table-add {
+.view-add {
   padding: 10px 12px;
   cursor: pointer;
   font-size: 14px;
@@ -517,7 +512,7 @@ tbody tr {
   transition: background 0.15s, color 0.15s;
 }
 
-.table-add:hover {
+.view-add:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
@@ -551,28 +546,48 @@ tbody tr {
   margin-bottom: 32px;
 }
 
-.list-card {
+.card {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 16px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
-  text-decoration: none;
-  color: var(--text);
 }
 
-.list-card:hover {
+.card:hover {
   border-color: var(--border-focus);
   background: var(--bg-hover);
 }
 
-.list-card-name {
+.card.list {
+  text-decoration: none;
+  color: var(--text);
+}
+
+.card.item {
+  position: relative;
+}
+
+.card.add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  border-style: dashed;
+  min-height: 60px;
+}
+
+.card.add:hover {
+  color: var(--text);
+}
+
+.card-name {
   font-weight: 500;
   margin-bottom: 4px;
 }
 
-.list-card-count {
+.card-count {
   font-size: 13px;
   color: var(--text-muted);
 }
@@ -789,18 +804,6 @@ tbody tr {
   background: var(--bg-hover);
 }
 
-.list-view-add {
-  padding: 10px 12px;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--text-muted);
-  transition: background 0.15s, color 0.15s;
-}
-
-.list-view-add:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
 
 @media (min-width: 769px) {
   .view-switcher-select {
@@ -869,53 +872,26 @@ tbody tr {
   gap: 12px;
 }
 
-.item-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 16px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.item-card:hover {
-  border-color: var(--border-focus);
-  background: var(--bg-hover);
-}
-
-.add-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  border-style: dashed;
-  min-height: 60px;
-}
-
-.add-card:hover {
-  color: var(--text);
-}
-
-.item-card-title {
+.card-title {
   font-weight: 500;
   font-size: 15px;
   margin-bottom: 8px;
 }
 
-.item-card-attrs {
+.card-attrs {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.item-card-attr {
+.card-attr {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 13px;
 }
 
-.item-card-attr-label {
+.card-attr-label {
   color: var(--text-muted);
   min-width: 60px;
   flex-shrink: 0;
@@ -1058,10 +1034,6 @@ tbody tr {
   position: absolute;
   top: 8px;
   right: 8px;
-}
-
-.item-card {
-  position: relative;
 }
 
 .sortable-ghost {

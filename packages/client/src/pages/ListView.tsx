@@ -247,7 +247,7 @@ const ListView: Component = () => {
                           </li>
                         )}
                       </For>
-                      <li class="list-view-add" onClick={() => setShowAddItem(true)}>+ Add Item</li>
+                      <li class="view-add" onClick={() => setShowAddItem(true)}>+ Add Item</li>
                     </ul>
                   </div>
                 </Match>
@@ -280,7 +280,7 @@ const ListView: Component = () => {
                         </For>
                       </tbody>
                     </table>
-                    <div class="table-add" onClick={() => setShowAddItem(true)}>+ Add Item</div>
+                    <div class="view-add" onClick={() => setShowAddItem(true)}>+ Add Item</div>
                   </div>
                 </Match>
 
@@ -289,18 +289,18 @@ const ListView: Component = () => {
                     <div class="card-grid" ref={(el) => initSortable(el)}>
                       <For each={items()}>
                         {(item) => (
-                          <div class="item-card" onClick={() => setEditingItem(item)}>
+                          <div class="card item" onClick={() => setEditingItem(item)}>
                             <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
-                            <div class="item-card-title"><FormattedText html={formatItem(item)} /></div>
+                            <div class="card-title"><FormattedText html={formatItem(item)} /></div>
                             <Show when={schema().length > 0}>
-                              <div class="item-card-attrs">
+                              <div class="card-attrs">
                                 <For each={schema()}>
                                   {(attr) => {
                                     const val = item.attributes[attr.key];
                                     if (val == null || val === "") return null;
                                     return (
-                                      <div class="item-card-attr">
-                                        <span class="item-card-attr-label">{attr.label || attr.key}</span>
+                                      <div class="card-attr">
+                                        <span class="card-attr-label">{attr.label || attr.key}</span>
                                         <Show when={attr.type === "tags" && Array.isArray(val)}
                                           fallback={<span>{formatCellValue(val, attr.type)}</span>}
                                         >
@@ -319,7 +319,7 @@ const ListView: Component = () => {
                           </div>
                         )}
                       </For>
-                      <div class="item-card add-card" onClick={() => setShowAddItem(true)}>+ Add Item</div>
+                      <div class="card add" onClick={() => setShowAddItem(true)}>+ Add Item</div>
                     </div>
                   </div>
                 </Match>

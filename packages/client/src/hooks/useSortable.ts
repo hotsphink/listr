@@ -17,12 +17,11 @@ export function useSortable(
     ghostClass: "sortable-ghost",
     chosenClass: "sortable-chosen",
     dragClass: "sortable-drag",
-    filter: ".list-view-add, .table-add, .add-card",
+    filter: ".view-add, .card.add",
     ...options,
     onMove: (evt) => {
-      if (evt.related?.classList.contains("list-view-add") ||
-          evt.related?.classList.contains("table-add") ||
-          evt.related?.classList.contains("add-card")) {
+      if (evt.related?.classList.contains("view-add") ||
+          evt.related?.classList.contains("add")) {
         return false;
       }
       return true;
