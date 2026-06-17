@@ -9,9 +9,12 @@ export { computeReorder };
 export function useSortable(
   el: HTMLElement,
   getItems: () => { id: string }[],
-  options?: Partial<Sortable.Options> & { indexOffset?: number },
+  options?: Partial<Sortable.Options> & {
+    indexOffset?: number;
+    onCrossMove?: (itemId: string, toEl: HTMLElement, rawNewIndex: number) => Promise<void>;
+  },
 ) {
-  const { indexOffset = 0, ...sortableOptions } = options ?? {};
+  const { indexOffset = 0, onCrossMove, ...sortableOptions } = options ?? {};
 
   const sortable = Sortable.create(el, {
     animation: 150,
@@ -31,7 +34,24 @@ export function useSortable(
     onEnd: async (evt) => {
       const rawOld = evt.oldIndex;
       const rawNew = evt.newIndex;
-      if (rawOld == null || rawNew == null || rawOld === rawNew) return;
+      if (rawOld == null || rawNew == null) return;
+
+      // Cross-list drag
+      if (evt.from !== evt.to) {
+        const itemEl = evt.item as HTMLElement;
+        if (evt.to.contains(itemEl)) evt.to.removeChild(itemEl);
+        if (rawOld < evt.from.children.length) {
+          evt.from.insertBefore(itemEl, evt.from.children[rawOld]);
+        } else {
+          evt.from.appendChild(itemEl);
+        }
+        if (!onCrossMove) return;
+        const itemId = itemEl.dataset.itemId ?? "";
+        if (itemId) await onCrossMove(itemId, evt.to, rawNew);
+        return;
+      }
+
+      if (rawOld === rawNew) return;
 
       const oldIndex = rawOld - indexOffset;
       const newIndex = rawNew - indexOffset;

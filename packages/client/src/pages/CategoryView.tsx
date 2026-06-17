@@ -6,6 +6,7 @@ import { renderFormatStringHtml } from "@listr/shared";
 import type { AttributeDefinition, Category, Item, List } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, deleteItem, updateList } from "../db/operations.js";
+import { syncClient } from "../sync/SyncClient.js";
 import { assetUrls } from "../sync/assetStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
 import { appViewMode, setAppViewMode } from "../store/viewMode.js";
@@ -250,6 +251,30 @@ const CategoryView: Component = () => {
     setItemCtxMenu({ x: e.clientX, y: e.clientY, item });
   };
 
+  const handleCrossListMove = async (itemId: string, toEl: HTMLElement, rawNewIndex: number) => {
+    const toListId = toEl.dataset.listId;
+    const offset = parseInt(toEl.dataset.indexOffset ?? "0");
+    if (!toListId || !itemId) return;
+    const toItems = itemsByList().get(toListId) ?? [];
+    const toIndex = rawNewIndex - offset;
+    let newPosition: number;
+    if (toItems.length === 0) {
+      newPosition = 0;
+    } else if (toIndex <= 0) {
+      newPosition = toItems[0].position - 1;
+    } else if (toIndex >= toItems.length) {
+      newPosition = toItems[toItems.length - 1].position + 1;
+    } else {
+      newPosition = (toItems[toIndex - 1].position + toItems[toIndex].position) / 2;
+    }
+    const timestamp = Date.now();
+    await db.items.update(itemId, { list_id: toListId, position: newPosition, updated_at: timestamp });
+    const sourceItem = [...itemsByList().values()].flatMap((its) => its).find((i) => i.id === itemId);
+    if (sourceItem) {
+      syncClient.pushEntity("item", { ...sourceItem, list_id: toListId, position: newPosition, updated_at: timestamp });
+    }
+  };
+
   const totalItemCount = createMemo(() => {
     let count = 0;
     for (const list of visibleLists()) {
@@ -350,12 +375,13 @@ const CategoryView: Component = () => {
 
                       <Switch>
                         <Match when={appViewMode() === "list"}>
-                          <ul class="list-view multi-list-items" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1 })}>
+                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove })}>
                             <li class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</li>
                             <For each={items()}>
                               {(item) => (
                                 <li
                                   class="list-view-item"
+                                  data-item-id={item.id}
                                   classList={{ selected: selectedItemIds().has(item.id) }}
                                   onClick={(e) => handleItemClick(e, item, items())}
                                   onDblClick={() => setEditingItem(item)}
@@ -383,10 +409,11 @@ const CategoryView: Component = () => {
                                   </For>
                                 </tr>
                               </thead>
-                              <tbody ref={(el) => useSortable(el, allItemsForList, {})}>
+                              <tbody data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove })}>
                                 <For each={items()}>
                                   {(item) => (
                                     <tr
+                                      data-item-id={item.id}
                                       classList={{ selected: selectedItemIds().has(item.id) }}
                                       onClick={(e) => handleItemClick(e, item, items())}
                                       onDblClick={() => setEditingItem(item)}
@@ -410,12 +437,13 @@ const CategoryView: Component = () => {
 
                         <Match when={appViewMode() === "card"}>
                           <div class="card-container">
-                            <div class="card-grid" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1 })}>
+                            <div class="card-grid" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove })}>
                               <div class="card add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</div>
                               <For each={items()}>
                                 {(item) => (
                                   <div
                                     class="card item"
+                                    data-item-id={item.id}
                                     classList={{ selected: selectedItemIds().has(item.id) }}
                                     onClick={(e) => handleItemClick(e, item, items())}
                                     onDblClick={() => setEditingItem(item)}
