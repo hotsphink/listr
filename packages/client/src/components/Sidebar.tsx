@@ -166,7 +166,11 @@ const Sidebar: Component<Props> = (props) => {
       return;
     }
     setAnchorListId(list.id);
-    setSelectedListIds(new Set([list.id]));
+    if (selectedListIds().size === 1 && selectedListIds().has(list.id)) {
+      setSelectedListIds(new Set());
+    } else {
+      setSelectedListIds(new Set([list.id]));
+    }
     navigate(`/category/${list.category_id}`);
   };
 
