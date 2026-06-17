@@ -169,11 +169,8 @@ const Sidebar: Component<Props> = (props) => {
       return;
     }
     setAnchorListId(list.id);
-    if (selectedListIds().size === 1 && selectedListIds().has(list.id)) {
-      setSelectedListIds(new Set());
-    } else {
-      setSelectedListIds(new Set([list.id]));
-    }
+    setSelectedListIds(new Set([list.id]));
+    navigate(`/list/${list.id}`);
   };
 
   const deleteSelectedLists = async () => {
@@ -245,7 +242,6 @@ const Sidebar: Component<Props> = (props) => {
                               class="sidebar-item"
                               classList={{ active: location.pathname === `/list/${list.id}`, selected: selectedListIds().has(list.id) }}
                               onClick={(e) => handleListClick(e, list)}
-                              onDblClick={() => navigate(`/list/${list.id}`)}
                               onContextMenu={(e) => handleContextMenu(e, { kind: "list", list })}
                             >
                               {list.name}

@@ -12,12 +12,12 @@ test.describe("view mode switching", () => {
     await expect(page.locator(".page-header h1")).toHaveText("My Movies");
 
     // Add two items
-    await page.locator(".view-add").click();
+    await page.locator(".view-add").last().click();
     await page.locator(".modal .form-field input").first().fill("Inception");
     await page.locator(".modal .form-field").nth(1).locator("input").fill("sci-fi");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
 
-    await page.locator(".view-add").click();
+    await page.locator(".view-add").last().click();
     await page.locator(".modal .form-field input").first().fill("The Godfather");
     await page.locator(".modal .form-field").nth(1).locator("input").fill("crime");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();

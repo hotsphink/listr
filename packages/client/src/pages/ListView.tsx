@@ -96,6 +96,10 @@ const ListView: Component = () => {
   const viewMode = createMemo(() => list()?.view_mode ?? "list");
 
   const setViewMode = async (mode: ViewMode) => {
+    if (mode === "list") {
+      const cat = category();
+      if (cat) { navigate(`/category/${cat.id}`); return; }
+    }
     await updateList(params.id, { view_mode: mode });
   };
 
@@ -225,8 +229,8 @@ const ListView: Component = () => {
     return String(value);
   };
 
-  const initSortable = (el: HTMLElement) => {
-    useSortable(el, () => items());
+  const initSortable = (el: HTMLElement, indexOffset = 0) => {
+    useSortable(el, () => items(), { indexOffset });
   };
 
   // Board view helpers
@@ -328,7 +332,7 @@ const ListView: Component = () => {
               <Switch>
                 <Match when={viewMode() === "list"}>
                   <div class="list-view-container">
-                    <ul class="list-view" ref={(el) => initSortable(el)}>
+                    <ul class="list-view" ref={(el) => initSortable(el, 1)}>
                       <li class="view-add" onClick={() => { setPrependNext(true); setShowAddItem(true); }}>+ Add Item</li>
                       <For each={items()}>
                         {(item) => (
@@ -378,7 +382,7 @@ const ListView: Component = () => {
 
                 <Match when={viewMode() === "card"}>
                   <div class="card-container">
-                    <div class="card-grid" ref={(el) => initSortable(el)}>
+                    <div class="card-grid" ref={(el) => initSortable(el, 1)}>
                       <div class="card add" onClick={() => { setPrependNext(true); setShowAddItem(true); }}>+ Add Item</div>
                       <For each={items()}>
                         {(item) => (

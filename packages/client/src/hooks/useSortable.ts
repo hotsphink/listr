@@ -9,8 +9,10 @@ export { computeReorder };
 export function useSortable(
   el: HTMLElement,
   getItems: () => { id: string }[],
-  options?: Partial<Sortable.Options>,
+  options?: Partial<Sortable.Options> & { indexOffset?: number },
 ) {
+  const { indexOffset = 0, ...sortableOptions } = options ?? {};
+
   const sortable = Sortable.create(el, {
     animation: 150,
     handle: ".drag-handle",
@@ -18,7 +20,7 @@ export function useSortable(
     chosenClass: "sortable-chosen",
     dragClass: "sortable-drag",
     filter: ".view-add, .card.add",
-    ...options,
+    ...sortableOptions,
     onMove: (evt) => {
       if (evt.related?.classList.contains("view-add") ||
           evt.related?.classList.contains("add")) {
@@ -27,18 +29,23 @@ export function useSortable(
       return true;
     },
     onEnd: async (evt) => {
-      const { oldIndex, newIndex } = evt;
-      if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
+      const rawOld = evt.oldIndex;
+      const rawNew = evt.newIndex;
+      if (rawOld == null || rawNew == null || rawOld === rawNew) return;
+
+      const oldIndex = rawOld - indexOffset;
+      const newIndex = rawNew - indexOffset;
+      if (oldIndex < 0 || newIndex < 0) return;
 
       const currentItems = getItems();
       if (oldIndex >= currentItems.length || newIndex >= currentItems.length) return;
 
       // Revert the DOM move — SolidJS re-renders from reactive state
       const { item, from: container } = evt;
-      if (evt.oldIndex! < evt.newIndex!) {
-        container.insertBefore(item, container.children[evt.oldIndex!]);
+      if (rawOld < rawNew) {
+        container.insertBefore(item, container.children[rawOld]);
       } else {
-        container.insertBefore(item, container.children[evt.oldIndex! + 1]);
+        container.insertBefore(item, container.children[rawOld + 1]);
       }
 
       const updates = computeReorder(currentItems, oldIndex, newIndex);

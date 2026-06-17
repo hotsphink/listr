@@ -7,8 +7,11 @@ import { db } from "../db/database.js";
 import { createItem, updateItem, deleteItem, updateList } from "../db/operations.js";
 import { assetUrls } from "../sync/assetStore.js";
 import { selectedListIds } from "../store/sidebarSelection.js";
+import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import FormattedText from "../components/FormattedText.js";
+import ContextMenu from "../components/ContextMenu.js";
+import type { MenuItem } from "../components/ContextMenu.js";
 
 const CategoryView: Component = () => {
   const params = useParams();
@@ -18,10 +21,22 @@ const CategoryView: Component = () => {
   const [allLists, setAllLists] = createSignal<List[]>([]);
   const [itemsByList, setItemsByList] = createSignal<Map<string, Item[]>>(new Map());
   const [addingToList, setAddingToList] = createSignal<string | null>(null);
+  const [prependToList, setPrependToList] = createSignal(false);
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();
+  const [selectedItemIds, setSelectedItemIds] = createSignal<Set<string>>(new Set());
+  const [anchorItemId, setAnchorItemId] = createSignal<string | null>(null);
+  const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
+
+  const handleGlobalKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { setSelectedItemIds(new Set()); setItemCtxMenu(null); }
+  };
+  document.addEventListener("keydown", handleGlobalKeyDown);
+  onCleanup(() => document.removeEventListener("keydown", handleGlobalKeyDown));
 
   createEffect(() => {
     const catId = params.id;
+    setSelectedItemIds(new Set());
+    setItemCtxMenu(null);
     const sub1 = liveQuery(() => db.categories.get(catId)).subscribe((v) => setCategory(v));
     const sub2 = liveQuery(() =>
       db.lists.where("category_id").equals(catId).sortBy("position")
@@ -68,8 +83,15 @@ const CategoryView: Component = () => {
   const handleAddItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
     const listId = addingToList();
     if (!listId) return;
-    await createItem(listId, data.title, data.attributes);
+    if (prependToList()) {
+      const items = itemsByList().get(listId) ?? [];
+      const minPos = items.length > 0 ? Math.min(...items.map((i) => i.position)) - 1 : 0;
+      await createItem(listId, data.title, data.attributes, minPos);
+    } else {
+      await createItem(listId, data.title, data.attributes);
+    }
     setAddingToList(null);
+    setPrependToList(false);
   };
 
   const handleEditItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
@@ -79,11 +101,72 @@ const CategoryView: Component = () => {
     setEditingItem(undefined);
   };
 
-  const goToListView = async (mode: ViewMode) => {
-    const list = visibleLists()[0];
-    if (!list) return;
-    await updateList(list.id, { view_mode: mode });
-    navigate(`/list/${list.id}`);
+  const handleDeleteSelectedItems = async () => {
+    const ids = [...selectedItemIds()];
+    if (!confirm(`Delete ${ids.length} item${ids.length !== 1 ? "s" : ""}?`)) return;
+    for (const id of ids) await deleteItem(id);
+    setSelectedItemIds(new Set());
+    setItemCtxMenu(null);
+  };
+
+  const handleItemEditFromCtx = () => {
+    const ctx = itemCtxMenu();
+    if (ctx) { setEditingItem(ctx.item); setItemCtxMenu(null); }
+  };
+
+  const itemCtxMenuItems = createMemo((): MenuItem[] => {
+    const ctx = itemCtxMenu();
+    const items: MenuItem[] = [];
+    if (ctx && selectedItemIds().size === 1 && selectedItemIds().has(ctx.item.id)) {
+      items.push({ label: "Edit Item", action: handleItemEditFromCtx });
+    }
+    const n = selectedItemIds().size;
+    items.push({ label: `Delete ${n} item${n !== 1 ? "s" : ""}`, danger: true, action: handleDeleteSelectedItems });
+    return items;
+  });
+
+  const handleItemClick = (e: MouseEvent, item: Item, contextItems: Item[]) => {
+    e.stopPropagation();
+    if (e.shiftKey && anchorItemId()) {
+      const ids = contextItems.map((i) => i.id);
+      const a = ids.indexOf(anchorItemId()!);
+      const b = ids.indexOf(item.id);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a <= b ? [a, b] : [b, a];
+        const rangeIds = new Set(ids.slice(lo, hi + 1));
+        if (e.ctrlKey || e.metaKey) {
+          setSelectedItemIds((prev) => new Set([...prev, ...rangeIds]));
+        } else {
+          setSelectedItemIds(rangeIds);
+        }
+        return;
+      }
+    }
+    if (e.ctrlKey || e.metaKey) {
+      setAnchorItemId(item.id);
+      setSelectedItemIds((prev) => {
+        const next = new Set(prev);
+        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+        return next;
+      });
+      return;
+    }
+    setAnchorItemId(item.id);
+    if (selectedItemIds().size === 1 && selectedItemIds().has(item.id)) {
+      setSelectedItemIds(new Set());
+    } else {
+      setSelectedItemIds(new Set([item.id]));
+    }
+  };
+
+  const handleItemContextMenu = (e: MouseEvent, item: Item) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedItemIds().has(item.id)) {
+      setSelectedItemIds(new Set([item.id]));
+      setAnchorItemId(item.id);
+    }
+    setItemCtxMenu({ x: e.clientX, y: e.clientY, item });
   };
 
   const handleDeleteItem = async () => {
@@ -91,6 +174,13 @@ const CategoryView: Component = () => {
     if (!item) return;
     await deleteItem(item.id);
     setEditingItem(undefined);
+  };
+
+  const goToListView = async (mode: ViewMode) => {
+    const list = visibleLists()[0];
+    if (!list) return;
+    await updateList(list.id, { view_mode: mode });
+    navigate(`/list/${list.id}`);
   };
 
   return (
@@ -123,26 +213,29 @@ const CategoryView: Component = () => {
                     <div class="multi-list-column">
                       <div
                         class="multi-list-column-header"
-                        onDblClick={() => navigate(`/list/${list.id}`)}
                         title="Double-click to open list"
+                        onDblClick={() => navigate(`/list/${list.id}`)}
                       >
                         <span class="multi-list-column-name">{list.name}</span>
                         <span class="multi-list-column-count">{items().length}</span>
                       </div>
-                      <ul class="list-view multi-list-items">
+                      <ul class="list-view multi-list-items" ref={(el) => useSortable(el, items, { indexOffset: 1 })}>
+                        <li class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</li>
                         <For each={items()}>
                           {(item) => (
                             <li
                               class="list-view-item"
+                              classList={{ selected: selectedItemIds().has(item.id) }}
+                              onClick={(e) => handleItemClick(e, item, items())}
                               onDblClick={() => setEditingItem(item)}
+                              onContextMenu={(e) => handleItemContextMenu(e, item)}
                             >
+                              <span class="drag-handle" title="Drag to reorder">⠿</span>
                               <FormattedText html={formatItem(item, list)} />
                             </li>
                           )}
                         </For>
-                        <li class="view-add" onClick={() => setAddingToList(list.id)}>
-                          + Add Item
-                        </li>
+                        <li class="view-add" onClick={() => setAddingToList(list.id)}>+ Add Item</li>
                       </ul>
                     </div>
                   );
@@ -150,9 +243,23 @@ const CategoryView: Component = () => {
               </For>
             </div>
 
+            <Show when={itemCtxMenu() !== null}>
+              {(_) => {
+                const pos = () => itemCtxMenu()!;
+                return (
+                  <ContextMenu
+                    x={pos().x}
+                    y={pos().y}
+                    items={itemCtxMenuItems()}
+                    onClose={() => setItemCtxMenu(null)}
+                  />
+                );
+              }}
+            </Show>
+
             <ItemFormModal
               open={addingToList() !== null}
-              onClose={() => setAddingToList(null)}
+              onClose={() => { setAddingToList(null); setPrependToList(false); }}
               onSave={handleAddItem}
               schema={schema()}
             />

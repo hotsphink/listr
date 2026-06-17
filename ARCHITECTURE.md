@@ -19,7 +19,7 @@ pnpm dev             # Vite dev server at https://:3000
 pnpm build           # production build
 pnpm test            # vitest unit tests (all packages)
 pnpm --filter @listr/shared test   # shared package tests only
-cd packages/client && npx playwright test   # e2e tests (must run from packages/client)
+cd packages/client && pnpm exec playwright test   # e2e tests (must run from packages/client)
 cd packages/server && pnpm dev     # sync server at wss://:10000
 jj commit -m "..."   # version control — uses jj, not git
 ```
@@ -291,7 +291,7 @@ pnpm --filter @listr/shared test
 ### E2E tests (Playwright)
 **Must run from `packages/client` directory:**
 ```bash
-cd packages/client && npx playwright test
+cd packages/client && pnpm exec playwright test
 ```
 
 Uses Playwright's own Firefox build (system Firefox at `/usr/bin/firefox` lacks the required protocol). Config in `packages/client/playwright.config.ts`.
