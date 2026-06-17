@@ -538,6 +538,10 @@ tbody tr {
   cursor: pointer;
 }
 
+.multi-list-items .view-add {
+  padding-left: 32px;
+}
+
 .view-add {
   padding: 10px 12px;
   cursor: pointer;
@@ -690,6 +694,41 @@ tbody tr {
 
 .form-row .form-field {
   flex: 1;
+}
+
+.multi-edit-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.multi-edit-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 130px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.multi-edit-label input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.multi-edit-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.multi-edit-input input,
+.multi-edit-input select {
+  width: 100%;
 }
 
 .format-field-header {
@@ -850,12 +889,20 @@ tbody tr {
 }
 
 .list-view-item {
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  padding: 10px 12px 10px 0;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   font-size: 14px;
   transition: background 0.15s;
   user-select: none;
+}
+
+.list-view-item .drag-handle {
+  flex: 0 0 32px;
+  padding: 0;
+  text-align: center;
 }
 
 .list-view-item:first-child {

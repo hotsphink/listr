@@ -12,6 +12,7 @@ import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.j
 import { appViewMode, setAppViewMode } from "../store/viewMode.js";
 import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
+import MultiItemFormModal from "../components/MultiItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
 import FormattedText from "../components/FormattedText.js";
 import ContextMenu from "../components/ContextMenu.js";
@@ -50,6 +51,7 @@ const CategoryView: Component = () => {
   const [selectedItemIds, setSelectedItemIds] = createSignal<Set<string>>(new Set());
   const [anchorItemId, setAnchorItemId] = createSignal<string | null>(null);
   const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
+  const [showMultiEdit, setShowMultiEdit] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
 
@@ -183,6 +185,16 @@ const CategoryView: Component = () => {
     setEditingList(undefined);
   };
 
+  const handleMultiEditSave = async (attrUpdates: Record<string, unknown>) => {
+    const ids = [...selectedItemIds()];
+    for (const id of ids) {
+      const item = [...itemsByList().values()].flatMap((its) => its).find((i) => i.id === id);
+      if (!item) continue;
+      await updateItem(id, { attributes: { ...item.attributes, ...attrUpdates } });
+    }
+    setShowMultiEdit(false);
+  };
+
   const handleDeleteSelectedItems = async () => {
     const ids = [...selectedItemIds()];
     if (!confirm(`Delete ${ids.length} item${ids.length !== 1 ? "s" : ""}?`)) return;
@@ -199,10 +211,13 @@ const CategoryView: Component = () => {
   const itemCtxMenuItems = createMemo((): MenuItem[] => {
     const ctx = itemCtxMenu();
     const menuItems: MenuItem[] = [];
-    if (ctx && selectedItemIds().size === 1 && selectedItemIds().has(ctx.item.id)) {
+    const n = selectedItemIds().size;
+    if (ctx && n === 1 && selectedItemIds().has(ctx.item.id)) {
       menuItems.push({ label: "Edit Item", action: handleItemEditFromCtx });
     }
-    const n = selectedItemIds().size;
+    if (n > 1) {
+      menuItems.push({ label: `Edit ${n} items`, action: () => { setShowMultiEdit(true); setItemCtxMenu(null); } });
+    }
     menuItems.push({ label: `Delete ${n} item${n !== 1 ? "s" : ""}`, danger: true, action: handleDeleteSelectedItems });
     return menuItems;
   });
@@ -246,7 +261,11 @@ const CategoryView: Component = () => {
     e.stopPropagation();
     if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
       if ((e.target as Element).closest('.drag-handle')) return; // long-press on grip = drag, not edit
-      setEditingItem(item);
+      if (selectedItemIds().size > 1 && selectedItemIds().has(item.id)) {
+        setShowMultiEdit(true);
+      } else {
+        setEditingItem(item);
+      }
       return;
     }
     if (!selectedItemIds().has(item.id)) {
@@ -514,6 +533,14 @@ const CategoryView: Component = () => {
               onClose={() => { setAddingToList(null); setPrependToList(false); }}
               onSave={handleAddItem}
               schema={schema()}
+            />
+
+            <MultiItemFormModal
+              open={showMultiEdit()}
+              onClose={() => setShowMultiEdit(false)}
+              onSave={handleMultiEditSave}
+              schema={schema()}
+              count={selectedItemIds().size}
             />
 
             <ItemFormModal
