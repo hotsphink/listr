@@ -69,7 +69,7 @@ test.describe("view mode switching", () => {
     await page.locator(".sidebar-category-header", { hasText: "Movies" }).click();
     await expect(page.locator(".page-header h1")).toHaveText("Movies");
 
-    await page.locator(".multi-list-column-header", { hasText: "My Movies" }).dblclick();
+    await page.locator(".multi-list-column-header", { hasText: "My Movies" }).click();
     await expect(page.locator(".page-header h1")).toHaveText("My Movies");
     await expect(page.locator(".view-switcher-btn.active")).toHaveText("Cards");
     await expect(page.locator(".card-grid")).toBeVisible();

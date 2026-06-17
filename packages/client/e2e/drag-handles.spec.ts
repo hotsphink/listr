@@ -18,13 +18,12 @@ test.describe("drag handles in list view", () => {
     await expect(page.locator(".list-view-item .drag-handle")).toBeVisible();
   });
 
-  test("drag handles remain visible after navigating away and returning via category view", async ({ page }) => {
-    // "List" navigates to category view; double-click the column to return to list view
-    await page.locator(".view-switcher-btn", { hasText: "List" }).click();
-    await expect(page.locator(".multi-list-view")).toBeVisible();
+  test("drag handles remain visible after switching to table and back to list", async ({ page }) => {
+    // Switch to table view and back to list view within the unified CategoryView
+    await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
+    await expect(page.locator("table")).toBeVisible();
 
-    await page.locator(".multi-list-column-header", { hasText: "Watchlist" }).dblclick();
-    await expect(page.locator(".page-header h1")).toHaveText("Watchlist");
+    await page.locator(".view-switcher-btn", { hasText: "List" }).click();
     await expect(page.locator(".list-view-item")).toHaveCount(1);
     await expect(page.locator(".list-view-item .drag-handle")).toBeVisible();
   });
@@ -37,26 +36,24 @@ test.describe("list mode navigation back to category view", () => {
     await createListInCategory(page, "Watchlist", "Movies");
   });
 
-  // Regression: after navigating from category view to table/card/board view,
-  // clicking "List" should return to the multi-list category view rather than
-  // switching to single-list list mode and leaving the user stuck there.
-  test("list button navigates back to category view from table view", async ({ page }) => {
-    // Switch to table view within ListView (currently at /list/:id from createListInCategory)
+  // Regression: after switching to table/card view, clicking "List" should show list mode content.
+  test("list button shows list mode content after table view", async ({ page }) => {
+    // Switch to table view
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
     await expect(page.locator("table")).toBeVisible();
 
-    // Click "List" — should navigate to the category view (multi-list), not stay in single-list mode
+    // Click "List" — should switch back to list mode within CategoryView
     await page.locator(".view-switcher-btn", { hasText: "List" }).click();
     await expect(page.locator(".multi-list-view")).toBeVisible();
-    await expect(page.locator(".page-header h1")).toHaveText("Movies");
+    await expect(page.locator("table")).toHaveCount(0);
   });
 
-  test("list button navigates back to category view from card view", async ({ page }) => {
+  test("list button shows list mode content after card view", async ({ page }) => {
     await page.locator(".view-switcher-btn", { hasText: "Cards" }).click();
     await expect(page.locator(".card-grid")).toBeVisible();
 
     await page.locator(".view-switcher-btn", { hasText: "List" }).click();
     await expect(page.locator(".multi-list-view")).toBeVisible();
-    await expect(page.locator(".page-header h1")).toHaveText("Movies");
+    await expect(page.locator(".card-grid")).toHaveCount(0);
   });
 });

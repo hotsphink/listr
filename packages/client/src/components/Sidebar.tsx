@@ -43,14 +43,10 @@ const Sidebar: Component<Props> = (props) => {
   const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
-  // Auto-expand the category containing the active list; auto-close sidebar on mobile
+  // Auto-close sidebar on mobile when navigating
   createEffect(() => {
-    const path = location.pathname;
-    const listMatch = path.match(/^\/list\/(.+)/);
-    if (listMatch) {
-      const list = (lists() ?? []).find((l) => l.id === listMatch[1]);
-      if (list) setExpandedCategoryId(list.category_id);
-    }
+    // Access location.pathname to track navigation changes
+    void location.pathname;
     props.onClose?.();
   });
 
@@ -80,7 +76,7 @@ const Sidebar: Component<Props> = (props) => {
       const cat = (categories() ?? []).find((c) => c.id === list.category_id);
       return [
         { label: "Rename", action: () => setRenamingId(list.id) },
-        { label: "Configure", action: () => navigate(`/list/${list.id}`, { state: { openSettings: true } }) },
+        { label: "Configure", action: () => { setSelectedListIds(new Set([list.id])); navigate(`/category/${list.category_id}`, { state: { openSettings: list.id } }); } },
         { label: "Import", action: () => cat && setImportScope({
             type: "list",
             id: list.id,
@@ -93,7 +89,7 @@ const Sidebar: Component<Props> = (props) => {
         { label: "Delete", danger: true, action: async () => {
           if (!confirm(`Delete "${list.name}" and all its items?`)) return;
           await deleteList(list.id);
-          if (location.pathname === `/list/${list.id}`) navigate("/");
+          setSelectedListIds((prev) => { const n = new Set(prev); n.delete(list.id); return n; });
         }},
       ];
     } else {
@@ -143,6 +139,7 @@ const Sidebar: Component<Props> = (props) => {
   };
 
   const handleListClick = (e: MouseEvent, list: List) => {
+    e.stopPropagation();
     if (e.shiftKey && anchorListId()) {
       const catLists = listsForCategory(list.category_id);
       const ids = catLists.map((l) => l.id);
@@ -170,7 +167,7 @@ const Sidebar: Component<Props> = (props) => {
     }
     setAnchorListId(list.id);
     setSelectedListIds(new Set([list.id]));
-    navigate(`/list/${list.id}`);
+    navigate(`/category/${list.category_id}`);
   };
 
   const deleteSelectedLists = async () => {
@@ -178,7 +175,6 @@ const Sidebar: Component<Props> = (props) => {
     if (!confirm(`Delete ${ids.length} list${ids.length !== 1 ? "s" : ""} and all their items?`)) return;
     for (const id of ids) {
       await deleteList(id);
-      if (location.pathname === `/list/${id}`) navigate("/");
     }
     setSelectedListIds(new Set<string>());
     setMultiListCtxMenu(null);
@@ -187,7 +183,8 @@ const Sidebar: Component<Props> = (props) => {
   const handleNewList = async (catId: string) => {
     const list = await createList("New List", catId);
     setRenamingId(list.id);
-    navigate(`/list/${list.id}`);
+    setSelectedListIds(new Set([list.id]));
+    navigate(`/category/${catId}`);
   };
 
   return (
@@ -212,7 +209,7 @@ const Sidebar: Component<Props> = (props) => {
                       class="sidebar-category-header"
                       classList={{ expanded: isExpanded() }}
                       style={`border-left: 3px solid ${cat.color}`}
-                      onClick={() => { navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
+                      onClick={() => { setSelectedListIds(new Set()); navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
                       onContextMenu={(e) => handleContextMenu(e, { kind: "category", category: cat })}
                     >
                       <span class="sidebar-category-chevron">{isExpanded() ? "▾" : "▸"}</span>
@@ -240,7 +237,7 @@ const Sidebar: Component<Props> = (props) => {
                           fallback={
                             <div
                               class="sidebar-item"
-                              classList={{ active: location.pathname === `/list/${list.id}`, selected: selectedListIds().has(list.id) }}
+                              classList={{ active: selectedListIds().has(list.id) && location.pathname === `/category/${list.category_id}`, selected: selectedListIds().has(list.id) }}
                               onClick={(e) => handleListClick(e, list)}
                               onContextMenu={(e) => handleContextMenu(e, { kind: "list", list })}
                             >

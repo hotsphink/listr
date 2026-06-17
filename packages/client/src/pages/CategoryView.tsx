@@ -1,21 +1,43 @@
-import { type Component, For, Show, createSignal, createEffect, createMemo, onCleanup } from "solid-js";
-import { useParams, useNavigate } from "@solidjs/router";
+import { type Component, For, Show, Switch, Match, createSignal, createEffect, createMemo, onCleanup } from "solid-js";
+import { from } from "solid-js";
+import { useParams, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
-import type { AttributeDefinition, Category, Item, List, ViewMode } from "@listr/shared";
+import type { AttributeDefinition, Category, Item, List } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, deleteItem, updateList } from "../db/operations.js";
 import { assetUrls } from "../sync/assetStore.js";
-import { selectedListIds } from "../store/sidebarSelection.js";
+import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
+import { appViewMode, setAppViewMode } from "../store/viewMode.js";
 import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
+import ListFormModal from "../components/ListFormModal.js";
 import FormattedText from "../components/FormattedText.js";
 import ContextMenu from "../components/ContextMenu.js";
 import type { MenuItem } from "../components/ContextMenu.js";
 
+const VIEW_MODES: { mode: "list" | "table" | "card"; label: string }[] = [
+  { mode: "list", label: "List" },
+  { mode: "table", label: "Table" },
+  { mode: "card", label: "Cards" },
+];
+
+const formatCellValue = (value: unknown, type: string): string => {
+  if (value == null || value === "") return "\u2014";
+  if (type === "boolean") return value ? "Yes" : "No";
+  if (type === "duration") {
+    const n = Number(value);
+    const h = Math.floor(n / 60);
+    const m = n % 60;
+    return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+  }
+  if (type === "tags" && Array.isArray(value)) return value.join(", ");
+  return String(value);
+};
+
 const CategoryView: Component = () => {
   const params = useParams();
-  const navigate = useNavigate();
+  const location = useLocation();
 
   const [category, setCategory] = createSignal<Category | undefined>();
   const [allLists, setAllLists] = createSignal<List[]>([]);
@@ -23,25 +45,48 @@ const CategoryView: Component = () => {
   const [addingToList, setAddingToList] = createSignal<string | null>(null);
   const [prependToList, setPrependToList] = createSignal(false);
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();
+  const [editingList, setEditingList] = createSignal<List | undefined>();
   const [selectedItemIds, setSelectedItemIds] = createSignal<Set<string>>(new Set());
   const [anchorItemId, setAnchorItemId] = createSignal<string | null>(null);
   const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchOpen, setSearchOpen] = createSignal(false);
+
+  const allCategories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
 
   const handleGlobalKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") { setSelectedItemIds(new Set()); setItemCtxMenu(null); }
+    if (e.key === "Escape") {
+      setSelectedItemIds(new Set());
+      setItemCtxMenu(null);
+    }
   };
   document.addEventListener("keydown", handleGlobalKeyDown);
   onCleanup(() => document.removeEventListener("keydown", handleGlobalKeyDown));
 
+  // Reset per-category state when navigating to a different category
   createEffect(() => {
     const catId = params.id;
     setSelectedItemIds(new Set());
     setItemCtxMenu(null);
+    setSearchQuery("");
+    setSearchOpen(false);
+    setEditingList(undefined);
+
     const sub1 = liveQuery(() => db.categories.get(catId)).subscribe((v) => setCategory(v));
     const sub2 = liveQuery(() =>
       db.lists.where("category_id").equals(catId).sortBy("position")
     ).subscribe((v) => setAllLists(v));
     onCleanup(() => { sub1.unsubscribe(); sub2.unsubscribe(); });
+  });
+
+  // Watch location.state for openSettings
+  createEffect(() => {
+    const state = location.state as any;
+    if (state?.openSettings) {
+      const listId = state.openSettings as string;
+      const list = allLists().find((l) => l.id === listId);
+      if (list) setEditingList(list);
+    }
   });
 
   createEffect(() => {
@@ -66,6 +111,15 @@ const CategoryView: Component = () => {
     return catFiltered.length > 0 ? catFiltered : all;
   });
 
+  const headerTitle = createMemo(() => {
+    const sel = selectedListIds();
+    if (sel.size === 1) {
+      const vl = visibleLists();
+      if (vl.length === 1) return vl[0].name;
+    }
+    return category()?.name ?? "";
+  });
+
   const schema = createMemo((): AttributeDefinition[] => {
     const cat = category();
     if (!cat) return [];
@@ -78,6 +132,19 @@ const CategoryView: Component = () => {
     const urls = assetUrls();
     const fs = list.format_string || effectiveFormatString();
     return renderFormatStringHtml(fs, item, schema(), undefined, category()?.macros, (url) => urls[url] ?? url);
+  };
+
+  const itemsForList = (listId: string): Item[] => {
+    const allForList = itemsByList().get(listId) ?? [];
+    const q = searchQuery().toLowerCase().trim();
+    if (!q) return allForList;
+    return allForList.filter((item) => {
+      if (item.title.toLowerCase().includes(q)) return true;
+      for (const val of Object.values(item.attributes)) {
+        if (val != null && String(val).toLowerCase().includes(q)) return true;
+      }
+      return false;
+    });
   };
 
   const handleAddItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
@@ -101,6 +168,20 @@ const CategoryView: Component = () => {
     setEditingItem(undefined);
   };
 
+  const handleDeleteItem = async () => {
+    const item = editingItem();
+    if (!item) return;
+    await deleteItem(item.id);
+    setEditingItem(undefined);
+  };
+
+  const handleEditList = async (data: { name: string; category_id: string; format_string: string | null }) => {
+    const list = editingList();
+    if (!list) return;
+    await updateList(list.id, data);
+    setEditingList(undefined);
+  };
+
   const handleDeleteSelectedItems = async () => {
     const ids = [...selectedItemIds()];
     if (!confirm(`Delete ${ids.length} item${ids.length !== 1 ? "s" : ""}?`)) return;
@@ -116,13 +197,13 @@ const CategoryView: Component = () => {
 
   const itemCtxMenuItems = createMemo((): MenuItem[] => {
     const ctx = itemCtxMenu();
-    const items: MenuItem[] = [];
+    const menuItems: MenuItem[] = [];
     if (ctx && selectedItemIds().size === 1 && selectedItemIds().has(ctx.item.id)) {
-      items.push({ label: "Edit Item", action: handleItemEditFromCtx });
+      menuItems.push({ label: "Edit Item", action: handleItemEditFromCtx });
     }
     const n = selectedItemIds().size;
-    items.push({ label: `Delete ${n} item${n !== 1 ? "s" : ""}`, danger: true, action: handleDeleteSelectedItems });
-    return items;
+    menuItems.push({ label: `Delete ${n} item${n !== 1 ? "s" : ""}`, danger: true, action: handleDeleteSelectedItems });
+    return menuItems;
   });
 
   const handleItemClick = (e: MouseEvent, item: Item, contextItems: Item[]) => {
@@ -169,19 +250,13 @@ const CategoryView: Component = () => {
     setItemCtxMenu({ x: e.clientX, y: e.clientY, item });
   };
 
-  const handleDeleteItem = async () => {
-    const item = editingItem();
-    if (!item) return;
-    await deleteItem(item.id);
-    setEditingItem(undefined);
-  };
-
-  const goToListView = async (mode: ViewMode) => {
-    const list = visibleLists()[0];
-    if (!list) return;
-    await updateList(list.id, { view_mode: mode });
-    navigate(`/list/${list.id}`);
-  };
+  const totalItemCount = createMemo(() => {
+    let count = 0;
+    for (const list of visibleLists()) {
+      count += itemsForList(list.id).length;
+    }
+    return count;
+  });
 
   return (
     <div class="main">
@@ -190,53 +265,197 @@ const CategoryView: Component = () => {
           <>
             <div class="page-header">
               <div class="page-title">
-                <h1>{cat().name}</h1>
-                <span class="item-count">{visibleLists().length} lists</span>
+                <h1>{headerTitle()}</h1>
+                <span class="item-count">{totalItemCount()}</span>
               </div>
-              <Show when={selectedListIds().size === 1 && visibleLists().length === 1}>
-                <div class="header-actions">
-                  <div class="view-switcher" role="tablist" aria-label="View mode">
-                    <button type="button" role="tab" class="view-switcher-btn active">List</button>
-                    <button type="button" role="tab" class="view-switcher-btn" onClick={() => goToListView("table")}>Table</button>
-                    <button type="button" role="tab" class="view-switcher-btn" onClick={() => goToListView("card")}>Cards</button>
-                    <button type="button" role="tab" class="view-switcher-btn" onClick={() => goToListView("board")}>Board</button>
-                  </div>
+              <div class="header-actions">
+                <input
+                  class="search-input"
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery()}
+                  onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                />
+                <button
+                  class="search-toggle-btn"
+                  classList={{ active: searchOpen() }}
+                  onClick={() => setSearchOpen((v) => !v)}
+                  aria-label="Search"
+                >
+                  🔍
+                </button>
+                <div class="view-switcher" role="tablist" aria-label="View mode">
+                  <For each={VIEW_MODES}>
+                    {(vm) => (
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={appViewMode() === vm.mode}
+                        class="view-switcher-btn"
+                        classList={{ active: appViewMode() === vm.mode }}
+                        onClick={() => setAppViewMode(vm.mode)}
+                      >
+                        {vm.label}
+                      </button>
+                    )}
+                  </For>
                 </div>
-              </Show>
+                <select
+                  class="view-switcher-select"
+                  value={appViewMode()}
+                  onChange={(e) => setAppViewMode(e.currentTarget.value as "list" | "table" | "card")}
+                  aria-label="View mode"
+                >
+                  <For each={VIEW_MODES}>
+                    {(vm) => <option value={vm.mode}>{vm.label}</option>}
+                  </For>
+                </select>
+              </div>
             </div>
 
-            <div class="multi-list-view">
+            <Show when={searchOpen()}>
+              <div class="mobile-search-bar">
+                <input
+                  class="search-input"
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery()}
+                  onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                  ref={(el) => setTimeout(() => el.focus(), 50)}
+                />
+                <button
+                  class="mobile-search-bar-close"
+                  onClick={() => { setSearchOpen(false); setSearchQuery(""); }}
+                  aria-label="Close search"
+                >
+                  ✕
+                </button>
+              </div>
+            </Show>
+
+            <div class="multi-list-view" classList={{ "multi-list-vertical": appViewMode() !== "list" }}>
               <For each={visibleLists()}>
                 {(list) => {
-                  const items = () => itemsByList().get(list.id) ?? [];
+                  const items = () => itemsForList(list.id);
+                  const allItemsForList = () => itemsByList().get(list.id) ?? [];
                   return (
                     <div class="multi-list-column">
                       <div
                         class="multi-list-column-header"
-                        title="Double-click to open list"
-                        onDblClick={() => navigate(`/list/${list.id}`)}
+                        onClick={() => setSelectedListIds(new Set([list.id]))}
                       >
                         <span class="multi-list-column-name">{list.name}</span>
                         <span class="multi-list-column-count">{items().length}</span>
                       </div>
-                      <ul class="list-view multi-list-items" ref={(el) => useSortable(el, items, { indexOffset: 1 })}>
-                        <li class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</li>
-                        <For each={items()}>
-                          {(item) => (
-                            <li
-                              class="list-view-item"
-                              classList={{ selected: selectedItemIds().has(item.id) }}
-                              onClick={(e) => handleItemClick(e, item, items())}
-                              onDblClick={() => setEditingItem(item)}
-                              onContextMenu={(e) => handleItemContextMenu(e, item)}
-                            >
-                              <span class="drag-handle" title="Drag to reorder">⠿</span>
-                              <FormattedText html={formatItem(item, list)} />
-                            </li>
-                          )}
-                        </For>
-                        <li class="view-add" onClick={() => setAddingToList(list.id)}>+ Add Item</li>
-                      </ul>
+
+                      <Switch>
+                        <Match when={appViewMode() === "list"}>
+                          <ul class="list-view multi-list-items" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1 })}>
+                            <li class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</li>
+                            <For each={items()}>
+                              {(item) => (
+                                <li
+                                  class="list-view-item"
+                                  classList={{ selected: selectedItemIds().has(item.id) }}
+                                  onClick={(e) => handleItemClick(e, item, items())}
+                                  onDblClick={() => setEditingItem(item)}
+                                  onContextMenu={(e) => handleItemContextMenu(e, item)}
+                                >
+                                  <span class="drag-handle" title="Drag to reorder">⠿</span>
+                                  <FormattedText html={formatItem(item, list)} />
+                                </li>
+                              )}
+                            </For>
+                            <li class="view-add" onClick={() => setAddingToList(list.id)}>+ Add Item</li>
+                          </ul>
+                        </Match>
+
+                        <Match when={appViewMode() === "table"}>
+                          <div class="table-container">
+                            <div class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</div>
+                            <table>
+                              <thead>
+                                <tr>
+                                  <th style="width: 32px"></th>
+                                  <th>Title</th>
+                                  <For each={schema()}>
+                                    {(attr) => <th>{attr.label || attr.key}</th>}
+                                  </For>
+                                </tr>
+                              </thead>
+                              <tbody ref={(el) => useSortable(el, allItemsForList, {})}>
+                                <For each={items()}>
+                                  {(item) => (
+                                    <tr
+                                      classList={{ selected: selectedItemIds().has(item.id) }}
+                                      onClick={(e) => handleItemClick(e, item, items())}
+                                      onDblClick={() => setEditingItem(item)}
+                                      onContextMenu={(e) => handleItemContextMenu(e, item)}
+                                    >
+                                      <td class="drag-handle-cell"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
+                                      <td style="font-weight: 500">{item.title}</td>
+                                      <For each={schema()}>
+                                        {(attr) => (
+                                          <td>{formatCellValue(item.attributes[attr.key], attr.type)}</td>
+                                        )}
+                                      </For>
+                                    </tr>
+                                  )}
+                                </For>
+                              </tbody>
+                            </table>
+                            <div class="view-add" onClick={() => setAddingToList(list.id)}>+ Add Item</div>
+                          </div>
+                        </Match>
+
+                        <Match when={appViewMode() === "card"}>
+                          <div class="card-container">
+                            <div class="card-grid" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1 })}>
+                              <div class="card add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</div>
+                              <For each={items()}>
+                                {(item) => (
+                                  <div
+                                    class="card item"
+                                    classList={{ selected: selectedItemIds().has(item.id) }}
+                                    onClick={(e) => handleItemClick(e, item, items())}
+                                    onDblClick={() => setEditingItem(item)}
+                                    onContextMenu={(e) => handleItemContextMenu(e, item)}
+                                  >
+                                    <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
+                                    <div class="card-title"><FormattedText html={formatItem(item, list)} /></div>
+                                    <Show when={schema().length > 0}>
+                                      <div class="card-attrs">
+                                        <For each={schema()}>
+                                          {(attr) => {
+                                            const val = item.attributes[attr.key];
+                                            if (val == null || val === "") return null;
+                                            return (
+                                              <div class="card-attr">
+                                                <span class="card-attr-label">{attr.label || attr.key}</span>
+                                                <Show
+                                                  when={attr.type === "tags" && Array.isArray(val)}
+                                                  fallback={<span>{formatCellValue(val, attr.type)}</span>}
+                                                >
+                                                  <span>
+                                                    <For each={val as string[]}>
+                                                      {(t) => <span class="tag">{t}</span>}
+                                                    </For>
+                                                  </span>
+                                                </Show>
+                                              </div>
+                                            );
+                                          }}
+                                        </For>
+                                      </div>
+                                    </Show>
+                                  </div>
+                                )}
+                              </For>
+                              <div class="card add" onClick={() => setAddingToList(list.id)}>+ Add Item</div>
+                            </div>
+                          </div>
+                        </Match>
+                      </Switch>
                     </div>
                   );
                 }}
@@ -271,6 +490,14 @@ const CategoryView: Component = () => {
               onDelete={handleDeleteItem}
               schema={schema()}
               initial={editingItem()}
+            />
+
+            <ListFormModal
+              open={editingList() !== undefined}
+              onClose={() => setEditingList(undefined)}
+              onSave={handleEditList}
+              categories={allCategories() ?? []}
+              initial={editingList()}
             />
           </>
         )}

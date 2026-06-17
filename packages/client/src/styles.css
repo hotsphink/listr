@@ -1098,6 +1098,17 @@ tr.selected td,
   max-height: calc(100vh - 100px);
 }
 
+.multi-list-vertical {
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+.multi-list-vertical .multi-list-column {
+  flex: none;
+  width: 100%;
+  max-height: none;
+}
+
 .multi-list-column.active {
   border-color: var(--accent);
 }
