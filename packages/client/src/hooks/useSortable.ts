@@ -18,6 +18,8 @@ export function useSortable(
 
   const sortable = Sortable.create(el, {
     animation: 150,
+    delay: 300,
+    delayOnTouchOnly: true,
     handle: ".drag-handle",
     ghostClass: "sortable-ghost",
     chosenClass: "sortable-chosen",

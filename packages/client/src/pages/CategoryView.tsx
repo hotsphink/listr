@@ -244,6 +244,11 @@ const CategoryView: Component = () => {
   const handleItemContextMenu = (e: MouseEvent, item: Item) => {
     e.preventDefault();
     e.stopPropagation();
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+      if ((e.target as Element).closest('.drag-handle')) return; // long-press on grip = drag, not edit
+      setEditingItem(item);
+      return;
+    }
     if (!selectedItemIds().has(item.id)) {
       setSelectedItemIds(new Set([item.id]));
       setAnchorItemId(item.id);
