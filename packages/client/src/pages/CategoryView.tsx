@@ -59,6 +59,9 @@ const CategoryView: Component = () => {
   let lastTapItemId: string | null = null;
   let lastTapTime = 0;
   let lastContextMenuTime = 0;
+  let touchSelectTimer: ReturnType<typeof setTimeout> | null = null;
+  let touchStartX = 0;
+  let touchStartY = 0;
   const [searchOpen, setSearchOpen] = createSignal(false);
 
   const allCategories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
@@ -250,10 +253,26 @@ const CategoryView: Component = () => {
     return menuItems;
   });
 
-  const handleItemTouchStart = (item: Item) => {
+  const handleItemTouchStart = (e: TouchEvent, item: Item) => {
     if (selectionMode()) return;
-    setAnchorItemId(item.id);
-    setSelectedItemIds(new Set([item.id]));
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    if (touchSelectTimer) clearTimeout(touchSelectTimer);
+    touchSelectTimer = setTimeout(() => {
+      touchSelectTimer = null;
+      setAnchorItemId(item.id);
+      setSelectedItemIds(new Set([item.id]));
+    }, 80);
+  };
+
+  const handleItemTouchMove = (e: TouchEvent) => {
+    if (!touchSelectTimer) return;
+    const dx = Math.abs(e.touches[0].clientX - touchStartX);
+    const dy = Math.abs(e.touches[0].clientY - touchStartY);
+    if (dx > 10 || dy > 10) {
+      clearTimeout(touchSelectTimer);
+      touchSelectTimer = null;
+    }
   };
 
   const handleItemClick = (e: MouseEvent, item: Item, contextItems: Item[]) => {
@@ -479,7 +498,8 @@ const CategoryView: Component = () => {
                                   class="list-view-item"
                                   data-item-id={item.id}
                                   classList={{ selected: selectedItemIds().has(item.id) }}
-                                  onTouchStart={() => handleItemTouchStart(item)}
+                                  onTouchStart={(e) => handleItemTouchStart(e, item)}
+                                  onTouchMove={handleItemTouchMove}
                                   onClick={(e) => handleItemClick(e, item, items())}
                                   onDblClick={() => setEditingItem(item)}
                                   onContextMenu={(e) => handleItemContextMenu(e, item)}
@@ -514,7 +534,8 @@ const CategoryView: Component = () => {
                                     <tr
                                       data-item-id={item.id}
                                       classList={{ selected: selectedItemIds().has(item.id) }}
-                                      onTouchStart={() => handleItemTouchStart(item)}
+                                      onTouchStart={(e) => handleItemTouchStart(e, item)}
+                                  onTouchMove={handleItemTouchMove}
                                       onClick={(e) => handleItemClick(e, item, items())}
                                       onDblClick={() => setEditingItem(item)}
                                       onContextMenu={(e) => handleItemContextMenu(e, item)}
@@ -549,7 +570,8 @@ const CategoryView: Component = () => {
                                     class="card item"
                                     data-item-id={item.id}
                                     classList={{ selected: selectedItemIds().has(item.id) }}
-                                    onTouchStart={() => handleItemTouchStart(item)}
+                                    onTouchStart={(e) => handleItemTouchStart(e, item)}
+                                  onTouchMove={handleItemTouchMove}
                                     onClick={(e) => handleItemClick(e, item, items())}
                                     onDblClick={() => setEditingItem(item)}
                                     onContextMenu={(e) => handleItemContextMenu(e, item)}
