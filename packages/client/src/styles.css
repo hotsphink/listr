@@ -1201,6 +1201,50 @@ tr.selected td,
 }
 
 /* Drag and drop */
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 24px;
+  background: var(--accent-dim);
+  border-bottom: 1px solid var(--accent);
+  flex-shrink: 0;
+}
+
+.selection-bar-back {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0 4px 0 0;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+.selection-bar-count {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.item-select-checkbox {
+  flex: 0 0 32px;
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.card-select-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .drag-handle {
   cursor: grab;
   color: var(--text-dim);

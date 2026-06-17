@@ -10,6 +10,7 @@ import { syncClient } from "../sync/SyncClient.js";
 import { assetUrls } from "../sync/assetStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
 import { appViewMode, setAppViewMode } from "../store/viewMode.js";
+import { selectionMode, setSelectionMode } from "../store/selectionMode.js";
 import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
@@ -53,13 +54,29 @@ const CategoryView: Component = () => {
   const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
   const [showMultiEdit, setShowMultiEdit] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
+
+  const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  let lastTapItemId: string | null = null;
+  let lastTapTime = 0;
+  let lastContextMenuTime = 0;
   const [searchOpen, setSearchOpen] = createSignal(false);
 
   const allCategories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
 
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedItemIds(new Set());
+  };
+
+  // Auto-exit selection mode when all items are deselected; clear selection when mode is exited from outside
+  createEffect(() => {
+    if (selectionMode() && selectedItemIds().size === 0) setSelectionMode(false);
+    if (!selectionMode()) setSelectedItemIds(new Set());
+  });
+
   const handleGlobalKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
-      setSelectedItemIds(new Set());
+      exitSelectionMode();
       setItemCtxMenu(null);
     }
   };
@@ -70,6 +87,7 @@ const CategoryView: Component = () => {
   createEffect(() => {
     const catId = params.id;
     setSelectedItemIds(new Set());
+    setSelectionMode(false);
     setItemCtxMenu(null);
     setSearchQuery("");
     setSearchOpen(false);
@@ -185,6 +203,16 @@ const CategoryView: Component = () => {
     setEditingList(undefined);
   };
 
+  const handleEditFromBar = () => {
+    if (selectedItemIds().size === 1) {
+      const id = [...selectedItemIds()][0];
+      const item = [...itemsByList().values()].flatMap((its) => its).find((i) => i.id === id);
+      if (item) setEditingItem(item);
+    } else {
+      setShowMultiEdit(true);
+    }
+  };
+
   const handleMultiEditSave = async (attrUpdates: Record<string, unknown>) => {
     const ids = [...selectedItemIds()];
     for (const id of ids) {
@@ -222,8 +250,38 @@ const CategoryView: Component = () => {
     return menuItems;
   });
 
+  const handleItemTouchStart = (item: Item) => {
+    if (selectionMode()) return;
+    setAnchorItemId(item.id);
+    setSelectedItemIds(new Set([item.id]));
+  };
+
   const handleItemClick = (e: MouseEvent, item: Item, contextItems: Item[]) => {
     e.stopPropagation();
+
+    if (isTouch) {
+      if (Date.now() - lastContextMenuTime < 600) return;
+      if (selectionMode()) {
+        setAnchorItemId(item.id);
+        setSelectedItemIds((prev) => {
+          const next = new Set(prev);
+          next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+          return next;
+        });
+        return;
+      }
+      const now = Date.now();
+      if (lastTapItemId === item.id && now - lastTapTime < 350) {
+        lastTapItemId = null;
+        lastTapTime = 0;
+        setEditingItem(item);
+        return;
+      }
+      lastTapItemId = item.id;
+      lastTapTime = now;
+      return;
+    }
+
     if (e.shiftKey && anchorItemId()) {
       const ids = contextItems.map((i) => i.id);
       const a = ids.indexOf(anchorItemId()!);
@@ -259,13 +317,12 @@ const CategoryView: Component = () => {
   const handleItemContextMenu = (e: MouseEvent, item: Item) => {
     e.preventDefault();
     e.stopPropagation();
-    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    if (isTouch) {
       if ((e.target as Element).closest('.drag-handle')) return; // long-press on grip = drag, not edit
-      if (selectedItemIds().size > 1 && selectedItemIds().has(item.id)) {
-        setShowMultiEdit(true);
-      } else {
-        setEditingItem(item);
-      }
+      lastContextMenuTime = Date.now();
+      setSelectionMode(true);
+      setSelectedItemIds(new Set([item.id]));
+      setAnchorItemId(item.id);
       return;
     }
     if (!selectedItemIds().has(item.id)) {
@@ -312,73 +369,88 @@ const CategoryView: Component = () => {
       <Show when={category()} fallback={<div class="empty-state"><p>Category not found.</p></div>}>
         {(cat) => (
           <>
-            <div class="page-header">
-              <div class="page-title">
-                <h1>{headerTitle()}</h1>
-                <span class="item-count">{totalItemCount()}</span>
-              </div>
-              <div class="header-actions">
-                <input
-                  class="search-input"
-                  type="text"
-                  placeholder="Search..."
-                  value={searchQuery()}
-                  onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                />
-                <button
-                  class="search-toggle-btn"
-                  classList={{ active: searchOpen() }}
-                  onClick={() => setSearchOpen((v) => !v)}
-                  aria-label="Search"
-                >
-                  🔍
-                </button>
-                <div class="view-switcher" role="tablist" aria-label="View mode">
-                  <For each={VIEW_MODES}>
-                    {(vm) => (
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={appViewMode() === vm.mode}
-                        class="view-switcher-btn"
-                        classList={{ active: appViewMode() === vm.mode }}
-                        onClick={() => setAppViewMode(vm.mode)}
-                      >
-                        {vm.label}
-                      </button>
-                    )}
-                  </For>
+            <Show when={selectionMode()} fallback={
+              <>
+                <div class="page-header">
+                  <div class="page-title">
+                    <h1>{headerTitle()}</h1>
+                    <span class="item-count">{totalItemCount()}</span>
+                  </div>
+                  <div class="header-actions">
+                    <input
+                      class="search-input"
+                      type="text"
+                      placeholder="Search..."
+                      value={searchQuery()}
+                      onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                    />
+                    <button
+                      class="search-toggle-btn"
+                      classList={{ active: searchOpen() }}
+                      onClick={() => setSearchOpen((v) => !v)}
+                      aria-label="Search"
+                    >
+                      🔍
+                    </button>
+                    <div class="view-switcher" role="tablist" aria-label="View mode">
+                      <For each={VIEW_MODES}>
+                        {(vm) => (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={appViewMode() === vm.mode}
+                            class="view-switcher-btn"
+                            classList={{ active: appViewMode() === vm.mode }}
+                            onClick={() => setAppViewMode(vm.mode)}
+                          >
+                            {vm.label}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                    <select
+                      class="view-switcher-select"
+                      value={appViewMode()}
+                      onChange={(e) => setAppViewMode(e.currentTarget.value as "list" | "table" | "card")}
+                      aria-label="View mode"
+                    >
+                      <For each={VIEW_MODES}>
+                        {(vm) => <option value={vm.mode}>{vm.label}</option>}
+                      </For>
+                    </select>
+                  </div>
                 </div>
-                <select
-                  class="view-switcher-select"
-                  value={appViewMode()}
-                  onChange={(e) => setAppViewMode(e.currentTarget.value as "list" | "table" | "card")}
-                  aria-label="View mode"
-                >
-                  <For each={VIEW_MODES}>
-                    {(vm) => <option value={vm.mode}>{vm.label}</option>}
-                  </For>
-                </select>
-              </div>
-            </div>
 
-            <Show when={searchOpen()}>
-              <div class="mobile-search-bar">
-                <input
-                  class="search-input"
-                  type="text"
-                  placeholder="Search..."
-                  value={searchQuery()}
-                  onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                  ref={(el) => setTimeout(() => el.focus(), 50)}
-                />
-                <button
-                  class="mobile-search-bar-close"
-                  onClick={() => { setSearchOpen(false); setSearchQuery(""); }}
-                  aria-label="Close search"
-                >
-                  ✕
+                <Show when={searchOpen()}>
+                  <div class="mobile-search-bar">
+                    <input
+                      class="search-input"
+                      type="text"
+                      placeholder="Search..."
+                      value={searchQuery()}
+                      onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                      ref={(el) => setTimeout(() => el.focus(), 50)}
+                    />
+                    <button
+                      class="mobile-search-bar-close"
+                      onClick={() => { setSearchOpen(false); setSearchQuery(""); }}
+                      aria-label="Close search"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </Show>
+              </>
+            }>
+              <div class="selection-bar">
+                <button class="selection-bar-back" onClick={exitSelectionMode} aria-label="Cancel selection">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5 12H19M5 12L11 6M5 12L11 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
                 </button>
+                <span class="selection-bar-count">{selectedItemIds().size} selected</span>
+                <button class="btn-ghost" onClick={handleEditFromBar}>Edit</button>
+                <button class="btn-danger" onClick={handleDeleteSelectedItems}>Delete</button>
               </div>
             </Show>
 
@@ -407,11 +479,14 @@ const CategoryView: Component = () => {
                                   class="list-view-item"
                                   data-item-id={item.id}
                                   classList={{ selected: selectedItemIds().has(item.id) }}
+                                  onTouchStart={() => handleItemTouchStart(item)}
                                   onClick={(e) => handleItemClick(e, item, items())}
                                   onDblClick={() => setEditingItem(item)}
                                   onContextMenu={(e) => handleItemContextMenu(e, item)}
                                 >
-                                  <span class="drag-handle" title="Drag to reorder">⠿</span>
+                                  <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
+                                    <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
+                                  </Show>
                                   <FormattedText html={formatItem(item, list)} />
                                 </li>
                               )}
@@ -439,11 +514,16 @@ const CategoryView: Component = () => {
                                     <tr
                                       data-item-id={item.id}
                                       classList={{ selected: selectedItemIds().has(item.id) }}
+                                      onTouchStart={() => handleItemTouchStart(item)}
                                       onClick={(e) => handleItemClick(e, item, items())}
                                       onDblClick={() => setEditingItem(item)}
                                       onContextMenu={(e) => handleItemContextMenu(e, item)}
                                     >
-                                      <td class="drag-handle-cell"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
+                                      <td class="drag-handle-cell">
+                                        <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
+                                          <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
+                                        </Show>
+                                      </td>
                                       <td style="font-weight: 500">{item.title}</td>
                                       <For each={schema()}>
                                         {(attr) => (
@@ -469,11 +549,14 @@ const CategoryView: Component = () => {
                                     class="card item"
                                     data-item-id={item.id}
                                     classList={{ selected: selectedItemIds().has(item.id) }}
+                                    onTouchStart={() => handleItemTouchStart(item)}
                                     onClick={(e) => handleItemClick(e, item, items())}
                                     onDblClick={() => setEditingItem(item)}
                                     onContextMenu={(e) => handleItemContextMenu(e, item)}
                                   >
-                                    <span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>
+                                    <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>}>
+                                      <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
+                                    </Show>
                                     <div class="card-title"><FormattedText html={formatItem(item, list)} /></div>
                                     <Show when={schema().length > 0}>
                                       <div class="card-attrs">

@@ -8,6 +8,7 @@ import TestRunner from "./pages/TestRunner.js";
 import { db } from "./db/database.js";
 import { syncClient } from "./sync/SyncClient.js";
 import { initAssetStore } from "./sync/assetStore.js";
+import { selectionMode } from "./store/selectionMode.js";
 
 const Layout: Component<{ children?: any }> = (props) => {
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
@@ -30,9 +31,11 @@ const Layout: Component<{ children?: any }> = (props) => {
       />
       <Sidebar open={sidebarOpen()} onClose={close} />
       <div class="app-body">
-        <button class="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
-          ☰
-        </button>
+        <Show when={!selectionMode()}>
+          <button class="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+            ☰
+          </button>
+        </Show>
         {props.children}
       </div>
     </div>
