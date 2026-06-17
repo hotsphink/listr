@@ -19,7 +19,7 @@ test.describe("drag handles in list view", () => {
   });
 
   test("drag handles remain visible after switching to table and back to list", async ({ page }) => {
-    // Switch to table view and back to list view within the unified CategoryView
+    // Switch to table view and back to list view within the unified ListView
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
     await expect(page.locator("table")).toBeVisible();
 

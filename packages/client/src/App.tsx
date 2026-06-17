@@ -3,7 +3,7 @@ import { Router, Route, useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import Sidebar from "./components/Sidebar.js";
-import CategoryView from "./pages/CategoryView.js";
+import ListView from "./pages/ListView.js";
 import TestRunner from "./pages/TestRunner.js";
 import { db } from "./db/database.js";
 import { syncClient } from "./sync/SyncClient.js";
@@ -65,7 +65,7 @@ const Home: Component = () => {
 const App: Component = () => (
   <Router root={Layout}>
     <Route path="/" component={Home} />
-    <Route path="/category/:id" component={CategoryView} />
+    <Route path="/category/:id" component={ListView} />
     <Route path="/test" component={TestRunner} />
   </Router>
 );

@@ -38,7 +38,7 @@ const formatCellValue = (value: unknown, type: string): string => {
   return String(value);
 };
 
-const CategoryView: Component = () => {
+const ListView: Component = () => {
   const params = useParams();
   const location = useLocation();
 
@@ -673,4 +673,4 @@ const CategoryView: Component = () => {
   );
 };
 
-export default CategoryView;
+export default ListView;
