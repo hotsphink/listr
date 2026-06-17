@@ -12,9 +12,71 @@ export function useSortable(
   options?: Partial<Sortable.Options> & {
     indexOffset?: number;
     onCrossMove?: (itemId: string, toEl: HTMLElement, rawNewIndex: number) => Promise<void>;
+    scrollEl?: HTMLElement;
   },
 ) {
-  const { indexOffset = 0, onCrossMove, ...sortableOptions } = options ?? {};
+  const { indexOffset = 0, onCrossMove, scrollEl, ...sortableOptions } = options ?? {};
+
+  // Edge-scroll state
+  let dragX = 0;
+  let dragStartX = 0;
+  let scrollUnlocked = false;
+  let lastSnapTime = 0;
+  let scrollRaf: number | null = null;
+
+  const updateDragX = (e: Event) => {
+    if (e instanceof TouchEvent) dragX = e.touches[0]?.clientX ?? dragX;
+    else if (e instanceof MouseEvent) dragX = e.clientX;
+  };
+
+  const stopEdgeScroll = () => {
+    if (scrollRaf !== null) { cancelAnimationFrame(scrollRaf); scrollRaf = null; }
+    document.removeEventListener("pointermove", updateDragX);
+    document.removeEventListener("touchmove", updateDragX);
+    if (scrollEl) scrollEl.style.scrollSnapType = "";
+  };
+
+  const startEdgeScroll = (initialX: number) => {
+    if (!scrollEl) return;
+    scrollEl.style.scrollSnapType = "none";
+    dragX = initialX;
+    dragStartX = initialX;
+    scrollUnlocked = false;
+    lastSnapTime = 0;
+    document.addEventListener("pointermove", updateDragX, { passive: true });
+    document.addEventListener("touchmove", updateDragX, { passive: true });
+
+    const SENSITIVITY = 80;
+    const UNLOCK_THRESHOLD = 40; // px horizontal movement before edge-scroll activates
+    const SNAP_COOLDOWN = 350;   // ms between column snaps
+
+    const tick = () => {
+      if (!scrollUnlocked) {
+        if (Math.abs(dragX - dragStartX) > UNLOCK_THRESHOLD) scrollUnlocked = true;
+      }
+
+      if (scrollUnlocked) {
+        const rect = scrollEl.getBoundingClientRect();
+        const now = Date.now();
+        if (now - lastSnapTime > SNAP_COOLDOWN) {
+          const columns = Array.from(scrollEl.children) as HTMLElement[];
+          const curIdx = columns.reduce(
+            (best, col, i) => (col.offsetLeft <= scrollEl.scrollLeft + 1 ? i : best), 0
+          );
+          if (rect.right - dragX < SENSITIVITY && curIdx < columns.length - 1) {
+            scrollEl.scrollTo({ left: columns[curIdx + 1].offsetLeft, behavior: "smooth" });
+            lastSnapTime = now;
+          } else if (dragX - rect.left < SENSITIVITY && curIdx > 0) {
+            scrollEl.scrollTo({ left: columns[curIdx - 1].offsetLeft, behavior: "smooth" });
+            lastSnapTime = now;
+          }
+        }
+      }
+
+      scrollRaf = requestAnimationFrame(tick);
+    };
+    scrollRaf = requestAnimationFrame(tick);
+  };
 
   const sortable = Sortable.create(el, {
     animation: 150,
@@ -26,7 +88,14 @@ export function useSortable(
     dragClass: "sortable-drag",
     filter: ".view-add, .card.add",
     ...sortableOptions,
-    onMove: (evt) => {
+    onStart: (evt) => {
+      navigator.vibrate?.(50);
+      const oe = (evt as any).originalEvent as Event | undefined;
+      const x = oe instanceof TouchEvent ? (oe.touches[0]?.clientX ?? 0) : (oe as MouseEvent)?.clientX ?? 0;
+      startEdgeScroll(x);
+    },
+    onMove: (evt, originalEvent) => {
+      updateDragX(originalEvent);
       if (evt.related?.classList.contains("view-add") ||
           evt.related?.classList.contains("add")) {
         return false;
@@ -34,6 +103,8 @@ export function useSortable(
       return true;
     },
     onEnd: async (evt) => {
+      stopEdgeScroll();
+
       const rawOld = evt.oldIndex;
       const rawNew = evt.newIndex;
       if (rawOld == null || rawNew == null) return;
@@ -88,5 +159,5 @@ export function useSortable(
     },
   });
 
-  onCleanup(() => sortable.destroy());
+  onCleanup(() => { stopEdgeScroll(); sortable.destroy(); });
 }

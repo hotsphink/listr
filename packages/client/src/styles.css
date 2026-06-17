@@ -1275,15 +1275,17 @@ tr.selected td,
 }
 
 .sortable-ghost {
-  opacity: 0.3;
+  opacity: 0.4;
 }
 
 .sortable-chosen {
   cursor: grabbing;
+  transform: scale(1.04);
+  background: var(--accent-dim);
 }
 
 .sortable-drag {
-  opacity: 0.9;
+  opacity: 0.95;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 

@@ -55,6 +55,8 @@ const CategoryView: Component = () => {
   const [showMultiEdit, setShowMultiEdit] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
 
+  let multiListViewEl: HTMLElement | undefined;
+
   const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
   let lastTapItemId: string | null = null;
   let lastTapTime = 0;
@@ -473,7 +475,7 @@ const CategoryView: Component = () => {
               </div>
             </Show>
 
-            <div class="multi-list-view" classList={{ "multi-list-vertical": appViewMode() !== "list" }}>
+            <div class="multi-list-view" classList={{ "multi-list-vertical": appViewMode() !== "list" }} ref={multiListViewEl!}>
               <For each={visibleLists()}>
                 {(list) => {
                   const items = () => itemsForList(list.id);
@@ -490,7 +492,7 @@ const CategoryView: Component = () => {
 
                       <Switch>
                         <Match when={appViewMode() === "list"}>
-                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove })}>
+                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
                             <li class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</li>
                             <For each={items()}>
                               {(item) => (
@@ -528,7 +530,7 @@ const CategoryView: Component = () => {
                                   </For>
                                 </tr>
                               </thead>
-                              <tbody data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove })}>
+                              <tbody data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
                                 <For each={items()}>
                                   {(item) => (
                                     <tr
@@ -562,7 +564,7 @@ const CategoryView: Component = () => {
 
                         <Match when={appViewMode() === "card"}>
                           <div class="card-container">
-                            <div class="card-grid" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove })}>
+                            <div class="card-grid" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
                               <div class="card add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</div>
                               <For each={items()}>
                                 {(item) => (
