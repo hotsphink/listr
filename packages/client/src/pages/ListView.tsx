@@ -42,29 +42,37 @@ const ListView: Component = () => {
   const params = useParams();
   const location = useLocation();
 
+  // DB-subscribed state — populated by liveQuery effects below
   const [category, setCategory] = createSignal<Category | undefined>();
   const [allLists, setAllLists] = createSignal<List[]>([]);
   const [itemsByList, setItemsByList] = createSignal<Map<string, Item[]>>(new Map());
-  const [addingToList, setAddingToList] = createSignal<string | null>(null);
-  const [prependToList, setPrependToList] = createSignal(false);
-  const [editingItem, setEditingItem] = createSignal<Item | undefined>();
-  const [editingList, setEditingList] = createSignal<List | undefined>();
+
+  // Item add/edit modal state
+  const [addingToList, setAddingToList] = createSignal<string | null>(null); // list id receiving a new item, or null
+  const [prependToList, setPrependToList] = createSignal(false);             // true = insert before first item
+  const [editingItem, setEditingItem] = createSignal<Item | undefined>();    // item open in edit modal
+  const [editingList, setEditingList] = createSignal<List | undefined>();    // list open in settings modal
+
+  // Selection state
   const [selectedItemIds, setSelectedItemIds] = createSignal<Set<string>>(new Set());
-  const [anchorItemId, setAnchorItemId] = createSignal<string | null>(null);
+  const [anchorItemId, setAnchorItemId] = createSignal<string | null>(null); // shift-click range anchor
   const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
-  const [showMultiEdit, setShowMultiEdit] = createSignal(false);
+  const [showMultiEdit, setShowMultiEdit] = createSignal(false);             // multi-edit modal open
+
+  // Search
   const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchOpen, setSearchOpen] = createSignal(false); // mobile: search bar expanded
 
   let multiListViewEl: HTMLElement | undefined;
 
   const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  let lastTapItemId: string | null = null;
+  // Touch interaction bookkeeping (not signals — no reactive subscribers need these)
+  let lastTapItemId: string | null = null;  // for double-tap-to-edit detection
   let lastTapTime = 0;
-  let lastContextMenuTime = 0;
-  let touchSelectTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastContextMenuTime = 0;              // suppresses click fired after a long-press contextmenu
+  let touchSelectTimer: ReturnType<typeof setTimeout> | null = null; // pending delayed selection
   let touchStartX = 0;
   let touchStartY = 0;
-  const [searchOpen, setSearchOpen] = createSignal(false);
 
   const allCategories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
 

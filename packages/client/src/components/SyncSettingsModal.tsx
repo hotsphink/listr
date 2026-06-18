@@ -1,7 +1,6 @@
 import { type Component, Show, createSignal, createEffect } from "solid-js";
 import { db } from "../db/database.js";
 import type { SyncConfig } from "../db/database.js";
-import { syncClient } from "../sync/SyncClient.js";
 import { syncStatus, syncStatusMessage } from "../sync/syncStore.js";
 
 function makeClientId(): string {
@@ -57,11 +56,6 @@ const SyncSettingsModal: Component<Props> = (props) => {
         last_sync_at: serverChanged ? 0 : (existing?.last_sync_at ?? 0),
       };
       await db.sync_config.put(config);
-      if (config.enabled && config.sync_url && config.sync_key) {
-        syncClient.connect(config.sync_url, config.sync_key, config.client_id);
-      } else {
-        syncClient.disconnect();
-      }
       props.onClose();
     } finally {
       setSaving(false);
@@ -69,7 +63,6 @@ const SyncSettingsModal: Component<Props> = (props) => {
   };
 
   const handleDisconnect = async () => {
-    syncClient.disconnect();
     await db.sync_config.update("default", { enabled: false });
     setEnabled(false);
   };

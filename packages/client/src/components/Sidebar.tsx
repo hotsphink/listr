@@ -7,7 +7,6 @@ import { db } from "../db/database.js";
 import { createList, createCategory, updateList, deleteList, updateCategory, deleteCategory } from "../db/operations.js";
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import CategoryFormModal from "./CategoryFormModal.js";
-import SyncSettingsModal from "./SyncSettingsModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
@@ -38,7 +37,6 @@ const Sidebar: Component<Props> = (props) => {
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [editingCategory, setEditingCategory] = createSignal<Category | undefined>();
   const [showCreateCategory, setShowCreateCategory] = createSignal(false);
-  const [showSync, setShowSync] = createSignal(false);
   const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
   const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
@@ -288,7 +286,7 @@ const Sidebar: Component<Props> = (props) => {
         </div>
       </div>
       <div class="sidebar-footer">
-        <div class="sidebar-sync-btn" onClick={() => setShowSync(true)}>
+        <div class="sidebar-sync-btn" onClick={() => navigate("/admin")}>
           <span
             class="sync-dot"
             style={`background: ${syncStatus() === "connected" ? "var(--success)" : syncStatus() === "connecting" ? "#f0a500" : syncStatus() === "error" ? "var(--danger)" : "var(--text-dim)"}`}
@@ -338,8 +336,6 @@ const Sidebar: Component<Props> = (props) => {
           setShowCreateCategory(false);
         }}
       />
-
-      <SyncSettingsModal open={showSync()} onClose={() => setShowSync(false)} />
 
       <Show when={importScope()}>
         {(scope) => (

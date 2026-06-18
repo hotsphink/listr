@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseFormatString, renderFormatString, renderFormatStringHtml, parseAdvancedFormatText } from "./format-string.js";
-import type { AttributeDefinition, Item } from "./types.js";
+import type { AttributeDefinition, Item, List } from "./types.js";
 
 function makeItem(title: string, attrs: Record<string, unknown> = {}): Item {
   return {

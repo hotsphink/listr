@@ -4,13 +4,14 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince } from "./db.js";
+import { upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince, getServerId } from "./db.js";
 import type { EntityType } from "./db.js";
 import { config } from "./config.js";
 import { extractFromImage } from "./gemini.js";
 
 const PORT = 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
+const SERVER_ID = getServerId();
 
 async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!config.gemini) {
@@ -102,7 +103,7 @@ wss.on("connection", (ws: WebSocket) => {
       syncKey = k;
       if (!rooms.has(k)) rooms.set(k, new Set());
       rooms.get(k)!.add(ws);
-      ws.send(JSON.stringify({ type: "ok" }));
+      ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID }));
       return;
     }
 

@@ -10,6 +10,16 @@ export interface SyncConfig {
   last_sync_at: number;
 }
 
+export interface SyncEndpoint {
+  id: string;
+  host: string;
+  port: number;
+  enabled: boolean;
+  secure: boolean;
+  last_server_id: string | null;
+  position: number;
+}
+
 export interface LocalTombstone {
   id: string; // `${entity_type}:${entity_id}`
   entity_type: string;
@@ -24,6 +34,7 @@ export class ListrDB extends Dexie {
   assets!: EntityTable<Asset, "id">;
   sync_config!: Table<SyncConfig, string>;
   tombstones!: Table<LocalTombstone, string>;
+  sync_endpoints!: Table<SyncEndpoint, string>;
 
   constructor() {
     super("listr");
@@ -100,6 +111,17 @@ export class ListrDB extends Dexie {
       sync_config: "id",
       tombstones: "id, entity_type, deleted_at",
       assets: "id, updated_at",
+    });
+
+    // Adds sync_endpoints table for multi-server sync configuration
+    this.version(5).stores({
+      categories: "id, position, updated_at",
+      lists: "id, category_id, position, updated_at",
+      items: "id, list_id, position, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
     });
   }
 }

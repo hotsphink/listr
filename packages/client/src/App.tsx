@@ -1,9 +1,10 @@
-import { type Component, createSignal, createEffect, onMount, Show } from "solid-js";
+import { type Component, createSignal, createEffect, onMount, Show, onCleanup } from "solid-js";
 import { Router, Route, useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import Sidebar from "./components/Sidebar.js";
 import ListView from "./pages/ListView.js";
+import AdminPage from "./pages/AdminPage.js";
 import TestRunner from "./pages/TestRunner.js";
 import { db } from "./db/database.js";
 import { syncClient } from "./sync/SyncClient.js";
@@ -16,10 +17,28 @@ const Layout: Component<{ children?: any }> = (props) => {
 
   onMount(async () => {
     await initAssetStore();
-    const config = await db.sync_config.get("default");
-    if (config?.enabled && config.sync_url && config.sync_key) {
-      syncClient.connect(config.sync_url, config.sync_key, config.client_id);
-    }
+  });
+
+  createEffect(() => {
+    const configSub = liveQuery(() => db.sync_config.get("default")).subscribe((config) => {
+      if (config?.sync_key) syncClient.setCredentials(config.sync_key, config.client_id);
+    });
+    const epSub = liveQuery(() => db.sync_endpoints.orderBy("position").toArray()).subscribe((eps) => {
+      syncClient.setEndpoints(
+        eps.map((ep) => ({
+          id: ep.id,
+          host: ep.host,
+          port: ep.port,
+          enabled: ep.enabled,
+          secure: ep.secure,
+          lastServerId: ep.last_server_id,
+        })),
+      );
+    });
+    onCleanup(() => {
+      configSub.unsubscribe();
+      epSub.unsubscribe();
+    });
   });
 
   return (
@@ -66,6 +85,7 @@ const App: Component = () => (
   <Router root={Layout}>
     <Route path="/" component={Home} />
     <Route path="/category/:id" component={ListView} />
+    <Route path="/admin" component={AdminPage} />
     <Route path="/test" component={TestRunner} />
   </Router>
 );

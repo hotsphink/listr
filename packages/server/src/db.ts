@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 const dataDir = join(process.cwd(), "data");
 mkdirSync(dataDir, { recursive: true });
@@ -9,6 +10,10 @@ const sql = new Database(join(dataDir, "listr.db"));
 sql.pragma("journal_mode = WAL");
 
 sql.exec(`
+  CREATE TABLE IF NOT EXISTS server_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS categories (
     id TEXT PRIMARY KEY,
     sync_key TEXT NOT NULL,
@@ -46,6 +51,14 @@ sql.exec(`
   CREATE INDEX IF NOT EXISTS idx_assets ON assets(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_tombstones ON tombstones(sync_key, deleted_at);
 `);
+
+export function getServerId(): string {
+  const row = sql.prepare("SELECT value FROM server_config WHERE key = 'server_id'").get() as { value: string } | undefined;
+  if (row) return row.value;
+  const id = randomUUID();
+  sql.prepare("INSERT INTO server_config (key, value) VALUES ('server_id', ?)").run(id);
+  return id;
+}
 
 export type EntityType = "category" | "list" | "item" | "asset";
 
