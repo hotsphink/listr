@@ -110,7 +110,7 @@ class EndpointConnection {
       return;
     }
     const proto = secure ? "wss" : "ws";
-    const url = `${proto}://${host}:${port}`;
+    const url = `${proto}://${host}:${port}/sync`;
     this.setPhase({ phase: "connecting" });
 
     try {

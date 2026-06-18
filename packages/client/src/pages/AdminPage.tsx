@@ -139,7 +139,7 @@ const AdminPage: Component = () => {
             {(ep) => {
               const status = () => statuses()[ep.id] as EndpointStatus | undefined;
               const phase = () => status()?.phase ?? (ep.enabled ? "connecting" : "disabled");
-              const wsUrl = () => `${ep.secure ? "wss" : "ws"}://${ep.host || "…"}:${ep.port}`;
+              const wsUrl = () => `${ep.secure ? "wss" : "ws"}://${ep.host || "…"}:${ep.port}/sync`;
               const httpsUrl = () => `${ep.secure ? "https" : "http"}://${ep.host || "…"}:${ep.port}`;
               const connectedId = () => status()?.serverId ?? ep.last_server_id;
               return (
