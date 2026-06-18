@@ -24,7 +24,9 @@
       "Bash(pnpm test:e2e)",
       "Bash(pnpm test:e2e --reporter=line)",
       "Bash(pnpm test:e2e --reporter=line e2e/drag-handles.spec.ts)",
-      "Bash(pnpm build *)"
+      "Bash(pnpm build *)",
+      "Bash(node_modules/.bin/tsc --noEmit --skipLibCheck)",
+      "Bash(node_modules/.bin/tsc --noEmit --skipLibCheck --noResolve)"
     ]
   }
 }

@@ -19,7 +19,7 @@ export const [assetUrls, setAssetUrls] = createSignal<Record<string, string>>({}
 
 // Blob URLs (blob:https://...) pass through the HTML Sanitizer; data: URLs are stripped.
 function toBlobUrl(asset: { data: Uint8Array; mime_type: string }): string {
-  return URL.createObjectURL(new Blob([asset.data], { type: asset.mime_type }));
+  return URL.createObjectURL(new Blob([asset.data as Uint8Array<ArrayBuffer>], { type: asset.mime_type }));
 }
 
 export async function registerAsset(asset: Asset): Promise<void> {

@@ -70,13 +70,13 @@ const ListView: Component = () => {
 
   const exitSelectionMode = () => {
     setSelectionMode(false);
-    setSelectedItemIds(new Set());
+    setSelectedItemIds(new Set<string>());
   };
 
   // Auto-exit selection mode when all items are deselected; clear selection when mode is exited from outside
   createEffect(() => {
     if (selectionMode() && selectedItemIds().size === 0) setSelectionMode(false);
-    if (!selectionMode()) setSelectedItemIds(new Set());
+    if (!selectionMode()) setSelectedItemIds(new Set<string>());
   });
 
   const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -90,8 +90,9 @@ const ListView: Component = () => {
 
   // Reset per-category state when navigating to a different category
   createEffect(() => {
+    if (!params.id) return; // Help the type system.
     const catId = params.id;
-    setSelectedItemIds(new Set());
+    setSelectedItemIds(new Set<string>());
     setSelectionMode(false);
     setItemCtxMenu(null);
     setSearchQuery("");
@@ -232,7 +233,7 @@ const ListView: Component = () => {
     const ids = [...selectedItemIds()];
     if (!confirm(`Delete ${ids.length} item${ids.length !== 1 ? "s" : ""}?`)) return;
     for (const id of ids) await deleteItem(id);
-    setSelectedItemIds(new Set());
+    setSelectedItemIds(new Set<string>());
     setItemCtxMenu(null);
   };
 
@@ -329,7 +330,7 @@ const ListView: Component = () => {
     }
     setAnchorItemId(item.id);
     if (selectedItemIds().size === 1 && selectedItemIds().has(item.id)) {
-      setSelectedItemIds(new Set());
+      setSelectedItemIds(new Set<string>());
     } else {
       setSelectedItemIds(new Set([item.id]));
     }
@@ -388,7 +389,7 @@ const ListView: Component = () => {
   return (
     <div class="main">
       <Show when={category()} fallback={<div class="empty-state"><p>Category not found.</p></div>}>
-        {(cat) => (
+        {(_cat) => (
           <>
             <Show when={selectionMode()} fallback={
               <>
@@ -475,7 +476,7 @@ const ListView: Component = () => {
               </div>
             </Show>
 
-            <div class="multi-list-view" classList={{ "multi-list-vertical": appViewMode() !== "list" }} ref={multiListViewEl!}>
+            <div class="multi-list-view" classList={{ "multi-list-vertical": appViewMode() !== "list" }} ref={(el) => { multiListViewEl = el; }}>
               <For each={visibleLists()}>
                 {(list) => {
                   const items = () => itemsForList(list.id);

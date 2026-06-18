@@ -167,7 +167,7 @@ const Sidebar: Component<Props> = (props) => {
     }
     setAnchorListId(list.id);
     if (selectedListIds().size === 1 && selectedListIds().has(list.id)) {
-      setSelectedListIds(new Set());
+      setSelectedListIds(new Set<string>());
     } else {
       setSelectedListIds(new Set([list.id]));
     }
@@ -213,7 +213,7 @@ const Sidebar: Component<Props> = (props) => {
                       class="sidebar-category-header"
                       classList={{ expanded: isExpanded() }}
                       style={`border-left: 3px solid ${cat.color}`}
-                      onClick={() => { setSelectedListIds(new Set()); navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
+                      onClick={() => { setSelectedListIds(new Set<string>()); navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
                       onContextMenu={(e) => handleContextMenu(e, { kind: "category", category: cat })}
                     >
                       <span class="sidebar-category-chevron">{isExpanded() ? "▾" : "▸"}</span>
