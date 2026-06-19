@@ -76,17 +76,24 @@ export function upsertEntity(type: EntityType, data: Record<string, unknown>, sy
     .prepare(`SELECT updated_at FROM ${table} WHERE id = ?`)
     .get(data.id as string) as { updated_at: number } | undefined;
   if (existing && existing.updated_at >= (data.updated_at as number)) return false;
+  const effectiveKey = type === "asset" ? "__global__" : syncKey;
   sql
     .prepare(
       `INSERT INTO ${table} (id, sync_key, updated_at, data) VALUES (?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET sync_key=excluded.sync_key, updated_at=excluded.updated_at, data=excluded.data`,
     )
-    .run(data.id, syncKey, data.updated_at, JSON.stringify(data));
+    .run(data.id, effectiveKey, data.updated_at, JSON.stringify(data));
   return true;
 }
 
 export function getEntitiesSince(type: EntityType, syncKey: string, since: number): unknown[] {
   const table = tableFor(type);
+  if (type === "asset") {
+    const rows = sql
+      .prepare(`SELECT data FROM ${table} WHERE updated_at > ?`)
+      .all(since) as { data: string }[];
+    return rows.map((r) => JSON.parse(r.data));
+  }
   const rows = sql
     .prepare(`SELECT data FROM ${table} WHERE sync_key = ? AND updated_at > ?`)
     .all(syncKey, since) as { data: string }[];
