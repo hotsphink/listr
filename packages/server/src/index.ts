@@ -85,6 +85,9 @@ const wss = new WebSocketServer({ server: httpServer });
 // sync_key → connected clients
 const rooms = new Map<string, Set<WebSocket>>();
 
+const ts = () => new Date().toISOString();
+const keyTag = (k: string) => `K${k.slice(0, 8)}`;
+
 function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
   const room = rooms.get(syncKey);
   if (!room) return;
@@ -96,6 +99,7 @@ function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
 
 wss.on("connection", (ws: WebSocket) => {
   let syncKey: string | null = null;
+  let connectedAt = 0;
 
   ws.on("message", (raw: Buffer) => {
     let msg: any;
@@ -110,8 +114,10 @@ wss.on("connection", (ws: WebSocket) => {
       const k = typeof msg.key === "string" ? msg.key.trim() : "";
       if (!k) { ws.send(JSON.stringify({ type: "error", message: "Missing key" })); return; }
       syncKey = k;
+      connectedAt = Date.now();
       if (!rooms.has(k)) rooms.set(k, new Set());
       rooms.get(k)!.add(ws);
+      console.log(`[ws] ${ts()} ${keyTag(k)} connect room=${rooms.get(k)!.size}`);
       ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID }));
       return;
     }
@@ -125,15 +131,16 @@ wss.on("connection", (ws: WebSocket) => {
 
     if (msg.type === "pull") {
       const since: number = typeof msg.since === "number" ? msg.since : 0;
-      ws.send(JSON.stringify({
-        type: "snapshot",
-        categories: getEntitiesSince("category", key, since),
-        lists: getEntitiesSince("list", key, since),
-        items: getEntitiesSince("item", key, since),
-        assets: getEntitiesSince("asset", key, since),
-        tombstones: getTombstonesSince(key, since),
-        server_time: Date.now(),
-      }));
+      const categories = getEntitiesSince("category", key, since);
+      const lists = getEntitiesSince("list", key, since);
+      const items = getEntitiesSince("item", key, since);
+      const assets = getEntitiesSince("asset", key, since);
+      const tombstones = getTombstonesSince(key, since);
+      const total = categories.length + lists.length + items.length + assets.length + tombstones.length;
+      if (total > 0) {
+        console.log(`[sync] ${ts()} ${keyTag(key)} pull since=${since} → cat=${categories.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
+      }
+      ws.send(JSON.stringify({ type: "snapshot", categories, lists, items, assets, tombstones, server_time: Date.now() }));
       return;
     }
 
@@ -154,13 +161,20 @@ wss.on("connection", (ws: WebSocket) => {
       if (!entityId || !deletedAt) return;
       if (applyTombstone(entityType, entityId, deletedAt, key)) {
         broadcast(key, ws, { type: "deleted", entity_type: entityType, entity_id: entityId, deleted_at: deletedAt });
+        console.log(`[sync] ${ts()} ${keyTag(key)} delete ${entityType} id=${entityId}`);
       }
       return;
     }
   });
 
-  ws.on("close", () => { if (syncKey) rooms.get(syncKey)?.delete(ws); });
-  ws.on("error", (err: Error) => console.error("WS error:", err.message));
+  ws.on("close", () => {
+    if (syncKey) {
+      rooms.get(syncKey)?.delete(ws);
+      const secs = Math.round((Date.now() - connectedAt) / 1000);
+      console.log(`[ws] ${ts()} ${keyTag(syncKey)} disconnect after=${secs}s room=${rooms.get(syncKey)?.size ?? 0}`);
+    }
+  });
+  ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKey ? keyTag(syncKey) : "[?]"} error: ${err.message}`));
 });
 
 // Listen on all interfaces so phone can reach it over LAN
