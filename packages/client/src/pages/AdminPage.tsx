@@ -2,6 +2,7 @@ import { type Component, For, Show, createSignal, createEffect, onCleanup } from
 import { useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { db, type SyncConfig, type SyncEndpoint } from "../db/database.js";
+import { syncClient } from "../sync/SyncClient.js";
 import { endpointStatuses } from "../store/endpointStatuses.js";
 import type { EndpointStatus } from "../store/endpointStatuses.js";
 
@@ -128,6 +129,9 @@ const AdminPage: Component = () => {
               <div class="field-hint">Identifies this device. Assigned automatically.</div>
             </div>
           </Show>
+          <button class="btn" type="button" onClick={() => syncClient.forceFullSync()}>
+            Refresh from server
+          </button>
         </div>
 
         <div class="admin-section">

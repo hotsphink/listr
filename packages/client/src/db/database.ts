@@ -8,6 +8,7 @@ export interface SyncConfig {
   client_id: string;
   enabled: boolean;
   last_sync_at: number;
+  last_sync_key?: string;
 }
 
 export interface SyncEndpoint {

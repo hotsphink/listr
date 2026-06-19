@@ -206,6 +206,11 @@ class SyncClient {
     this.applyEndpoints(endpoints);
   }
 
+  async forceFullSync(): Promise<void> {
+    await db.sync_config.update("default", { last_sync_at: 0, last_sync_key: "" });
+    for (const conn of this.connections.values()) conn.resetAndReconnect();
+  }
+
   pushEntity(entityType: EntityType, data: unknown): void {
     const msg = { type: "push_entity", entity_type: entityType, data };
     for (const send of this.senders.values()) send(msg);
@@ -328,7 +333,7 @@ class SyncClient {
 
   private async doInitialSync(send: (msg: unknown) => void): Promise<void> {
     const config = await db.sync_config.get("default");
-    const since = config?.last_sync_at ?? 0;
+    const since = config?.last_sync_key === this.key ? (config?.last_sync_at ?? 0) : 0;
 
     const [cats, lists, items, assets] = await Promise.all([
       db.categories.where("updated_at").above(since).toArray(),
@@ -370,7 +375,7 @@ class SyncClient {
       await this.applyTombstone(t.entity_type, t.entity_id, t.deleted_at);
     }
     if (msg.server_time) {
-      await db.sync_config.update("default", { last_sync_at: msg.server_time });
+      await db.sync_config.update("default", { last_sync_at: msg.server_time, last_sync_key: this.key });
     }
   }
 
