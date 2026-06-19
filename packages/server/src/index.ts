@@ -35,11 +35,20 @@ async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<
   res.end(JSON.stringify(result));
 }
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+const ALLOWED_ORIGINS = new Set([
+  "https://hotsphink.github.io",
+  "https://finkripper.heron-moth.ts.net:10000",
+  "http://localhost:3000",
+  "https://localhost:3000",
+]);
+
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers.origin ?? "";
+  res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGINS.has(origin) ? origin : "");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Vary", "Origin");
+}
 
 const httpServer = createServer(
   {
@@ -47,7 +56,7 @@ const httpServer = createServer(
     cert: readFileSync(join(CERT_DIR, "tailscale.crt")),
   },
   (req, res) => {
-    Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
+    setCorsHeaders(req, res);
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
     if (req.method === "GET" && req.url === "/api/models") {
       if (!config.gemini) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "No API key" })); return; }
