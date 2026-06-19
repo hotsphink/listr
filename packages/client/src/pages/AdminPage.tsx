@@ -128,7 +128,7 @@ const AdminPage: Component = () => {
                 <button class="btn btn-primary" type="button" onClick={saveKey}>Save</button>
               </Show>
             </div>
-            <div class="field-hint">All devices with the same sync key share data!</div>
+            <div class="field-hint">All devices with the same sync key share data.</div>
           </div>
           <Show when={clientId()}>
             <div class="admin-field">

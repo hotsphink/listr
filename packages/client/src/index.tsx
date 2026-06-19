@@ -3,7 +3,13 @@ import App from "./App.js";
 import "./styles.css";
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register(import.meta.env.BASE_URL + "sw.js");
+  if (import.meta.env.PROD) {
+    navigator.serviceWorker.register(import.meta.env.BASE_URL + "sw.js");
+  } else {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      for (const reg of regs) reg.unregister();
+    });
+  }
 }
 
 const root = document.getElementById("root");
