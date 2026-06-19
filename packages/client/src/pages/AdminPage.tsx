@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { db, type SyncConfig, type SyncEndpoint } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
+import { syncStatus } from "../sync/syncStore.js";
 import { endpointStatuses } from "../store/endpointStatuses.js";
 import type { EndpointStatus } from "../store/endpointStatuses.js";
 
@@ -91,6 +92,12 @@ const AdminPage: Component = () => {
 
   const statuses = endpointStatuses;
   const clientId = () => config()?.client_id ?? "";
+  const connectedServerId = () => {
+    for (const s of Object.values(statuses())) {
+      if (s?.phase === "ready" && s.serverId) return shortId(s.serverId);
+    }
+    return null;
+  };
 
   return (
     <div class="main admin-page">
@@ -129,9 +136,14 @@ const AdminPage: Component = () => {
               <div class="field-hint">Identifies this device. Assigned automatically.</div>
             </div>
           </Show>
-          <button class="btn" type="button" onClick={() => syncClient.forceFullSync()}>
-            Refresh from server
-          </button>
+          <div class="admin-input-row">
+            <button class="btn" type="button" disabled={syncStatus() !== "connected"} onClick={() => syncClient.forceFullSync()}>
+              Refresh from server
+            </button>
+            <Show when={connectedServerId()}>
+              <span class="field-hint">server id {connectedServerId()}</span>
+            </Show>
+          </div>
         </div>
 
         <div class="admin-section">
@@ -147,11 +159,12 @@ const AdminPage: Component = () => {
               const httpsUrl = () => `${ep.secure ? "https" : "http"}://${ep.host || "…"}:${ep.port}`;
               const connectedId = () => status()?.serverId ?? ep.last_server_id;
               return (
-                <div class="endpoint-card">
+                <div class="endpoint-card" style={`border-color: ${PHASE_COLORS[phase()]}`}>
                   <div class="endpoint-header">
                     <input
                       type="checkbox"
                       checked={ep.enabled}
+                      style={`accent-color: ${PHASE_COLORS[phase()]}`}
                       onChange={(e) => updateEndpoint(ep.id, { enabled: e.currentTarget.checked })}
                     />
                     <input
