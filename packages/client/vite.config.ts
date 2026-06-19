@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       host: true,
       https,
+      hmr: https ? { protocol: "wss" } : true,
     },
     build: {
       target: "esnext",

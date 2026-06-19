@@ -1,5 +1,5 @@
-import { type Component, createSignal, createEffect, onMount, Show, onCleanup } from "solid-js";
-import { HashRouter, Route, useNavigate } from "@solidjs/router";
+import { type Component, createEffect, onMount, Show, onCleanup } from "solid-js";
+import { HashRouter, Route, useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import Sidebar from "./components/Sidebar.js";
@@ -10,9 +10,10 @@ import { db } from "./db/database.js";
 import { syncClient } from "./sync/SyncClient.js";
 import { initAssetStore } from "./sync/assetStore.js";
 import { selectionMode } from "./store/selectionMode.js";
+import { sidebarOpen, setSidebarOpen } from "./store/sidebarStore.js";
 
 const Layout: Component<{ children?: any }> = (props) => {
-  const [sidebarOpen, setSidebarOpen] = createSignal(false);
+  const location = useLocation();
   const close = () => setSidebarOpen(false);
 
   onMount(async () => {
@@ -50,7 +51,7 @@ const Layout: Component<{ children?: any }> = (props) => {
       />
       <Sidebar open={sidebarOpen()} onClose={close} />
       <div class="app-body">
-        <Show when={!selectionMode()}>
+        <Show when={!selectionMode() && location.pathname !== "/admin"}>
           <button class="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
             ☰
           </button>

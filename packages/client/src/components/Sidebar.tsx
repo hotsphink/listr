@@ -41,13 +41,6 @@ const Sidebar: Component<Props> = (props) => {
   const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
-  // Auto-close sidebar on mobile when navigating
-  createEffect(() => {
-    // Access location.pathname to track navigation changes
-    void location.pathname;
-    props.onClose?.();
-  });
-
   const listsForCategory = (catId: string) =>
     (lists() ?? []).filter((l) => l.category_id === catId);
 
@@ -74,7 +67,7 @@ const Sidebar: Component<Props> = (props) => {
       const cat = (categories() ?? []).find((c) => c.id === list.category_id);
       return [
         { label: "Rename", action: () => setRenamingId(list.id) },
-        { label: "Configure", action: () => { setSelectedListIds(new Set([list.id])); navigate(`/category/${list.category_id}`, { state: { openSettings: list.id } }); } },
+        { label: "Configure", action: () => { setSelectedListIds(new Set([list.id])); props.onClose?.(); navigate(`/category/${list.category_id}`, { state: { openSettings: list.id } }); } },
         { label: "Import", action: () => cat && setImportScope({
             type: "list",
             id: list.id,
@@ -111,6 +104,7 @@ const Sidebar: Component<Props> = (props) => {
             : `Delete category "${cat.name}"?`;
           if (!confirm(msg)) return;
           await deleteCategory(cat.id);
+          props.onClose?.();
           navigate("/");
         }},
       ];
@@ -169,6 +163,7 @@ const Sidebar: Component<Props> = (props) => {
     } else {
       setSelectedListIds(new Set([list.id]));
     }
+    props.onClose?.();
     navigate(`/category/${list.category_id}`);
   };
 
@@ -186,6 +181,7 @@ const Sidebar: Component<Props> = (props) => {
     const list = await createList("New List", catId);
     setRenamingId(list.id);
     setSelectedListIds(new Set([list.id]));
+    props.onClose?.();
     navigate(`/category/${catId}`);
   };
 
@@ -194,7 +190,7 @@ const Sidebar: Component<Props> = (props) => {
       <div
         class="sidebar-header"
         style="cursor: pointer"
-        onClick={() => navigate("/")}
+        onClick={() => { props.onClose?.(); navigate("/"); }}
       >
         Listr
       </div>
@@ -211,7 +207,7 @@ const Sidebar: Component<Props> = (props) => {
                       class="sidebar-category-header"
                       classList={{ expanded: isExpanded() }}
                       style={`border-left: 3px solid ${cat.color}`}
-                      onClick={() => { setSelectedListIds(new Set<string>()); navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
+                      onClick={() => { setSelectedListIds(new Set<string>()); props.onClose?.(); navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
                       onContextMenu={(e) => handleContextMenu(e, { kind: "category", category: cat })}
                     >
                       <span class="sidebar-category-chevron">{isExpanded() ? "▾" : "▸"}</span>
@@ -286,7 +282,7 @@ const Sidebar: Component<Props> = (props) => {
         </div>
       </div>
       <div class="sidebar-footer">
-        <div class="sidebar-sync-btn" onClick={() => navigate("/admin")}>
+        <div class="sidebar-sync-btn" onClick={() => { props.onClose?.(); navigate("/admin"); }}>
           <span
             class="sync-dot"
             style={`background: ${syncStatus() === "connected" ? "var(--success)" : syncStatus() === "connecting" ? "#f0a500" : syncStatus() === "error" ? "var(--danger)" : "var(--text-dim)"}`}

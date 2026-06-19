@@ -6,6 +6,7 @@ import { syncClient } from "../sync/SyncClient.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { endpointStatuses } from "../store/endpointStatuses.js";
 import type { EndpointStatus } from "../store/endpointStatuses.js";
+import { setSidebarOpen } from "../store/sidebarStore.js";
 
 const PHASE_LABELS: Record<string, string> = {
   disabled: "Disabled",
@@ -74,7 +75,7 @@ const AdminPage: Component = () => {
     await db.sync_endpoints.add({
       id: crypto.randomUUID(),
       host: "",
-      port: 10000,
+      port: 443,
       enabled: true,
       secure: true,
       last_server_id: null,
@@ -102,7 +103,7 @@ const AdminPage: Component = () => {
   return (
     <div class="main admin-page">
       <div class="page-header">
-        <button class="admin-back-btn" type="button" onClick={() => navigate(-1)} aria-label="Back">
+        <button class="admin-back-btn" type="button" onClick={() => { setSidebarOpen(true); navigate(-1); }} aria-label="Back">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
@@ -127,7 +128,7 @@ const AdminPage: Component = () => {
                 <button class="btn btn-primary" type="button" onClick={saveKey}>Save</button>
               </Show>
             </div>
-            <div class="field-hint">All devices with the same sync key share data.</div>
+            <div class="field-hint">All devices with the same sync key share data!</div>
           </div>
           <Show when={clientId()}>
             <div class="admin-field">
@@ -179,10 +180,10 @@ const AdminPage: Component = () => {
                       class="input endpoint-port"
                       type="number"
                       value={ep.port}
-                      placeholder="10000"
+                      placeholder="port"
                       onBlur={(e) => {
                         const n = parseInt(e.currentTarget.value);
-                        updateEndpoint(ep.id, { port: isNaN(n) ? 10000 : n });
+                        updateEndpoint(ep.id, { port: isNaN(n) ? 443 : n });
                       }}
                     />
                     <label class="endpoint-tls-label">
