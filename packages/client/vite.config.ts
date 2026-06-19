@@ -1,21 +1,28 @@
 import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 
-export default defineConfig({
-  plugins: [solidPlugin()],
-  server: {
-    port: 3000,
-    host: true,
-    https: {
-      key: readFileSync(new URL("../../certs/tailscale.key", import.meta.url)),
-      cert: readFileSync(new URL("../../certs/tailscale.crt", import.meta.url)),
+const certKey = new URL("../../certs/tailscale.key", import.meta.url);
+const certCrt = new URL("../../certs/tailscale.crt", import.meta.url);
+
+export default defineConfig(({ mode }) => {
+  const https = existsSync(certKey)
+    ? { key: readFileSync(certKey), cert: readFileSync(certCrt) }
+    : undefined;
+
+  return {
+    base: mode === "production" ? "/listr/" : "/",
+    plugins: [solidPlugin()],
+    server: {
+      port: 3000,
+      host: true,
+      https,
     },
-  },
-  build: {
-    target: "esnext",
-  },
-  resolve: {
-    conditions: ["development", "browser"],
-  },
+    build: {
+      target: "esnext",
+    },
+    resolve: {
+      conditions: ["development", "browser"],
+    },
+  };
 });

@@ -6,6 +6,7 @@
     "build": "pnpm --filter @listr/client build",
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter @listr/client test:e2e",
+    "deploy": "pnpm build && cp -r packages/client/dist/. ../listr-pages/",
     "preinstall": "npx only-allow pnpm"
   }
 }
