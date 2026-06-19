@@ -497,12 +497,17 @@ const ListView: Component = () => {
                       >
                         <span class="multi-list-column-name">{list.name}</span>
                         <span class="multi-list-column-count">{items().length}</span>
+                        <button
+                          class="multi-list-add-btn"
+                          type="button"
+                          aria-label="Add item"
+                          onClick={(e) => { e.stopPropagation(); setPrependToList(true); setAddingToList(list.id); }}
+                        >+</button>
                       </div>
 
                       <Switch>
                         <Match when={appViewMode() === "list"}>
-                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
-                            <li class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</li>
+                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
                             <For each={items()}>
                               {(item) => (
                                 <li
@@ -528,7 +533,6 @@ const ListView: Component = () => {
 
                         <Match when={appViewMode() === "table"}>
                           <div class="table-container">
-                            <div class="view-add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</div>
                             <table>
                               <thead>
                                 <tr>
@@ -573,8 +577,7 @@ const ListView: Component = () => {
 
                         <Match when={appViewMode() === "card"}>
                           <div class="card-container">
-                            <div class="card-grid" data-list-id={list.id} data-index-offset="1" ref={(el) => useSortable(el, allItemsForList, { indexOffset: 1, group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
-                              <div class="card add" onClick={() => { setPrependToList(true); setAddingToList(list.id); }}>+ Add Item</div>
+                            <div class="card-grid" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
                               <For each={items()}>
                                 {(item) => (
                                   <div

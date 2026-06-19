@@ -1189,6 +1189,30 @@ tr.selected td,
   flex-shrink: 0;
 }
 
+.multi-list-add-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+}
+.multi-list-column-header:hover .multi-list-add-btn {
+  opacity: 1;
+}
+.multi-list-add-btn:hover {
+  color: var(--text);
+}
+@media (hover: none) {
+  .multi-list-add-btn {
+    opacity: 1;
+  }
+}
+
 .multi-list-items {
   flex: 1;
   overflow-y: auto;
