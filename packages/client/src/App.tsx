@@ -1,5 +1,5 @@
 import { type Component, createSignal, createEffect, onMount, Show, onCleanup } from "solid-js";
-import { Router, Route, useNavigate } from "@solidjs/router";
+import { HashRouter, Route, useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import Sidebar from "./components/Sidebar.js";
@@ -82,12 +82,12 @@ const Home: Component = () => {
 };
 
 const App: Component = () => (
-  <Router root={Layout}>
+  <HashRouter root={Layout}>
     <Route path="/" component={Home} />
     <Route path="/category/:id" component={ListView} />
     <Route path="/admin" component={AdminPage} />
     <Route path="/test" component={TestRunner} />
-  </Router>
+  </HashRouter>
 );
 
 export default App;
