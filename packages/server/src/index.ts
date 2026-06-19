@@ -1,4 +1,5 @@
-import { createServer } from "node:https";
+import { createServer as createHttpsServer } from "node:https";
+import { createServer as createHttpServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
@@ -9,7 +10,7 @@ import type { EntityType } from "./db.js";
 import { config } from "./config.js";
 import { extractFromImage } from "./gemini.js";
 
-const PORT = 10_000;
+const PORT = config.port ?? 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
 const SERVER_ID = getServerId();
 
@@ -50,12 +51,7 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader("Vary", "Origin");
 }
 
-const httpServer = createServer(
-  {
-    key: readFileSync(join(CERT_DIR, "tailscale.key")),
-    cert: readFileSync(join(CERT_DIR, "tailscale.crt")),
-  },
-  (req, res) => {
+const handler = (req: IncomingMessage, res: ServerResponse) => {
     setCorsHeaders(req, res);
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
     if (req.method === "GET" && req.url === "/api/models") {
@@ -75,10 +71,19 @@ const httpServer = createServer(
       });
       return;
     }
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Listr sync server running\n");
-  },
-);
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Listr sync server running\n");
+};
+
+const httpServer = config.tls === false
+  ? createHttpServer(handler)
+  : createHttpsServer(
+      {
+        key: readFileSync(join(CERT_DIR, "tailscale.key")),
+        cert: readFileSync(join(CERT_DIR, "tailscale.crt")),
+      },
+      handler,
+    );
 
 const wss = new WebSocketServer({ server: httpServer });
 
@@ -86,7 +91,7 @@ const wss = new WebSocketServer({ server: httpServer });
 const rooms = new Map<string, Set<WebSocket>>();
 
 const ts = () => new Date().toISOString();
-const keyTag = (k: string) => `K${k.slice(0, 8)}`;
+const keyTag = (k: string) => `[${k.slice(0, 8)}]`;
 
 function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
   const room = rooms.get(syncKey);
@@ -100,6 +105,7 @@ function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
 wss.on("connection", (ws: WebSocket) => {
   let syncKey: string | null = null;
   let connectedAt = 0;
+  const pushCounts: Partial<Record<string, number>> = {};
 
   ws.on("message", (raw: Buffer) => {
     let msg: any;
@@ -136,10 +142,9 @@ wss.on("connection", (ws: WebSocket) => {
       const items = getEntitiesSince("item", key, since);
       const assets = getEntitiesSince("asset", key, since);
       const tombstones = getTombstonesSince(key, since);
-      const total = categories.length + lists.length + items.length + assets.length + tombstones.length;
-      if (total > 0) {
-        console.log(`[sync] ${ts()} ${keyTag(key)} pull since=${since} → cat=${categories.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
-      }
+      const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
+      for (const k of Object.keys(pushCounts)) delete pushCounts[k];
+      console.log(`[sync] ${ts()} ${keyTag(key)} pull since=${since}${pushed ? ` pushed: ${pushed}` : ""} → cat=${categories.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
       ws.send(JSON.stringify({ type: "snapshot", categories, lists, items, assets, tombstones, server_time: Date.now() }));
       return;
     }
@@ -148,9 +153,9 @@ wss.on("connection", (ws: WebSocket) => {
       const entityType = msg.entity_type as EntityType;
       const data = msg.data as Record<string, unknown>;
       if (!data?.id) return;
-      if (upsertEntity(entityType, data, key)) {
-        broadcast(key, ws, { type: "entity", entity_type: entityType, data });
-      }
+      const accepted = upsertEntity(entityType, data, key);
+      if (accepted) broadcast(key, ws, { type: "entity", entity_type: entityType, data });
+      pushCounts[entityType] = (pushCounts[entityType] ?? 0) + 1;
       return;
     }
 
@@ -177,8 +182,8 @@ wss.on("connection", (ws: WebSocket) => {
   ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKey ? keyTag(syncKey) : "[?]"} error: ${err.message}`));
 });
 
-// Listen on all interfaces so phone can reach it over LAN
+const proto = config.tls === false ? "ws" : "wss";
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Listr sync server on port ${PORT}`);
-  console.log(`WSS: wss://finkripper.heron-moth.ts.net:${PORT}`);
+  console.log(`Listr sync server on port ${PORT} (${config.tls === false ? "http" : "https"})`);
+  console.log(`${proto.toUpperCase()}: ${proto}://finkripper.heron-moth.ts.net:${PORT}`);
 });

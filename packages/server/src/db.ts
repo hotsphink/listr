@@ -2,8 +2,9 @@ import Database from "better-sqlite3";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { config } from "./config.js";
 
-const dataDir = join(process.cwd(), "data");
+const dataDir = config.db_path ?? join(process.cwd(), "data");
 mkdirSync(dataDir, { recursive: true });
 
 const sql = new Database(join(dataDir, "listr.db"));
