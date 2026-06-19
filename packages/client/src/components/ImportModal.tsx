@@ -2,6 +2,8 @@ import { type Component, createSignal, Show, For, createMemo, onMount, onCleanup
 import type { AttributeDefinition } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createCategory, createList, bulkCreateItems } from "../db/operations.js";
+import { isNativeExport, previewNativeImport, applyNativeImport } from "../db/exportImport.js";
+import type { NativeExport, ImportStats } from "../db/exportImport.js";
 import Modal from "./Modal.js";
 
 export type ImportScope =
@@ -51,13 +53,11 @@ async function fetchExtraction(imageBase64: string, mimeType: string, scope: Imp
 }
 
 async function buildPreview(extracted: ImportedCategory[], scope: ImportScope): Promise<PreviewCategory[]> {
-  console.log("[import] buildPreview: querying DB...");
   const [allCats, allLists, allItems] = await Promise.all([
     db.categories.toArray(),
     db.lists.toArray(),
     db.items.toArray(),
   ]);
-  console.log("[import] buildPreview: DB query done", allCats.length, "cats", allLists.length, "lists", allItems.length, "items");
 
   if (scope.type === "list") {
     const existingTitles = new Set(
@@ -78,7 +78,6 @@ async function buildPreview(extracted: ImportedCategory[], scope: ImportScope): 
 
   return extracted.map((cat) => {
     const existingCat = allCats.find((c) => c.name.toLowerCase() === cat.name.toLowerCase());
-    const catListIds = new Set(allLists.filter((l) => l.category_id === existingCat?.id).map((l) => l.id));
     const catLists = allLists.filter((l) => l.category_id === existingCat?.id);
 
     const lists = cat.lists.map((list) => {
@@ -141,24 +140,42 @@ function fileToBase64(file: File): Promise<string> {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      resolve(result.split(",")[1]); // strip data URL prefix
+      resolve(result.split(",")[1]);
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
+function statsLabel(stats: ImportStats): string {
+  const parts: string[] = [];
+  const fmt = (n: { created: number; updated: number; deleted: number }, label: string) => {
+    if (n.created + n.updated + n.deleted === 0) return;
+    const pieces = [];
+    if (n.updated > 0) pieces.push(`${n.updated} updated`);
+    if (n.created > 0) pieces.push(`${n.created} new`);
+    if (n.deleted > 0) pieces.push(`${n.deleted} deleted`);
+    parts.push(`${label}: ${pieces.join(", ")}`);
+  };
+  fmt(stats.categories, "categories");
+  fmt(stats.lists, "lists");
+  fmt(stats.items, "items");
+  return parts.length ? parts.join(" · ") : "nothing to change";
+}
+
 const ImportModal: Component<Props> = (props) => {
-  type Phase = "idle" | "extracting" | "preview" | "importing" | "done";
+  type Phase = "idle" | "extracting" | "preview" | "native_preview" | "importing" | "done";
   const [phase, setPhase] = createSignal<Phase>("idle");
   const [error, setError] = createSignal<string | null>(null);
   const [preview, setPreview] = createSignal<PreviewCategory[]>([]);
   const [importedCount, setImportedCount] = createSignal(0);
   const [dragging, setDragging] = createSignal(false);
+  const [nativeDoc, setNativeDoc] = createSignal<NativeExport | null>(null);
+  const [nativeStats, setNativeStats] = createSignal<ImportStats | null>(null);
+  const [nativeResult, setNativeResult] = createSignal<ImportStats | null>(null);
 
   let fileInputRef!: HTMLInputElement;
 
-  // Capture paste anywhere while modal is open and idle
   onMount(() => {
     const onPaste = (e: ClipboardEvent) => {
       if (phase() !== "idle") return;
@@ -172,27 +189,51 @@ const ImportModal: Component<Props> = (props) => {
   const totalNew = createMemo(() => preview().flatMap((c) => c.lists).reduce((s, l) => s + l.newCount, 0));
   const totalSkip = createMemo(() => preview().flatMap((c) => c.lists.flatMap((l) => l.items)).filter((i) => i.skip).length);
 
-  const reset = () => { setPhase("idle"); setError(null); setPreview([]); };
+  const reset = () => {
+    setPhase("idle");
+    setError(null);
+    setPreview([]);
+    setNativeDoc(null);
+    setNativeStats(null);
+    setNativeResult(null);
+  };
 
   const handleClose = () => { reset(); props.onClose(); };
 
-  const processFile = async (file: File) => {
-    if (!file.type.startsWith("image/")) { setError("Please select an image file."); return; }
+  const processNativeJson = async (file: File) => {
     setError(null);
     setPhase("extracting");
     try {
-      console.log("[import] fileToBase64 start");
+      const text = await file.text();
+      const obj = JSON.parse(text);
+      if (!isNativeExport(obj)) {
+        setError("Not a Listr export file (missing listr_export marker).");
+        setPhase("idle");
+        return;
+      }
+      const stats = await previewNativeImport(obj);
+      setNativeDoc(obj);
+      setNativeStats(stats);
+      setPhase("native_preview");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPhase("idle");
+    }
+  };
+
+  const processFile = async (file: File) => {
+    const isJson = file.type === "application/json" || file.name.endsWith(".json");
+    if (isJson) { await processNativeJson(file); return; }
+    if (!file.type.startsWith("image/")) { setError("Please select an image or JSON export file."); return; }
+    setError(null);
+    setPhase("extracting");
+    try {
       const base64 = await fileToBase64(file);
-      console.log("[import] fetchExtraction start");
       const extracted = await fetchExtraction(base64, file.type, props.scope);
-      console.log("[import] fetchExtraction done, categories:", extracted.length);
       const prev = await buildPreview(extracted, props.scope);
-      console.log("[import] buildPreview done, preview categories:", prev.length);
       setPreview(prev);
       setPhase("preview");
-      console.log("[import] phase set to preview");
     } catch (e) {
-      console.error("[import] error:", e);
       setError(e instanceof Error ? e.message : String(e));
       setPhase("idle");
     }
@@ -210,17 +251,26 @@ const ImportModal: Component<Props> = (props) => {
     }
   };
 
+  const handleNativeConfirm = async () => {
+    const doc = nativeDoc();
+    if (!doc) return;
+    setPhase("importing");
+    try {
+      const result = await applyNativeImport(doc);
+      setNativeResult(result);
+      setPhase("done");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPhase("native_preview");
+    }
+  };
+
   const handleDrop = async (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragging(false);
     const file = e.dataTransfer?.files[0];
     if (file) await processFile(file);
-  };
-
-  const handlePaste = async (e: ClipboardEvent) => {
-    const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
-    if (file) { e.preventDefault(); await processFile(file); }
   };
 
   const scopeLabel = () =>
@@ -230,11 +280,11 @@ const ImportModal: Component<Props> = (props) => {
 
   return (
     <Modal open={props.open} onClose={handleClose}>
-      <h2>Import from Screenshot</h2>
+      <h2>Import</h2>
 
       <Show when={phase() === "idle" || phase() === "extracting"}>
         <p class="field-hint" style="margin-bottom: 12px">
-          Upload a Trello board screenshot to import {scopeLabel()}.
+          Drop a screenshot to extract with AI {scopeLabel()}, or drop a Listr JSON export to apply directly.
         </p>
         <div
           class="import-dropzone"
@@ -247,17 +297,17 @@ const ImportModal: Component<Props> = (props) => {
           <Show when={phase() === "extracting"} fallback={
             <div class="import-dropzone-hint">
               <div style="font-size: 2em; margin-bottom: 8px">📷</div>
-              <div>Drop or paste screenshot, or click to select</div>
-              <div class="field-hint" style="margin-top: 4px">PNG, JPG, WebP &mdash; Ctrl+V works too</div>
+              <div>Drop screenshot, paste, or click to select</div>
+              <div class="field-hint" style="margin-top: 4px">Image: AI extraction &nbsp;·&nbsp; JSON: direct apply</div>
             </div>
           }>
             <div class="import-dropzone-hint">
               <div style="font-size: 1.5em; margin-bottom: 8px">⏳</div>
-              <div>Extracting with Gemini...</div>
+              <div>Processing...</div>
             </div>
           </Show>
         </div>
-        <input ref={fileInputRef} type="file" accept="image/*" style="display:none"
+        <input ref={fileInputRef} type="file" accept="image/*,.json" style="display:none"
           onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) processFile(f); e.currentTarget.value = ""; }} />
         <Show when={error()}>
           {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
@@ -265,6 +315,40 @@ const ImportModal: Component<Props> = (props) => {
         <div class="modal-actions">
           <button class="btn-ghost" onClick={handleClose}>Cancel</button>
         </div>
+      </Show>
+
+      <Show when={phase() === "native_preview"}>
+        {() => {
+          const stats = nativeStats();
+          return (
+            <>
+              <p class="field-hint" style="margin-bottom: 16px">
+                Applying this export will upsert entities by ID. Items not in the export are left untouched.
+              </p>
+              <Show when={stats}>
+                {(s) => (
+                  <table class="import-native-stats">
+                    <thead>
+                      <tr><th></th><th>update</th><th>create</th><th>delete</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr><td>Categories</td><td>{s().categories.updated}</td><td>{s().categories.created}</td><td>{s().categories.deleted}</td></tr>
+                      <tr><td>Lists</td><td>{s().lists.updated}</td><td>{s().lists.created}</td><td>{s().lists.deleted}</td></tr>
+                      <tr><td>Items</td><td>{s().items.updated}</td><td>{s().items.created}</td><td>{s().items.deleted}</td></tr>
+                    </tbody>
+                  </table>
+                )}
+              </Show>
+              <Show when={error()}>
+                {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
+              </Show>
+              <div class="modal-actions">
+                <button class="btn-ghost" onClick={reset}>Back</button>
+                <button class="btn-primary" onClick={handleNativeConfirm}>Apply</button>
+              </div>
+            </>
+          );
+        }}
       </Show>
 
       <Show when={phase() === "preview" || phase() === "importing"}>
@@ -333,7 +417,11 @@ const ImportModal: Component<Props> = (props) => {
       <Show when={phase() === "done"}>
         <div style="text-align: center; padding: 24px 0">
           <div style="font-size: 2em; margin-bottom: 8px">✓</div>
-          <div>Imported {importedCount()} item{importedCount() !== 1 ? "s" : ""} successfully.</div>
+          <Show when={nativeResult()} fallback={
+            <div>Imported {importedCount()} item{importedCount() !== 1 ? "s" : ""} successfully.</div>
+          }>
+            {(r) => <div>{statsLabel(r())}</div>}
+          </Show>
         </div>
         <div class="modal-actions">
           <button class="btn-primary" onClick={handleClose}>Done</button>

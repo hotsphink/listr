@@ -10,6 +10,20 @@ import CategoryFormModal from "./CategoryFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
+import { exportAllData, exportCategory, exportList } from "../db/exportImport.js";
+import type { NativeExport } from "../db/exportImport.js";
+
+function triggerDownload(data: NativeExport, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 interface Props {
   open?: boolean;
@@ -77,6 +91,12 @@ const Sidebar: Component<Props> = (props) => {
             macros: cat.macros ?? {},
           })
         },
+        { label: "Export", action: async () => {
+            const data = await exportList(list.id);
+            const date = new Date().toISOString().slice(0, 10);
+            triggerDownload(data, `listr-list-${list.name}-${date}.json`);
+          }
+        },
         { label: "Delete", danger: true, action: async () => {
           if (!confirm(`Delete "${list.name}" and all its items?`)) return;
           await deleteList(list.id);
@@ -96,6 +116,12 @@ const Sidebar: Component<Props> = (props) => {
             format_string: cat.format_string,
             macros: cat.macros ?? {},
           })
+        },
+        { label: "Export", action: async () => {
+            const data = await exportCategory(cat.id);
+            const date = new Date().toISOString().slice(0, 10);
+            triggerDownload(data, `listr-category-${cat.name}-${date}.json`);
+          }
         },
         { label: "Delete", danger: true, action: async () => {
           const listCount = listsForCategory(cat.id).length;
@@ -273,6 +299,16 @@ const Sidebar: Component<Props> = (props) => {
           onClick={() => setShowCreateCategory(true)}
         >
           + New Category
+        </div>
+        <div
+          class="sidebar-item sidebar-new"
+          onClick={async () => {
+            const data = await exportAllData();
+            const date = new Date().toISOString().slice(0, 10);
+            triggerDownload(data, `listr-${date}.json`);
+          }}
+        >
+          ↑ Export
         </div>
         <div
           class="sidebar-item sidebar-new"

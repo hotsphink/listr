@@ -1366,6 +1366,30 @@ tr.selected td,
 }
 .text-muted { color: var(--text-muted); }
 
+.import-native-stats {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.import-native-stats th,
+.import-native-stats td {
+  padding: 6px 12px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+.import-native-stats td:first-child,
+.import-native-stats th:first-child {
+  text-align: left;
+  color: var(--text-muted);
+}
+.import-native-stats th {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
 /* Formatted text */
 .formatted-text img {
   height: 1.2em;
