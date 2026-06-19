@@ -39,7 +39,7 @@ export interface Category {
   updated_at: number;
 }
 
-export type ViewMode = "list" | "table" | "board" | "card";
+export type ViewMode = "list" | "table" | "card";
 
 export interface List {
   id: string;
