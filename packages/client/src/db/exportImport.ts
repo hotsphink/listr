@@ -199,39 +199,6 @@ export async function previewNativeImport(doc: NativeExport): Promise<ImportStat
   return stats;
 }
 
-async function reconcilePositions(
-  listIds: Set<string>,
-  categoryIds: Set<string>,
-  timestamp: number,
-  repositionedItemIds: string[],
-  repositionedListIds: string[],
-) {
-  for (const listId of listIds) {
-    const items = await db.items.where("list_id").equals(listId).sortBy("position");
-    const positions = items.map((i) => i.position);
-    if (new Set(positions).size < positions.length) {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].position !== i) {
-          await db.items.update(items[i].id, { position: i, updated_at: timestamp });
-          repositionedItemIds.push(items[i].id);
-        }
-      }
-    }
-  }
-  for (const catId of categoryIds) {
-    const lists = await db.lists.where("category_id").equals(catId).sortBy("position");
-    const positions = lists.map((l) => l.position);
-    if (new Set(positions).size < positions.length) {
-      for (let i = 0; i < lists.length; i++) {
-        if (lists[i].position !== i) {
-          await db.lists.update(lists[i].id, { position: i, updated_at: timestamp });
-          repositionedListIds.push(lists[i].id);
-        }
-      }
-    }
-  }
-}
-
 export async function applyNativeImport(doc: NativeExport): Promise<ImportStats> {
   const [catKeys, listKeys, itemKeys] = await Promise.all([
     db.categories.toCollection().primaryKeys() as Promise<string[]>,
@@ -253,8 +220,8 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
   const touchedCatIds: string[] = [];
   const touchedListIds: string[] = [];
   const touchedItemIds: string[] = [];
-  // Track where new entities were created so we can reconcile positions there.
-  const listsWithNewItems = new Set<string>();
+  const repositionedItemIds: string[] = [];
+  const repositionedListIds: string[] = [];
   const categoriesWithNewLists = new Set<string>();
 
   for (const cat of doc.categories) {
@@ -327,6 +294,8 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
       }
       touchedListIds.push(list.id);
 
+      // Process items, tracking the import's array order for non-deleted items.
+      const importedIds: string[] = [];
       for (const item of list.items ?? []) {
         if (item.deleted) {
           if (itemSet.has(item.id)) {
@@ -348,29 +317,51 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
             id: item.id,
             list_id: list.id,
             title: item.title,
-            position: item.position,
+            position: 0,
             attributes: item.attributes,
             created_at: timestamp,
             updated_at: timestamp,
           });
           stats.items.created++;
-          listsWithNewItems.add(list.id);
         }
+        importedIds.push(item.id);
         touchedItemIds.push(item.id);
+      }
+
+      // Assign final positions: imported items in their import array order, then
+      // any items not in the import in their existing relative order after them.
+      // This handles both consistent insertions and full reorderings uniformly.
+      const allItems = await db.items.where("list_id").equals(list.id).sortBy("position");
+      const importedIdSet = new Set(importedIds);
+      const nonImported = allItems.filter((i) => !importedIdSet.has(i.id));
+      const orderedIds = [...importedIds, ...nonImported.map((i) => i.id)];
+      const currentPositions = new Map(allItems.map((i) => [i.id, i.position]));
+      for (let i = 0; i < orderedIds.length; i++) {
+        if (currentPositions.get(orderedIds[i]) !== i) {
+          await db.items.update(orderedIds[i], { position: i, updated_at: timestamp });
+          if (!importedIdSet.has(orderedIds[i])) {
+            repositionedItemIds.push(orderedIds[i]);
+          }
+          // Imported items are already in touchedItemIds; bulkGet below fetches
+          // their final state including the updated position.
+        }
       }
     }
   }
 
-  // Renumber positions where new entities may have collided with existing ones.
-  const repositionedItemIds: string[] = [];
-  const repositionedListIds: string[] = [];
-  await reconcilePositions(
-    listsWithNewItems,
-    categoriesWithNewLists,
-    timestamp,
-    repositionedItemIds,
-    repositionedListIds,
-  );
+  // Dedup list positions where new lists were added to existing categories.
+  for (const catId of categoriesWithNewLists) {
+    const catLists = await db.lists.where("category_id").equals(catId).sortBy("position");
+    const positions = catLists.map((l) => l.position);
+    if (new Set(positions).size < positions.length) {
+      for (let i = 0; i < catLists.length; i++) {
+        if (catLists[i].position !== i) {
+          await db.lists.update(catLists[i].id, { position: i, updated_at: timestamp });
+          repositionedListIds.push(catLists[i].id);
+        }
+      }
+    }
+  }
 
   // Push all touched and repositioned entities to sync.
   const [updatedCats, updatedLists, updatedItems, reposLists, reposItems] = await Promise.all([
