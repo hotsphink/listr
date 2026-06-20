@@ -178,11 +178,11 @@ body {
   outline-offset: -1px;
 }
 
-.sidebar-category {
+.sidebar-board {
   margin-bottom: 2px;
 }
 
-.sidebar-category-header {
+.sidebar-board-header {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -196,18 +196,18 @@ body {
   user-select: none;
 }
 
-.sidebar-category-header:hover {
+.sidebar-board-header:hover {
   background: var(--bg-hover);
 }
 
-.sidebar-category-chevron {
+.sidebar-board-chevron {
   font-size: 10px;
   width: 12px;
   text-align: center;
   flex-shrink: 0;
 }
 
-.sidebar-category-count {
+.sidebar-board-count {
   margin-left: auto;
   font-size: 11px;
   font-weight: 400;
@@ -228,7 +228,7 @@ body {
   vertical-align: middle;
 }
 
-.sidebar-category-lists .sidebar-item {
+.sidebar-board-lists .sidebar-item {
   padding-left: 28px;
   font-size: 13px;
 }
@@ -241,7 +241,7 @@ body {
   color: var(--text-muted);
 }
 
-.sidebar-new.category {
+.sidebar-new.board {
   margin-top: 4px;
   font-size: 13px;
 }
@@ -257,7 +257,7 @@ body {
   outline: none;
 }
 
-/* (sidebar footer removed — new list/category are inline) */
+/* (sidebar footer removed — new list/board are inline) */
 
 .main {
   flex: 1;
@@ -566,11 +566,11 @@ tbody tr {
   margin-bottom: 12px;
 }
 
-.dashboard-category {
+.dashboard-board {
   margin-bottom: 24px;
 }
 
-.dashboard-category-header {
+.dashboard-board-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1263,7 +1263,7 @@ tbody tr {
   border-radius: var(--radius);
   font-size: 13px;
 }
-.import-preview-category {
+.import-preview-board {
   padding: 8px 10px 4px;
   font-weight: 600;
   font-size: 14px;

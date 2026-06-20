@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { clearDatabase, createCategory, createListInCategory } from "./helpers.js";
+import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 
 test.describe("custom attributes", () => {
   test.beforeEach(async ({ page }) => {
@@ -7,14 +7,14 @@ test.describe("custom attributes", () => {
   });
 
   test("create a list with a custom attribute, add an item, and verify display", async ({ page }) => {
-    // Create a category with attributes
-    await createCategory(page, "Movies", [
+    // Create a board with attributes
+    await createBoard(page, "Movies", [
       { key: "rating", label: "Rating", type: "number" },
       { key: "genre", label: "Genre" },
     ]);
 
-    // Create a list in that category
-    await createListInCategory(page, "My Movies", "Movies");
+    // Create a list in that board
+    await createListInBoard(page, "My Movies", "Movies");
     await expect(page.locator(".page-header h1")).toHaveText("My Movies");
 
     // Switch to table view to see attribute columns
@@ -47,10 +47,10 @@ test.describe("custom attributes", () => {
   });
 
   test("custom attribute appears in item edit modal", async ({ page }) => {
-    await createCategory(page, "Films", [
+    await createBoard(page, "Films", [
       { key: "director", label: "Director" },
     ]);
-    await createListInCategory(page, "My Films", "Films");
+    await createListInBoard(page, "My Films", "Films");
     await expect(page.locator(".page-header h1")).toHaveText("My Films");
 
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
@@ -70,11 +70,11 @@ test.describe("custom attributes", () => {
     await expect(directorInput).toHaveValue("Ridley Scott");
   });
 
-  test("category format string is used in list display", async ({ page }) => {
-    await createCategory(page, "Rated Movies", [
+  test("board format string is used in list display", async ({ page }) => {
+    await createBoard(page, "Rated Movies", [
       { key: "year", label: "Year", type: "number" },
     ], "{title} ({year})");
-    await createListInCategory(page, "Watchlist", "Rated Movies");
+    await createListInBoard(page, "Watchlist", "Rated Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Watchlist");
 
     // Default is list view — add an item
@@ -83,7 +83,7 @@ test.describe("custom attributes", () => {
     await page.locator(".modal .form-field").nth(1).locator("input").fill("1979");
     await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
 
-    // List view should show the formatted string from the category
+    // List view should show the formatted string from the board
     await expect(page.locator(".list-view-item").first()).toContainText("Alien (1979)");
   });
 });

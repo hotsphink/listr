@@ -15,7 +15,7 @@ sql.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS categories (
+  CREATE TABLE IF NOT EXISTS boards (
     id TEXT PRIMARY KEY,
     sync_key TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -46,7 +46,7 @@ sql.exec(`
     entity_id TEXT NOT NULL,
     deleted_at INTEGER NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS idx_categories ON categories(sync_key, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_boards ON boards(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_lists ON lists(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_items ON items(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_assets ON assets(sync_key, updated_at);
@@ -61,10 +61,10 @@ export function getServerId(): string {
   return id;
 }
 
-export type EntityType = "category" | "list" | "item" | "asset";
+export type EntityType = "board" | "list" | "item" | "asset";
 
 function tableFor(type: EntityType): string {
-  if (type === "category") return "categories";
+  if (type === "board") return "boards";
   if (type === "list") return "lists";
   if (type === "asset") return "assets";
   return "items";

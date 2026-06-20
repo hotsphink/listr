@@ -1,11 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { clearDatabase, createCategory, createListInCategory } from "./helpers.js";
+import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 
 test.describe("sidebar context menu", () => {
   test.beforeEach(async ({ page }) => {
     await clearDatabase(page);
-    await createCategory(page, "Movies");
-    await createListInCategory(page, "Watchlist", "Movies");
+    await createBoard(page, "Movies");
+    await createListInBoard(page, "Watchlist", "Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Watchlist");
   });
 
@@ -24,8 +24,8 @@ test.describe("sidebar context menu", () => {
     await expect(items.nth(3)).toHaveText("Delete");
   });
 
-  test("right-click category shows context menu", async ({ page }) => {
-    const catHeader = page.locator(".sidebar-category-header", { hasText: "Movies" });
+  test("right-click board shows context menu", async ({ page }) => {
+    const catHeader = page.locator(".sidebar-board-header", { hasText: "Movies" });
     await catHeader.click({ button: "right" });
 
     const menu = page.locator(".context-menu");
@@ -75,7 +75,7 @@ test.describe("sidebar context menu", () => {
   });
 
   test("delete removes the list", async ({ page }) => {
-    await createListInCategory(page, "Books", "Movies");
+    await createListInBoard(page, "Books", "Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Books");
 
     page.on("dialog", (dialog) => dialog.accept());

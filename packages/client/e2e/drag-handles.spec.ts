@@ -1,11 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { clearDatabase, createCategory, createListInCategory } from "./helpers.js";
+import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 
 test.describe("drag handles in list view", () => {
   test.beforeEach(async ({ page }) => {
     await clearDatabase(page);
-    await createCategory(page, "Movies");
-    await createListInCategory(page, "Watchlist", "Movies");
+    await createBoard(page, "Movies");
+    await createListInBoard(page, "Watchlist", "Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Watchlist");
 
     await page.locator(".view-add").last().click();
@@ -29,11 +29,11 @@ test.describe("drag handles in list view", () => {
   });
 });
 
-test.describe("list mode navigation back to category view", () => {
+test.describe("list mode navigation back to board view", () => {
   test.beforeEach(async ({ page }) => {
     await clearDatabase(page);
-    await createCategory(page, "Movies");
-    await createListInCategory(page, "Watchlist", "Movies");
+    await createBoard(page, "Movies");
+    await createListInBoard(page, "Watchlist", "Movies");
   });
 
   // Regression: after switching to table/card view, clicking "List" should show list mode content.
@@ -42,7 +42,7 @@ test.describe("list mode navigation back to category view", () => {
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
     await expect(page.locator("table")).toBeVisible();
 
-    // Click "List" — should switch back to list mode within CategoryView
+    // Click "List" — should switch back to list mode within ListView
     await page.locator(".view-switcher-btn", { hasText: "List" }).click();
     await expect(page.locator(".multi-list-view")).toBeVisible();
     await expect(page.locator("table")).toHaveCount(0);

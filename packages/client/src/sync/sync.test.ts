@@ -36,11 +36,11 @@ describe("applyIncomingEntity — view_mode isolation", () => {
   });
 });
 
-describe("applyIncomingEntity — categories and items", () => {
-  it("applies newer category normally", () => {
-    const incoming = { id: "c1", updated_at: 2000, name: "Movies" };
-    const existing = { id: "c1", updated_at: 1000, name: "Old" };
-    const result = applyIncomingEntity("category", incoming, existing);
+describe("applyIncomingEntity — boards and items", () => {
+  it("applies newer board normally", () => {
+    const incoming = { id: "b1", updated_at: 2000, name: "Movies" };
+    const existing = { id: "b1", updated_at: 1000, name: "Old" };
+    const result = applyIncomingEntity("board", incoming, existing);
     expect(result).toEqual(incoming);
   });
 

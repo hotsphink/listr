@@ -1,6 +1,6 @@
 import { type Component, For, createSignal, onMount } from "solid-js";
 import Dexie, { type EntityTable } from "dexie";
-import type { AttributeDefinition, Category, Item, List } from "@listr/shared";
+import type { AttributeDefinition, Board, Item, List } from "@listr/shared";
 import { renderFormatString } from "@listr/shared";
 
 interface TestResult {
@@ -12,15 +12,15 @@ interface TestResult {
 type TestFn = () => Promise<void>;
 
 class TestDB extends Dexie {
-  categories!: EntityTable<Category, "id">;
+  boards!: EntityTable<Board, "id">;
   lists!: EntityTable<List, "id">;
   items!: EntityTable<Item, "id">;
 
   constructor(name: string) {
     super(name);
     this.version(1).stores({
-      categories: "id, position",
-      lists: "id, category_id, position",
+      boards: "id, position",
+      lists: "id, board_id, position",
       items: "id, list_id, position, title",
     });
   }
@@ -49,12 +49,12 @@ function now(): number {
   return Date.now();
 }
 
-async function createTestCategory(
+async function createTestBoard(
   name: string,
   schema: AttributeDefinition[],
   formatString: string,
-): Promise<Category> {
-  const category: Category = {
+): Promise<Board> {
+  const board: Board = {
     id: id(),
     name,
     color: "#5b8def",
@@ -64,17 +64,17 @@ async function createTestCategory(
     created_at: now(),
     updated_at: now(),
   };
-  await testDb.categories.add(category);
-  return category;
+  await testDb.boards.add(board);
+  return board;
 }
 
 async function createTestList(
   name: string,
-  categoryId: string,
+  boardId: string,
 ): Promise<List> {
   const list: List = {
     id: id(),
-    category_id: categoryId,
+    board_id: boardId,
     name,
     icon: "",
     position: 0,
@@ -124,7 +124,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
         { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
         { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
       ];
-      const cat = await createTestCategory("Movies", schema, "{rating:stars} {title}{ ({duration:short})|}");
+      const cat = await createTestBoard("Movies", schema, "{rating:stars} {title}{ ({duration:short})|}");
       const list = await createTestList("Movies", cat.id);
       const item = await createTestItem(list, schema, "Inception", { rating: 4, duration: 148 });
 
@@ -134,7 +134,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       assertEqual(stored!.attributes.rating, 4);
       assertEqual(stored!.attributes.duration, 148);
 
-      const storedCat = await testDb.categories.get(cat.id);
+      const storedCat = await testDb.boards.get(cat.id);
       const display = renderFormatString(storedCat!.format_string, stored!, storedCat!.schema);
       assertEqual(display, "★★★★☆ Inception (2h28m)");
     },
@@ -145,7 +145,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
       ];
-      const cat = await createTestCategory("Sparse", schema, "{rating:stars} - {title}");
+      const cat = await createTestBoard("Sparse", schema, "{rating:stars} - {title}");
       const list = await createTestList("Sparse", cat.id);
       const item = await createTestItem(list, schema, "No Rating");
 
@@ -160,7 +160,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "status", label: "Status", type: "enum", required: false, options: ["to watch", "watching", "watched"], position: 0 },
       ];
-      const cat = await createTestCategory("Watch Status", schema, "{title} [{status:upper}]");
+      const cat = await createTestBoard("Watch Status", schema, "{title} [{status:upper}]");
       const list = await createTestList("Watch Status", cat.id);
       const item = await createTestItem(list, schema, "Dune", { status: "watching" });
 
@@ -176,7 +176,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
         { key: "genre", label: "Genre", type: "text", required: false, position: 0 },
         { key: "year", label: "Year", type: "number", required: false, position: 1 },
       ];
-      const cat = await createTestCategory("Conditionals", schema, "{title}{ ({year})|}{ - {genre}|}");
+      const cat = await createTestBoard("Conditionals", schema, "{title}{ ({year})|}{ - {genre}|}");
       const list = await createTestList("Conditionals", cat.id);
 
       const full = await createTestItem(list, schema, "Alien", { year: 1979, genre: "sci-fi" });
@@ -198,7 +198,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "status", label: "Status", type: "enum", required: false, options: ["backlog", "active", "done"], default_value: "backlog", position: 0 },
       ];
-      const cat = await createTestCategory("Defaults", schema, "{title} ({status})");
+      const cat = await createTestBoard("Defaults", schema, "{title} ({status})");
       const list = await createTestList("Defaults", cat.id);
       const item = await createTestItem(list, schema, "New Movie");
 
@@ -216,7 +216,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
           auto: { trigger: "on_create", source: "timestamp" },
         },
       ];
-      const cat = await createTestCategory("Auto", schema, "{title}");
+      const cat = await createTestBoard("Auto", schema, "{title}");
       const list = await createTestList("Auto", cat.id);
       const before = Date.now();
       const item = await createTestItem(list, schema, "Auto Item");
@@ -234,7 +234,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "tags", label: "Tags", type: "tags", required: false, options: ["classic", "must-see", "rewatchable"], position: 0 },
       ];
-      const cat = await createTestCategory("Tagged", schema, "{title}{ - {tags}|}");
+      const cat = await createTestBoard("Tagged", schema, "{title}{ - {tags}|}");
       const list = await createTestList("Tagged", cat.id);
       const item = await createTestItem(list, schema, "The Matrix", { tags: ["classic", "must-see"] });
 
@@ -245,7 +245,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
   {
     name: "items are scoped to their list",
     fn: async () => {
-      const cat = await createTestCategory("Scoped", [], "{title}");
+      const cat = await createTestBoard("Scoped", [], "{title}");
       const list1 = await createTestList("List A", cat.id);
       const list2 = await createTestList("List B", cat.id);
 

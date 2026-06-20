@@ -1,23 +1,23 @@
 import { type Component, createSignal, Show, For, createMemo, onMount, onCleanup } from "solid-js";
 import type { AttributeDefinition } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createCategory, createList, bulkCreateItems } from "../db/operations.js";
+import { createBoard, createList, bulkCreateItems } from "../db/operations.js";
 import { isNativeExport, previewNativeImport, applyNativeImport } from "../db/exportImport.js";
 import type { NativeExport, ImportStats } from "../db/exportImport.js";
 import Modal from "./Modal.js";
 
 export type ImportScope =
   | { type: "global" }
-  | { type: "category"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> }
+  | { type: "board"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> }
   | { type: "list"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> };
 
 interface ImportedItem { title: string; attributes: Record<string, unknown>; }
 interface ImportedList { name: string; items: ImportedItem[]; }
-interface ImportedCategory { name: string; lists: ImportedList[]; }
+interface ImportedBoard { name: string; lists: ImportedList[]; }
 
 interface PreviewItem extends ImportedItem { skip: boolean; }
 interface PreviewList { name: string; existingId?: string; items: PreviewItem[]; newCount: number; }
-interface PreviewCategory { name: string; existingId?: string; lists: PreviewList[]; }
+interface PreviewBoard { name: string; existingId?: string; lists: PreviewList[]; }
 
 interface Props {
   open: boolean;
@@ -31,7 +31,7 @@ async function getApiUrl(): Promise<string | null> {
   return cfg.sync_url.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
 }
 
-async function fetchExtraction(imageBase64: string, mimeType: string, scope: ImportScope): Promise<ImportedCategory[]> {
+async function fetchExtraction(imageBase64: string, mimeType: string, scope: ImportScope): Promise<ImportedBoard[]> {
   const apiUrl = await getApiUrl();
   if (!apiUrl) throw new Error("No sync server configured. Set up a sync server first — the AI key lives there.");
 
@@ -41,7 +41,7 @@ async function fetchExtraction(imageBase64: string, mimeType: string, scope: Imp
     body: JSON.stringify({
       image: imageBase64,
       mime_type: mimeType,
-      scope: scope.type === "category" || scope.type === "list"
+      scope: scope.type === "board" || scope.type === "list"
         ? { type: scope.type, name: scope.name, schema: scope.schema }
         : { type: "global" },
     }),
@@ -49,12 +49,12 @@ async function fetchExtraction(imageBase64: string, mimeType: string, scope: Imp
 
   const data = await resp.json() as any;
   if (!resp.ok) throw new Error(data.error ?? `Server error ${resp.status}`);
-  return (data.categories ?? []) as ImportedCategory[];
+  return (data.boards ?? []) as ImportedBoard[];
 }
 
-async function buildPreview(extracted: ImportedCategory[], scope: ImportScope): Promise<PreviewCategory[]> {
-  const [allCats, allLists, allItems] = await Promise.all([
-    db.categories.toArray(),
+async function buildPreview(extracted: ImportedBoard[], scope: ImportScope): Promise<PreviewBoard[]> {
+  const [allBoards, allLists, allItems] = await Promise.all([
+    db.boards.toArray(),
     db.lists.toArray(),
     db.items.toArray(),
   ]);
@@ -63,7 +63,7 @@ async function buildPreview(extracted: ImportedCategory[], scope: ImportScope): 
     const existingTitles = new Set(
       allItems.filter((i) => i.list_id === scope.id).map((i) => i.title.toLowerCase()),
     );
-    const allExtracted = extracted.flatMap((cat) => cat.lists.flatMap((l) => l.items));
+    const allExtracted = extracted.flatMap((board) => board.lists.flatMap((l) => l.items));
     const items: PreviewItem[] = allExtracted.map((item) => ({
       ...item,
       attributes: item.attributes ?? {},
@@ -76,12 +76,12 @@ async function buildPreview(extracted: ImportedCategory[], scope: ImportScope): 
     }];
   }
 
-  return extracted.map((cat) => {
-    const existingCat = allCats.find((c) => c.name.toLowerCase() === cat.name.toLowerCase());
-    const catLists = allLists.filter((l) => l.category_id === existingCat?.id);
+  return extracted.map((board) => {
+    const existingBoard = allBoards.find((b) => b.name.toLowerCase() === board.name.toLowerCase());
+    const boardLists = allLists.filter((l) => l.board_id === existingBoard?.id);
 
-    const lists = cat.lists.map((list) => {
-      const existingList = catLists.find((l) => l.name.toLowerCase() === list.name.toLowerCase());
+    const lists = board.lists.map((list) => {
+      const existingList = boardLists.find((l) => l.name.toLowerCase() === list.name.toLowerCase());
       const existingTitles = new Set(
         allItems.filter((i) => i.list_id === existingList?.id).map((i) => i.title.toLowerCase())
       );
@@ -98,31 +98,31 @@ async function buildPreview(extracted: ImportedCategory[], scope: ImportScope): 
       };
     });
 
-    return { name: cat.name, existingId: existingCat?.id, lists };
+    return { name: board.name, existingId: existingBoard?.id, lists };
   });
 }
 
-async function performImport(preview: PreviewCategory[], scope: ImportScope): Promise<number> {
+async function performImport(preview: PreviewBoard[], scope: ImportScope): Promise<number> {
   if (scope.type === "list") {
-    const newItems = preview.flatMap((c) => c.lists.flatMap((l) => l.items.filter((i) => !i.skip)));
+    const newItems = preview.flatMap((b) => b.lists.flatMap((l) => l.items.filter((i) => !i.skip)));
     if (newItems.length > 0) await bulkCreateItems(scope.id, newItems);
     return newItems.length;
   }
 
   let total = 0;
-  for (const cat of preview) {
-    let catId = cat.existingId;
-    if (!catId) {
-      const schema = scope.type === "category" ? scope.schema : [];
-      const fmt = scope.type === "category" ? scope.format_string : "{title}";
-      const macros = scope.type === "category" ? scope.macros : {};
-      const newCat = await createCategory(cat.name, "#5b8def", schema, fmt, macros);
-      catId = newCat.id;
+  for (const board of preview) {
+    let boardId = board.existingId;
+    if (!boardId) {
+      const schema = scope.type === "board" ? scope.schema : [];
+      const fmt = scope.type === "board" ? scope.format_string : "{title}";
+      const macros = scope.type === "board" ? scope.macros : {};
+      const newBoard = await createBoard(board.name, "#5b8def", schema, fmt, macros);
+      boardId = newBoard.id;
     }
-    for (const list of cat.lists) {
+    for (const list of board.lists) {
       let listId = list.existingId;
       if (!listId) {
-        const newList = await createList(list.name, catId);
+        const newList = await createList(list.name, boardId);
         listId = newList.id;
       }
       const newItems = list.items.filter((i) => !i.skip);
@@ -157,7 +157,7 @@ function statsLabel(stats: ImportStats): string {
     if (n.deleted > 0) pieces.push(`${n.deleted} deleted`);
     parts.push(`${label}: ${pieces.join(", ")}`);
   };
-  fmt(stats.categories, "categories");
+  fmt(stats.boards, "boards");
   fmt(stats.lists, "lists");
   fmt(stats.items, "items");
   return parts.length ? parts.join(" · ") : "nothing to change";
@@ -167,7 +167,7 @@ const ImportModal: Component<Props> = (props) => {
   type Phase = "idle" | "extracting" | "preview" | "native_preview" | "importing" | "done";
   const [phase, setPhase] = createSignal<Phase>("idle");
   const [error, setError] = createSignal<string | null>(null);
-  const [preview, setPreview] = createSignal<PreviewCategory[]>([]);
+  const [preview, setPreview] = createSignal<PreviewBoard[]>([]);
   const [importedCount, setImportedCount] = createSignal(0);
   const [dragging, setDragging] = createSignal(false);
   const [nativeDoc, setNativeDoc] = createSignal<NativeExport | null>(null);
@@ -274,7 +274,7 @@ const ImportModal: Component<Props> = (props) => {
   };
 
   const scopeLabel = () =>
-    props.scope.type === "category" || props.scope.type === "list"
+    props.scope.type === "board" || props.scope.type === "list"
       ? `into "${props.scope.name}"`
       : "globally";
 
@@ -332,7 +332,7 @@ const ImportModal: Component<Props> = (props) => {
                       <tr><th></th><th>update</th><th>create</th><th>delete</th></tr>
                     </thead>
                     <tbody>
-                      <tr><td>Categories</td><td>{s().categories.updated}</td><td>{s().categories.created}</td><td>{s().categories.deleted}</td></tr>
+                      <tr><td>Boards</td><td>{s().boards.updated}</td><td>{s().boards.created}</td><td>{s().boards.deleted}</td></tr>
                       <tr><td>Lists</td><td>{s().lists.updated}</td><td>{s().lists.created}</td><td>{s().lists.deleted}</td></tr>
                       <tr><td>Items</td><td>{s().items.updated}</td><td>{s().items.created}</td><td>{s().items.deleted}</td></tr>
                     </tbody>
@@ -360,17 +360,17 @@ const ImportModal: Component<Props> = (props) => {
         </div>
         <div class="import-preview">
           <For each={preview()}>
-            {(cat) => (
+            {(board) => (
               <>
                 <Show when={props.scope.type !== "list"}>
-                  <div class="import-preview-category">
-                    {cat.name}
-                    <Show when={!cat.existingId}>
-                      {" "}<span class="badge badge-new">new category</span>
+                  <div class="import-preview-board">
+                    {board.name}
+                    <Show when={!board.existingId}>
+                      {" "}<span class="badge badge-new">new board</span>
                     </Show>
                   </div>
                 </Show>
-                <For each={cat.lists}>
+                <For each={board.lists}>
                   {(list) => (
                     <>
                       <div class="import-preview-list">

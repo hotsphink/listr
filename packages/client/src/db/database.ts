@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
-import type { Asset, Category, Item, List } from "@listr/shared";
+import type { Asset, Board, Item, List } from "@listr/shared";
 
 export interface SyncConfig {
   id: string; // always "default"
@@ -29,7 +29,7 @@ export interface LocalTombstone {
 }
 
 export class ListrDB extends Dexie {
-  categories!: EntityTable<Category, "id">;
+  boards!: EntityTable<Board, "id">;
   lists!: EntityTable<List, "id">;
   items!: EntityTable<Item, "id">;
   assets!: EntityTable<Asset, "id">;
@@ -123,6 +123,27 @@ export class ListrDB extends Dexie {
       tombstones: "id, entity_type, deleted_at",
       assets: "id, updated_at",
       sync_endpoints: "id, position",
+    });
+
+    // Renames categories → boards; renames lists.category_id → lists.board_id
+    this.version(6).stores({
+      boards: "id, position, updated_at",
+      categories: null,
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, position, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+    }).upgrade(async (tx) => {
+      const oldBoards = await tx.table("categories").toArray();
+      if (oldBoards.length > 0) await tx.table("boards").bulkAdd(oldBoards);
+      await tx.table("lists").toCollection().modify((list: any) => {
+        if (list.category_id !== undefined) {
+          list.board_id = list.category_id;
+          delete list.category_id;
+        }
+      });
     });
   }
 }

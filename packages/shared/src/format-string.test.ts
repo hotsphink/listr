@@ -152,7 +152,7 @@ describe("renderFormatString", () => {
 });
 
 describe("custom attribute in display", () => {
-  function makeCategory(schema: AttributeDefinition[], formatString: string) {
+  function makeBoard(schema: AttributeDefinition[], formatString: string) {
     return { schema, format_string: formatString };
   }
 
@@ -162,7 +162,7 @@ describe("custom attribute in display", () => {
       { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
       { key: "genre", label: "Genre", type: "enum", required: false, options: ["action", "sci-fi", "drama"], position: 2 },
     ];
-    const cat = makeCategory(schema, "{rating:stars} {title}{ ({duration:short})|}{ [{genre:upper}]|}");
+    const cat = makeBoard(schema, "{rating:stars} {title}{ ({duration:short})|}{ [{genre:upper}]|}");
 
     const inception = makeItem("Inception", { rating: 5, duration: 148, genre: "sci-fi" });
     expect(renderFormatString(cat.format_string, inception, cat.schema))
@@ -182,7 +182,7 @@ describe("custom attribute in display", () => {
       { key: "director", label: "Director", type: "text", required: false, position: 0 },
       { key: "year", label: "Year", type: "number", required: false, position: 1 },
     ];
-    const cat = makeCategory(schema, "{title} ({year}){ - dir. {director}|}");
+    const cat = makeBoard(schema, "{title} ({year}){ - dir. {director}|}");
 
     const item = makeItem("Blade Runner", { director: "Ridley Scott", year: 1982 });
     expect(renderFormatString(cat.format_string, item, cat.schema))
@@ -197,7 +197,7 @@ describe("custom attribute in display", () => {
     const schema: AttributeDefinition[] = [
       { key: "tags", label: "Tags", type: "tags", required: false, options: ["must-see", "classic", "rewatchable"], position: 0 },
     ];
-    const cat = makeCategory(schema, "{title}{ - {tags}|}");
+    const cat = makeBoard(schema, "{title}{ - {tags}|}");
 
     const item = makeItem("The Matrix", { tags: ["must-see", "classic"] });
     expect(renderFormatString(cat.format_string, item, cat.schema))
@@ -208,7 +208,7 @@ describe("custom attribute in display", () => {
     const schema: AttributeDefinition[] = [
       { key: "watched", label: "Watched", type: "boolean", required: false, position: 0 },
     ];
-    const cat = makeCategory(schema, "{title} [{watched:fallback=unwatched}]");
+    const cat = makeBoard(schema, "{title} [{watched:fallback=unwatched}]");
 
     const watched = makeItem("Inception", { watched: true });
     expect(renderFormatString(cat.format_string, watched, cat.schema))
@@ -224,7 +224,7 @@ describe("ternary format syntax", () => {
   function makeList(schema: AttributeDefinition[], formatString: string): List {
     return {
       id: "list-1",
-      category_id: null,
+      board_id: "test-board",
       name: "Test",
       icon: "",
       position: 0,

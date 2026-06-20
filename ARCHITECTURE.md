@@ -2,7 +2,7 @@
 
 ## Overview
 
-Listr is a Trello-like list management app. Items always have a title and live in Lists; Lists belong to Categories; Categories define the attribute schema shared by all their lists. Data is stored client-side in IndexedDB with a SolidJS frontend and an optional WebSocket sync server.
+Listr is a Trello-like list management app. Items always have a title and live in Lists; Lists belong to Boards; Boards define the attribute schema shared by all their lists. Data is stored client-side in IndexedDB with a SolidJS frontend and an optional WebSocket sync server.
 
 **Monorepo** (pnpm workspaces):
 ```
@@ -37,9 +37,9 @@ Vite reads `../../certs/` relative to `packages/client/vite.config.ts`. The sync
 ## Data Model
 
 ```
-Category 1──* List 1──* Item
-Category owns: schema (AttributeDefinition[]), format_string, macros
-List owns: format_string (string | null — null means inherit from Category), view_mode
+Board 1──* List 1──* Item
+Board owns: schema (AttributeDefinition[]), format_string, macros
+List owns: format_string (string | null — null means inherit from Board), view_mode
 Item owns: title (first-class field), attributes (Record<string, unknown>)
 ```
 
@@ -60,7 +60,7 @@ interface AttributeDefinition {
   position: number;
 }
 
-interface Category {
+interface Board {
   id: string; name: string; color: string; position: number;
   schema: AttributeDefinition[];
   format_string: string;
@@ -68,13 +68,13 @@ interface Category {
   created_at: number; updated_at: number;
 }
 
-type ViewMode = "list" | "table" | "board" | "card";
+type ViewMode = "list" | "table" | "card";
 
 interface List {
   id: string;
-  category_id: string;     // required — no uncategorized lists
+  board_id: string;        // required — no boardless lists
   name: string; icon: string; position: number;
-  format_string: string | null;  // null = inherit from Category
+  format_string: string | null;  // null = inherit from Board
   view_mode: ViewMode;           // per-list, NOT synced across devices
   created_at: number; updated_at: number;
 }
@@ -96,6 +96,9 @@ interface Item {
 - v1: original schema (lists had a `schema` field directly)
 - v2: migration moves `schema` to categories; uncategorized lists assigned to a "General" category
 - v3: adds `updated_at` index on all entity tables; adds `sync_config` and `tombstones` tables
+- v4: adds `assets` table
+- v5: adds `sync_endpoints` table
+- v6: renames `categories` table to `boards`; renames `lists.category_id` to `lists.board_id`
 
 **Sync tables (v3):**
 ```typescript
@@ -129,7 +132,7 @@ createEffect(() => {
 const list = from(liveQuery(() => db.lists.get(params.id)));
 ```
 
-**Schema lookup** — `operations.ts` has `getSchemaForList(listId)` which follows `list → category → schema`. Item creation uses this to apply `default_value` and `auto` behaviors. All write operations also call `syncClient.pushEntity(...)` or `syncClient.pushDelete(...)` after the DB write.
+**Schema lookup** — `operations.ts` has `getSchemaForList(listId)` which follows `list → board → schema`. Item creation uses this to apply `default_value` and `auto` behaviors. All write operations also call `syncClient.pushEntity(...)` or `syncClient.pushDelete(...)` after the DB write.
 
 ---
 
@@ -161,7 +164,7 @@ HTML tags (`<b>`, `<i>`, `<em>`, etc.) are allowed in format string literals. Pl
 - **Unset boolean attributes**: treated as `false` when schema is provided (schema-aware via `schemaMap`)
 - **Duration default format**: "2 hours 28 minutes" (uses `attrType` from schema)
 - **`stars` modifier**: works on any number; Rating type was removed — use Number + `:stars`
-- **Macros**: named sub-format-strings defined in the category, referenced as `{macroName}` in other strings; cycle detection prevents infinite expansion
+- **Macros**: named sub-format-strings defined on the Board, referenced as `{macroName}` in other strings; cycle detection prevents infinite expansion
 
 ### Segment types (AST)
 ```typescript
@@ -180,39 +183,35 @@ type Segment =
 ```
 App.tsx
   Router
-    /        → Dashboard.tsx
-    /list/:id → ListView.tsx
-    /test     → TestRunner.tsx
-  Sidebar.tsx (always visible)
+    /          → Home (auto-redirects to first board)
+    /board/:id → ListView.tsx
+    /admin     → AdminPage.tsx
+    /test      → TestRunner.tsx
+  Sidebar.tsx (always visible on desktop; hamburger on mobile)
 ```
 
-`App.tsx` calls `syncClient.connect(...)` on mount if sync is configured and enabled.
-
 ### Sidebar (`components/Sidebar.tsx`)
-- Accordion: `expandedCategoryId` signal, only one category open at a time
-- Auto-expands to show the category containing the active list (via `createEffect` watching `location.pathname`)
-- Footer shows a colored sync status dot; clicking opens `SyncSettingsModal`
-- **Category "Configure"**: opens `CategoryFormModal` directly from Sidebar — does NOT navigate away
+- Accordion: `expandedBoardId` signal, only one board open at a time
+- Footer shows a colored sync status dot; clicking opens AdminPage
+- **Board "Configure"**: opens `BoardFormModal` directly from Sidebar — does NOT navigate away
 
 ### Key Components
-- `CategoryFormModal` — name, color picker, format string (auto-generates from schema unless manually edited), full SchemaEditor
-- `ListFormModal` — name, required category dropdown, optional format string override (checkbox)
+- `BoardFormModal` — name, color picker, format string (auto-generates from schema unless manually edited), full SchemaEditor
+- `ListFormModal` — name, required board dropdown, optional format string override (checkbox)
 - `SchemaEditor` — uses `<Index>` (not `<For>`) for stable DOM; all buttons have `type="button"`; inputs use `onBlur` not `onInput`
 - `AttributeEditor` — per-type inputs: number uses `onBlur`; duration has spinners + text field ("1h42m", "1h42", "42m", "42" all valid)
 - `ItemFormModal` — loops over schema to render AttributeEditor per attribute
-- `SyncSettingsModal` — configure sync URL, key, client ID; shows live status dot
 - `FormattedText` — renders HTML from `renderFormatStringHtml`; uses `element.setHTML()` with Sanitizer if available, falls back to `innerHTML`
 - `ContextMenu` — positioned `fixed`, closes on click outside or Escape
 - `Modal` — base overlay, closes on Escape or overlay click
 
 ### ListView (`pages/ListView.tsx`)
-- Gets schema from category via separate `createEffect` subscription
-- `effectiveFormatString = list.format_string || category.format_string || "{title}"`
+- Gets schema from board via separate `createEffect` subscription
+- `effectiveFormatString = list.format_string || board.format_string || "{title}"`
 - Search input filters `allItems()` client-side into `items()`; mobile shows a toggle button that reveals a full-width search bar below the header
-- Four view modes via `<Switch>/<Match>`; mode stored per-list in DB
+- Three view modes via `<Switch>/<Match>`; mode stored per-list in DB
 - **Table view**: Title column shows raw `item.title`; other columns use `formatCellValue`
-- **List/Card/Board views**: use `<FormattedText html={formatItem(item)} />` — supports HTML tags in format strings
-- **Board view**: groups by first `enum` attribute in schema; shows one column per option + an "Unset" column
+- **List/Card views**: use `<FormattedText html={formatItem(item)} />` — supports HTML tags in format strings
 - Drag handles (`⠿`) on each item; `useSortable` initialized with a `ref` callback per view container
 
 ### Drag & Drop (`hooks/useSortable.ts`, `hooks/reorderLogic.ts`)
@@ -230,7 +229,6 @@ onEnd: async (evt) => {
 }
 ```
 - `handle: ".drag-handle"` — only the grip icon initiates drag
-- `filter` + `onMove` prevent dragging/dropping on the "+ Add Item" elements
 
 ### In-Browser Test Runner (`pages/TestRunner.tsx`)
 Available at `/test`. Creates a fresh throwaway Dexie DB per run, deleted after.
@@ -248,12 +246,12 @@ client → { type: "hello", key: "<sync_key>", client_id: "<uuid>" }
 server → { type: "ok" }
 client → push all local entities/tombstones updated since last_sync_at
 client → { type: "pull", since: <last_sync_at> }
-server → { type: "snapshot", categories: [...], lists: [...], items: [...], tombstones: [...], server_time: <ms> }
+server → { type: "snapshot", boards: [...], lists: [...], items: [...], tombstones: [...], server_time: <ms> }
 ```
 
 **Ongoing (real-time):**
 ```
-client → { type: "push_entity", entity_type: "item"|"list"|"category", data: {...} }
+client → { type: "push_entity", entity_type: "item"|"list"|"board", data: {...} }
 server → broadcasts { type: "entity", entity_type, data } to other clients in same room
 
 client → { type: "push_delete", entity_type, entity_id, deleted_at }
@@ -277,6 +275,37 @@ server → broadcasts { type: "deleted", entity_type, entity_id, deleted_at }
 
 ---
 
+## Export / Import (`packages/client/src/db/exportImport.ts`)
+
+Native JSON export format:
+```json
+{
+  "listr_export": "1",
+  "exported_at": 1234567890,
+  "boards": [
+    {
+      "id": "...",
+      "name": "Movies",
+      "color": "#5b8def",
+      "lists": [
+        {
+          "id": "...",
+          "name": "Watchlist",
+          "items": [
+            { "id": "...", "title": "...", "position": 0, "attributes": {} }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `deleted: 1` on any entity triggers a cascade delete + tombstone on import
+- Import respects item array order: imported items land in their JSON array order; items not in the import are appended after
+
+---
+
 ## Testing
 
 ### Unit tests (Vitest)
@@ -297,7 +326,7 @@ cd packages/client && pnpm exec playwright test
 Uses Playwright's own Firefox build (system Firefox at `/usr/bin/firefox` lacks the required protocol). Config in `packages/client/playwright.config.ts`.
 
 Test files:
-- `e2e/helpers.ts` — `clearDatabase`, `fillSchemaField`, `createCategory`, `createListInCategory`
+- `e2e/helpers.ts` — `clearDatabase`, `fillSchemaField`, `createBoard`, `createListInBoard`
 - `e2e/custom-attribute.spec.ts` — attribute creation and display
 - `e2e/view-mode.spec.ts` — view switching, search, persistence
 - `e2e/context-menu.spec.ts` — sidebar right-click menu
@@ -313,7 +342,7 @@ Test files:
 
 - `packages/client/public/manifest.json` — installability metadata
 - `packages/client/public/sw.js` — stale-while-revalidate service worker
-- Registered in `index.html` via `navigator.serviceWorker.register("/sw.js")`
+- Only registered in production (`import.meta.env.PROD`); actively unregistered in dev to avoid interfering with HMR
 
 ---
 
@@ -329,7 +358,7 @@ Test files:
 
 5. **Livequery + route params**: `from(liveQuery(() => db.lists.get(params.id)))` only subscribes once at component creation. Use `createEffect` + manual subscription + `onCleanup` to re-subscribe when params change.
 
-6. **Sidebar "Configure" for categories**: Opens `CategoryFormModal` directly from Sidebar state. Does NOT navigate to `/`. An earlier implementation navigated to Dashboard first, which briefly rendered the full dashboard view before the modal appeared.
+6. **Sidebar "Configure" for boards**: Opens `BoardFormModal` directly from Sidebar state. Does NOT navigate to `/`. An earlier implementation navigated to Dashboard first, which briefly rendered the full dashboard view before the modal appeared.
 
 7. **Vite HMR + new imports**: Adding a new `import` to an existing module changes the module graph in a way Vite HMR doesn't always handle cleanly. If behavior seems wrong after adding an import, do a full browser reload.
 

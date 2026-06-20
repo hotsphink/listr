@@ -19,14 +19,14 @@ export async function fillSchemaField(page: Page, input: Locator, value: string)
   await page.keyboard.type(value);
 }
 
-export async function createCategory(
+export async function createBoard(
   page: Page,
   name: string,
   attributes?: Array<{ key: string; label: string; type?: string; options?: string }>,
   formatString?: string,
 ) {
-  await page.locator(".sidebar-item.sidebar-new.category").click();
-  await expect(page.locator(".modal h2")).toHaveText("New Category");
+  await page.locator(".sidebar-item.sidebar-new.board").click();
+  await expect(page.locator(".modal h2")).toHaveText("New Board");
 
   await page.locator(".modal .form-field input").first().fill(name);
 
@@ -57,23 +57,23 @@ export async function createCategory(
   await page.getByRole("button", { name: "Create" }).click();
 }
 
-export async function createListInCategory(
+export async function createListInBoard(
   page: Page,
   name: string,
-  categoryName?: string,
+  boardName?: string,
 ) {
-  if (categoryName) {
-    const catSection = page.locator(".sidebar-category").filter({
-      has: page.locator(".sidebar-category-header", { hasText: categoryName }),
+  if (boardName) {
+    const catSection = page.locator(".sidebar-board").filter({
+      has: page.locator(".sidebar-board-header", { hasText: boardName }),
     });
-    const listsDiv = catSection.locator(".sidebar-category-lists");
+    const listsDiv = catSection.locator(".sidebar-board-lists");
     if (!(await listsDiv.isVisible())) {
-      await catSection.locator(".sidebar-category-header").click();
+      await catSection.locator(".sidebar-board-header").click();
       await listsDiv.waitFor({ state: "visible" });
     }
     await catSection.locator(".sidebar-item.sidebar-new").click();
   } else {
-    await page.locator(".sidebar-category-lists .sidebar-item.sidebar-new").first().click();
+    await page.locator(".sidebar-board-lists .sidebar-item.sidebar-new").first().click();
   }
   const renameInput = page.locator(".sidebar-rename-input").last();
   await renameInput.waitFor({ state: "visible" });

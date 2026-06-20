@@ -1,5 +1,5 @@
 import { type Component, createSignal, createEffect, onCleanup, Show } from "solid-js";
-import type { AttributeDefinition, Category } from "@listr/shared";
+import type { AttributeDefinition, Board } from "@listr/shared";
 import { validateFormatString, parseAdvancedFormatText, serializeAdvancedFormatText } from "@listr/shared";
 import Modal from "./Modal.js";
 import SchemaEditor from "./SchemaEditor.js";
@@ -21,10 +21,10 @@ interface Props {
     schema: AttributeDefinition[];
     macros: Record<string, string>;
   }) => Promise<void> | void;
-  initial?: Category;
+  initial?: Board;
 }
 
-const CategoryFormModal: Component<Props> = (props) => {
+const BoardFormModal: Component<Props> = (props) => {
   const [name, setName] = createSignal("");
   const [color, setColor] = createSignal("#5b8def");
   const [formatStr, setFormatStr] = createSignal("{title}");
@@ -246,7 +246,7 @@ const CategoryFormModal: Component<Props> = (props) => {
 
   return (
     <Modal open={props.open} onClose={props.onClose}>
-      <h2>{props.initial ? "Edit Category" : "New Category"}</h2>
+      <h2>{props.initial ? "Edit Board" : "New Board"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-row">
           <div class="form-field" style="flex: 1">
@@ -372,4 +372,4 @@ const CategoryFormModal: Component<Props> = (props) => {
   );
 };
 
-export default CategoryFormModal;
+export default BoardFormModal;

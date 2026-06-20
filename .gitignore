@@ -4,6 +4,7 @@ dist/
 .vite/
 *.log
 packages/server/data/
+packages/server/src/*.js
 certs/
 work/
 .claude/*.local.*

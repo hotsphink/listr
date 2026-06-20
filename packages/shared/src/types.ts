@@ -27,7 +27,7 @@ export interface AttributeDefinition {
   position: number;
 }
 
-export interface Category {
+export interface Board {
   id: string;
   name: string;
   color: string;
@@ -43,7 +43,7 @@ export type ViewMode = "list" | "table" | "card";
 
 export interface List {
   id: string;
-  category_id: string;
+  board_id: string;
   name: string;
   icon: string;
   position: number;

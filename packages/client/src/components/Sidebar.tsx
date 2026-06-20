@@ -2,15 +2,15 @@ import { type Component, For, Show, createSignal, createEffect } from "solid-js"
 import { useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
-import type { Category, List } from "@listr/shared";
+import type { Board, List } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createList, createCategory, updateList, deleteList, updateCategory, deleteCategory } from "../db/operations.js";
+import { createList, createBoard, updateList, deleteList, updateBoard, deleteBoard } from "../db/operations.js";
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
-import CategoryFormModal from "./CategoryFormModal.js";
+import BoardFormModal from "./BoardFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
-import { exportAllData, exportCategory, exportList } from "../db/exportImport.js";
+import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
 import type { NativeExport } from "../db/exportImport.js";
 
 function triggerDownload(data: NativeExport, filename: string) {
@@ -34,7 +34,7 @@ const Sidebar: Component<Props> = (props) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const categories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
+  const boards = from(liveQuery(() => db.boards.orderBy("position").toArray()));
   const lists = from(liveQuery(() => db.lists.orderBy("position").toArray()));
   const itemCounts = from(liveQuery(async () => {
     const allLists = await db.lists.toArray();
@@ -46,23 +46,23 @@ const Sidebar: Component<Props> = (props) => {
 
   const itemCountForList = (listId: string) => itemCounts()?.get(listId) ?? 0;
 
-  const [expandedCategoryId, setExpandedCategoryId] = createSignal<string | null>(null);
-  const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; target: { kind: "list"; list: List } | { kind: "category"; category: Category } } | null>(null);
+  const [expandedBoardId, setExpandedBoardId] = createSignal<string | null>(null);
+  const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; target: { kind: "list"; list: List } | { kind: "board"; board: Board } } | null>(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
-  const [editingCategory, setEditingCategory] = createSignal<Category | undefined>();
-  const [showCreateCategory, setShowCreateCategory] = createSignal(false);
+  const [editingBoard, setEditingBoard] = createSignal<Board | undefined>();
+  const [showCreateBoard, setShowCreateBoard] = createSignal(false);
   const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
   const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
-  const listsForCategory = (catId: string) =>
-    (lists() ?? []).filter((l) => l.category_id === catId);
+  const listsForBoard = (boardId: string) =>
+    (lists() ?? []).filter((l) => l.board_id === boardId);
 
-  const toggleCategory = (catId: string) => {
-    setExpandedCategoryId((prev) => (prev === catId ? null : catId));
+  const toggleBoard = (boardId: string) => {
+    setExpandedBoardId((prev) => (prev === boardId ? null : boardId));
   };
 
-  const handleContextMenu = (e: MouseEvent, target: { kind: "list"; list: List } | { kind: "category"; category: Category }) => {
+  const handleContextMenu = (e: MouseEvent, target: { kind: "list"; list: List } | { kind: "board"; board: Board }) => {
     e.preventDefault();
     if (target.kind === "list" && selectedListIds().size > 1 && selectedListIds().has(target.list.id)) {
       setMultiListCtxMenu({ x: e.clientX, y: e.clientY });
@@ -78,17 +78,17 @@ const Sidebar: Component<Props> = (props) => {
 
     if (ctx.target.kind === "list") {
       const list = ctx.target.list;
-      const cat = (categories() ?? []).find((c) => c.id === list.category_id);
+      const board = (boards() ?? []).find((b) => b.id === list.board_id);
       return [
         { label: "Rename", action: () => setRenamingId(list.id) },
-        { label: "Configure", action: () => { setSelectedListIds(new Set([list.id])); props.onClose?.(); navigate(`/category/${list.category_id}`, { state: { openSettings: list.id } }); } },
-        { label: "Import", action: () => cat && setImportScope({
+        { label: "Configure", action: () => { setSelectedListIds(new Set([list.id])); props.onClose?.(); navigate(`/board/${list.board_id}`, { state: { openSettings: list.id } }); } },
+        { label: "Import", action: () => board && setImportScope({
             type: "list",
             id: list.id,
             name: list.name,
-            schema: cat.schema,
-            format_string: list.format_string ?? cat.format_string,
-            macros: cat.macros ?? {},
+            schema: board.schema,
+            format_string: list.format_string ?? board.format_string,
+            macros: board.macros ?? {},
           })
         },
         { label: "Export", action: async () => {
@@ -104,32 +104,32 @@ const Sidebar: Component<Props> = (props) => {
         }},
       ];
     } else {
-      const cat = ctx.target.category;
+      const board = ctx.target.board;
       return [
-        { label: "Rename", action: () => setRenamingId(cat.id) },
-        { label: "Configure", action: () => setEditingCategory(cat) },
+        { label: "Rename", action: () => setRenamingId(board.id) },
+        { label: "Configure", action: () => setEditingBoard(board) },
         { label: "Import", action: () => setImportScope({
-            type: "category",
-            id: cat.id,
-            name: cat.name,
-            schema: cat.schema,
-            format_string: cat.format_string,
-            macros: cat.macros ?? {},
+            type: "board",
+            id: board.id,
+            name: board.name,
+            schema: board.schema,
+            format_string: board.format_string,
+            macros: board.macros ?? {},
           })
         },
         { label: "Export", action: async () => {
-            const data = await exportCategory(cat.id);
+            const data = await exportBoard(board.id);
             const date = new Date().toISOString().slice(0, 10);
-            triggerDownload(data, `listr-category-${cat.name}-${date}.json`);
+            triggerDownload(data, `listr-board-${board.name}-${date}.json`);
           }
         },
         { label: "Delete", danger: true, action: async () => {
-          const listCount = listsForCategory(cat.id).length;
+          const listCount = listsForBoard(board.id).length;
           const msg = listCount > 0
-            ? `Delete "${cat.name}" and its ${listCount} list${listCount > 1 ? "s" : ""} with all items?`
-            : `Delete category "${cat.name}"?`;
+            ? `Delete "${board.name}" and its ${listCount} list${listCount > 1 ? "s" : ""} with all items?`
+            : `Delete board "${board.name}"?`;
           if (!confirm(msg)) return;
-          await deleteCategory(cat.id);
+          await deleteBoard(board.id);
           props.onClose?.();
           navigate("/");
         }},
@@ -137,14 +137,14 @@ const Sidebar: Component<Props> = (props) => {
     }
   };
 
-  const handleRenameBlur = async (id: string, newName: string, kind: "list" | "category") => {
+  const handleRenameBlur = async (id: string, newName: string, kind: "list" | "board") => {
     setRenamingId(null);
     const trimmed = newName.trim();
     if (!trimmed) return;
     if (kind === "list") {
       await updateList(id, { name: trimmed });
     } else {
-      await updateCategory(id, { name: trimmed });
+      await updateBoard(id, { name: trimmed });
     }
   };
 
@@ -159,8 +159,8 @@ const Sidebar: Component<Props> = (props) => {
   const handleListClick = (e: MouseEvent, list: List) => {
     e.stopPropagation();
     if (e.shiftKey && anchorListId()) {
-      const catLists = listsForCategory(list.category_id);
-      const ids = catLists.map((l) => l.id);
+      const boardLists = listsForBoard(list.board_id);
+      const ids = boardLists.map((l) => l.id);
       const a = ids.indexOf(anchorListId()!);
       const b = ids.indexOf(list.id);
       if (a !== -1 && b !== -1) {
@@ -190,7 +190,7 @@ const Sidebar: Component<Props> = (props) => {
       setSelectedListIds(new Set([list.id]));
     }
     props.onClose?.();
-    navigate(`/category/${list.category_id}`);
+    navigate(`/board/${list.board_id}`);
   };
 
   const deleteSelectedLists = async () => {
@@ -203,12 +203,12 @@ const Sidebar: Component<Props> = (props) => {
     setMultiListCtxMenu(null);
   };
 
-  const handleNewList = async (catId: string) => {
-    const list = await createList("New List", catId);
+  const handleNewList = async (boardId: string) => {
+    const list = await createList("New List", boardId);
     setRenamingId(list.id);
     setSelectedListIds(new Set([list.id]));
     props.onClose?.();
-    navigate(`/category/${catId}`);
+    navigate(`/board/${boardId}`);
   };
 
   return (
@@ -221,47 +221,47 @@ const Sidebar: Component<Props> = (props) => {
         Listr
       </div>
       <div class="sidebar-content">
-        <For each={categories() ?? []}>
-          {(cat) => {
-            const isExpanded = () => expandedCategoryId() === cat.id;
+        <For each={boards() ?? []}>
+          {(board) => {
+            const isExpanded = () => expandedBoardId() === board.id;
             return (
-              <div class="sidebar-category">
+              <div class="sidebar-board">
                 <Show
-                  when={renamingId() === cat.id}
+                  when={renamingId() === board.id}
                   fallback={
                     <div
-                      class="sidebar-category-header"
+                      class="sidebar-board-header"
                       classList={{ expanded: isExpanded() }}
-                      style={`border-left: 3px solid ${cat.color}`}
-                      onClick={() => { setSelectedListIds(new Set<string>()); props.onClose?.(); navigate(`/category/${cat.id}`); toggleCategory(cat.id); }}
-                      onContextMenu={(e) => handleContextMenu(e, { kind: "category", category: cat })}
+                      style={`border-left: 3px solid ${board.color}`}
+                      onClick={() => { setSelectedListIds(new Set<string>()); props.onClose?.(); navigate(`/board/${board.id}`); toggleBoard(board.id); }}
+                      onContextMenu={(e) => handleContextMenu(e, { kind: "board", board })}
                     >
-                      <span class="sidebar-category-chevron">{isExpanded() ? "▾" : "▸"}</span>
-                      {cat.name}
-                      <span class="sidebar-category-count">{listsForCategory(cat.id).length}</span>
+                      <span class="sidebar-board-chevron">{isExpanded() ? "▾" : "▸"}</span>
+                      {board.name}
+                      <span class="sidebar-board-count">{listsForBoard(board.id).length}</span>
                     </div>
                   }
                 >
-                  <div class="sidebar-category-header" style={`border-left: 3px solid ${cat.color}`}>
+                  <div class="sidebar-board-header" style={`border-left: 3px solid ${board.color}`}>
                     <input
                       class="sidebar-rename-input"
-                      value={cat.name}
-                      onBlur={(e) => handleRenameBlur(cat.id, e.currentTarget.value, "category")}
+                      value={board.name}
+                      onBlur={(e) => handleRenameBlur(board.id, e.currentTarget.value, "board")}
                       onKeyDown={handleRenameKeyDown}
                       ref={(el) => setTimeout(() => { el.focus(); el.select(); }, 0)}
                     />
                   </div>
                 </Show>
                 <Show when={isExpanded()}>
-                  <div class="sidebar-category-lists">
-                    <For each={listsForCategory(cat.id)}>
+                  <div class="sidebar-board-lists">
+                    <For each={listsForBoard(board.id)}>
                       {(list) => (
                         <Show
                           when={renamingId() === list.id}
                           fallback={
                             <div
                               class="sidebar-item"
-                              classList={{ active: selectedListIds().has(list.id) && location.pathname === `/category/${list.category_id}`, selected: selectedListIds().has(list.id) }}
+                              classList={{ active: selectedListIds().has(list.id) && location.pathname === `/board/${list.board_id}`, selected: selectedListIds().has(list.id) }}
                               onClick={(e) => handleListClick(e, list)}
                               onContextMenu={(e) => handleContextMenu(e, { kind: "list", list })}
                             >
@@ -284,7 +284,7 @@ const Sidebar: Component<Props> = (props) => {
                     </For>
                     <div
                       class="sidebar-item sidebar-new"
-                      onClick={() => handleNewList(cat.id)}
+                      onClick={() => handleNewList(board.id)}
                     >
                       + New List
                     </div>
@@ -295,10 +295,10 @@ const Sidebar: Component<Props> = (props) => {
           }}
         </For>
         <div
-          class="sidebar-item sidebar-new category"
-          onClick={() => setShowCreateCategory(true)}
+          class="sidebar-item sidebar-new board"
+          onClick={() => setShowCreateBoard(true)}
         >
-          + New Category
+          + New Board
         </div>
         <div
           class="sidebar-item sidebar-new"
@@ -349,23 +349,23 @@ const Sidebar: Component<Props> = (props) => {
         )}
       </Show>
 
-      <CategoryFormModal
-        open={editingCategory() !== undefined}
-        onClose={() => setEditingCategory(undefined)}
+      <BoardFormModal
+        open={editingBoard() !== undefined}
+        onClose={() => setEditingBoard(undefined)}
         onSave={async (data) => {
-          const cat = editingCategory();
-          if (cat) await updateCategory(cat.id, { ...data, macros: data.macros });
-          setEditingCategory(undefined);
+          const board = editingBoard();
+          if (board) await updateBoard(board.id, { ...data, macros: data.macros });
+          setEditingBoard(undefined);
         }}
-        initial={editingCategory()}
+        initial={editingBoard()}
       />
 
-      <CategoryFormModal
-        open={showCreateCategory()}
-        onClose={() => setShowCreateCategory(false)}
+      <BoardFormModal
+        open={showCreateBoard()}
+        onClose={() => setShowCreateBoard(false)}
         onSave={async (data) => {
-          await createCategory(data.name, data.color, data.schema, data.format_string, data.macros);
-          setShowCreateCategory(false);
+          await createBoard(data.name, data.color, data.schema, data.format_string, data.macros);
+          setShowCreateBoard(false);
         }}
       />
 

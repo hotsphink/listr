@@ -64,18 +64,18 @@ const Layout: Component<{ children?: any }> = (props) => {
 
 const Home: Component = () => {
   const navigate = useNavigate();
-  const categories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
+  const boards = from(liveQuery(() => db.boards.orderBy("position").toArray()));
 
   createEffect(() => {
-    const cats = categories();
-    if (cats && cats.length > 0) navigate(`/category/${cats[0].id}`, { replace: true });
+    const allBoards = boards();
+    if (allBoards && allBoards.length > 0) navigate(`/board/${allBoards[0].id}`, { replace: true });
   });
 
   return (
-    <Show when={(categories() ?? []).length === 0}>
+    <Show when={(boards() ?? []).length === 0}>
       <div class="main">
         <div class="empty-state">
-          <p>Create a category in the sidebar to get started.</p>
+          <p>Create a board in the sidebar to get started.</p>
         </div>
       </div>
     </Show>
@@ -85,7 +85,7 @@ const Home: Component = () => {
 const App: Component = () => (
   <HashRouter root={Layout}>
     <Route path="/" component={Home} />
-    <Route path="/category/:id" component={ListView} />
+    <Route path="/board/:id" component={ListView} />
     <Route path="/admin" component={AdminPage} />
     <Route path="/test" component={TestRunner} />
   </HashRouter>

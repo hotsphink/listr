@@ -3,7 +3,7 @@ import { from } from "solid-js";
 import { useParams, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
-import type { AttributeDefinition, Category, Item, List } from "@listr/shared";
+import type { AttributeDefinition, Board, Item, List } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, deleteItem, updateList } from "../db/operations.js";
 import { syncClient } from "../sync/SyncClient.js";
@@ -43,7 +43,7 @@ const ListView: Component = () => {
   const location = useLocation();
 
   // DB-subscribed state — populated by liveQuery effects below
-  const [category, setCategory] = createSignal<Category | undefined>();
+  const [board, setBoard] = createSignal<Board | undefined>();
   const [allLists, setAllLists] = createSignal<List[]>([]);
   const [itemsByList, setItemsByList] = createSignal<Map<string, Item[]>>(new Map());
 
@@ -74,7 +74,7 @@ const ListView: Component = () => {
   let touchStartX = 0;
   let touchStartY = 0;
 
-  const allCategories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
+  const allBoards = from(liveQuery(() => db.boards.orderBy("position").toArray()));
 
   const exitSelectionMode = () => {
     setSelectionMode(false);
@@ -96,10 +96,10 @@ const ListView: Component = () => {
   document.addEventListener("keydown", handleGlobalKeyDown);
   onCleanup(() => document.removeEventListener("keydown", handleGlobalKeyDown));
 
-  // Reset per-category state when navigating to a different category
+  // Reset per-board state when navigating to a different board
   createEffect(() => {
     if (!params.id) return; // Help the type system.
-    const catId = params.id;
+    const boardId = params.id;
     setSelectedItemIds(new Set<string>());
     setSelectionMode(false);
     setItemCtxMenu(null);
@@ -107,9 +107,9 @@ const ListView: Component = () => {
     setSearchOpen(false);
     setEditingList(undefined);
 
-    const sub1 = liveQuery(() => db.categories.get(catId)).subscribe((v) => setCategory(v));
+    const sub1 = liveQuery(() => db.boards.get(boardId)).subscribe((v) => setBoard(v));
     const sub2 = liveQuery(() =>
-      db.lists.where("category_id").equals(catId).sortBy("position")
+      db.lists.where("board_id").equals(boardId).sortBy("position")
     ).subscribe((v) => setAllLists(v));
     onCleanup(() => { sub1.unsubscribe(); sub2.unsubscribe(); });
   });
@@ -152,21 +152,21 @@ const ListView: Component = () => {
       const vl = visibleLists();
       if (vl.length === 1) return vl[0].name;
     }
-    return category()?.name ?? "";
+    return board()?.name ?? "";
   });
 
   const schema = createMemo((): AttributeDefinition[] => {
-    const cat = category();
-    if (!cat) return [];
-    return [...cat.schema].sort((a, b) => a.position - b.position);
+    const b = board();
+    if (!b) return [];
+    return [...b.schema].sort((a, b) => a.position - b.position);
   });
 
-  const effectiveFormatString = createMemo(() => category()?.format_string || "{title}");
+  const effectiveFormatString = createMemo(() => board()?.format_string || "{title}");
 
   const formatItem = (item: Item, list: List): string => {
     const urls = assetUrls();
     const fs = list.format_string || effectiveFormatString();
-    return renderFormatStringHtml(fs, item, schema(), undefined, category()?.macros, (url) => urls[url] ?? url);
+    return renderFormatStringHtml(fs, item, schema(), undefined, board()?.macros, (url) => urls[url] ?? url);
   };
 
   const itemsForList = (listId: string): Item[] => {
@@ -210,7 +210,7 @@ const ListView: Component = () => {
     setEditingItem(undefined);
   };
 
-  const handleEditList = async (data: { name: string; category_id: string; format_string: string | null }) => {
+  const handleEditList = async (data: { name: string; board_id: string; format_string: string | null }) => {
     const list = editingList();
     if (!list) return;
     await updateList(list.id, data);
@@ -396,7 +396,7 @@ const ListView: Component = () => {
 
   return (
     <div class="main">
-      <Show when={category()} fallback={<div class="empty-state"><p>Category not found.</p></div>}>
+      <Show when={board()} fallback={<div class="empty-state"><p>Board not found.</p></div>}>
         {(_cat) => (
           <>
             <Show when={selectionMode()} fallback={
@@ -675,7 +675,7 @@ const ListView: Component = () => {
               open={editingList() !== undefined}
               onClose={() => setEditingList(undefined)}
               onSave={handleEditList}
-              categories={allCategories() ?? []}
+              boards={allBoards() ?? []}
               initial={editingList()}
             />
           </>

@@ -1,6 +1,6 @@
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
-import type { Category, List, Item, AttributeDefinition, ViewMode } from "@listr/shared";
+import type { Board, List, Item, AttributeDefinition, ViewMode } from "@listr/shared";
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -17,17 +17,17 @@ function now(): number {
   return Date.now();
 }
 
-// --- Categories ---
+// --- Boards ---
 
-export async function createCategory(
+export async function createBoard(
   name: string,
   color: string,
   schema: AttributeDefinition[] = [],
   formatString: string = "{title}",
   macros?: Record<string, string>,
-): Promise<Category> {
-  const maxPos = await db.categories.orderBy("position").last();
-  const category: Category = {
+): Promise<Board> {
+  const maxPos = await db.boards.orderBy("position").last();
+  const board: Board = {
     id: generateId(),
     name,
     color,
@@ -38,51 +38,51 @@ export async function createCategory(
     created_at: now(),
     updated_at: now(),
   };
-  await db.categories.add(category);
-  syncClient.pushEntity("category", category);
-  return category;
+  await db.boards.add(board);
+  syncClient.pushEntity("board", board);
+  return board;
 }
 
-export async function updateCategory(
+export async function updateBoard(
   id: string,
-  updates: Partial<Pick<Category, "name" | "color" | "position" | "schema" | "format_string" | "macros">>,
+  updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format_string" | "macros">>,
 ): Promise<void> {
-  await db.categories.update(id, { ...updates, updated_at: now() });
-  const updated = await db.categories.get(id);
-  if (updated) syncClient.pushEntity("category", updated);
+  await db.boards.update(id, { ...updates, updated_at: now() });
+  const updated = await db.boards.get(id);
+  if (updated) syncClient.pushEntity("board", updated);
 }
 
-export async function deleteCategory(id: string): Promise<void> {
-  const lists = await db.lists.where("category_id").equals(id).toArray();
+export async function deleteBoard(id: string): Promise<void> {
+  const lists = await db.lists.where("board_id").equals(id).toArray();
   const itemIds: string[] = [];
   for (const list of lists) {
     const items = await db.items.where("list_id").equals(list.id).toArray();
     itemIds.push(...items.map((i) => i.id));
   }
 
-  await db.transaction("rw", [db.categories, db.lists, db.items], async () => {
+  await db.transaction("rw", [db.boards, db.lists, db.items], async () => {
     for (const list of lists) {
       await db.items.where("list_id").equals(list.id).delete();
     }
-    await db.lists.where("category_id").equals(id).delete();
-    await db.categories.delete(id);
+    await db.lists.where("board_id").equals(id).delete();
+    await db.boards.delete(id);
   });
 
   for (const itemId of itemIds) syncClient.pushDelete("item", itemId);
   for (const list of lists) syncClient.pushDelete("list", list.id);
-  syncClient.pushDelete("category", id);
+  syncClient.pushDelete("board", id);
 }
 
 // --- Lists ---
 
 export async function createList(
   name: string,
-  categoryId: string,
+  boardId: string,
 ): Promise<List> {
   const maxPos = await db.lists.orderBy("position").last();
   const list: List = {
     id: generateId(),
-    category_id: categoryId,
+    board_id: boardId,
     name,
     icon: "",
     position: (maxPos?.position ?? -1) + 1,
@@ -98,7 +98,7 @@ export async function createList(
 
 export async function updateList(
   id: string,
-  updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "category_id">>,
+  updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "board_id">>,
 ): Promise<void> {
   await db.lists.update(id, { ...updates, updated_at: now() });
   const updated = await db.lists.get(id);
@@ -121,9 +121,9 @@ export async function deleteList(id: string): Promise<void> {
 
 async function getSchemaForList(listId: string): Promise<AttributeDefinition[]> {
   const list = await db.lists.get(listId);
-  if (!list?.category_id) return [];
-  const category = await db.categories.get(list.category_id);
-  return category?.schema ?? [];
+  if (!list?.board_id) return [];
+  const board = await db.boards.get(list.board_id);
+  return board?.schema ?? [];
 }
 
 export async function createItem(

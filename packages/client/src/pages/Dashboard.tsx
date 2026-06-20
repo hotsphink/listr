@@ -2,20 +2,20 @@ import { type Component, For, Show, createSignal, createEffect } from "solid-js"
 import { useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
-import type { Category, List } from "@listr/shared";
+import type { Board, List } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createList, createCategory, updateCategory } from "../db/operations.js";
+import { createList, createBoard, updateBoard } from "../db/operations.js";
 import ListFormModal from "../components/ListFormModal.js";
-import CategoryFormModal from "../components/CategoryFormModal.js";
+import BoardFormModal from "../components/BoardFormModal.js";
 
 const Dashboard: Component = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [showCreateList, setShowCreateList] = createSignal(false);
-  const [showCreateCategory, setShowCreateCategory] = createSignal(false);
-  const [editingCategory, setEditingCategory] = createSignal<Category | undefined>();
+  const [showCreateBoard, setShowCreateBoard] = createSignal(false);
+  const [editingBoard, setEditingBoard] = createSignal<Board | undefined>();
 
-  const categories = from(liveQuery(() => db.categories.orderBy("position").toArray()));
+  const boards = from(liveQuery(() => db.boards.orderBy("position").toArray()));
   const lists = from(liveQuery(() => db.lists.orderBy("position").toArray()));
   const itemCounts = from(
     liveQuery(async () => {
@@ -34,22 +34,22 @@ const Dashboard: Component = () => {
       setShowCreateList(true);
       navigate("/", { replace: true });
     }
-    if (state?.openCreateCategory) {
-      setShowCreateCategory(true);
+    if (state?.openCreateBoard) {
+      setShowCreateBoard(true);
       navigate("/", { replace: true });
     }
-    if (state?.editCategory) {
-      const cat = (categories() ?? []).find((c) => c.id === state.editCategory);
-      if (cat) setEditingCategory(cat);
+    if (state?.editBoard) {
+      const board = (boards() ?? []).find((b) => b.id === state.editBoard);
+      if (board) setEditingBoard(board);
       navigate("/", { replace: true });
     }
   });
 
-  const listsForCategory = (catId: string) =>
-    (lists() ?? []).filter((l) => l.category_id === catId);
+  const listsForBoard = (boardId: string) =>
+    (lists() ?? []).filter((l) => l.board_id === boardId);
 
-  const handleCreateList = async (data: { name: string; category_id: string; format_string: string | null }) => {
-    const list = await createList(data.name, data.category_id);
+  const handleCreateList = async (data: { name: string; board_id: string; format_string: string | null }) => {
+    const list = await createList(data.name, data.board_id);
     if (data.format_string != null) {
       await db.lists.update(list.id, { format_string: data.format_string });
     }
@@ -57,16 +57,16 @@ const Dashboard: Component = () => {
     navigate(`/list/${list.id}`);
   };
 
-  const handleCreateCategory = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
-    await createCategory(data.name, data.color, data.schema, data.format_string, data.macros);
-    setShowCreateCategory(false);
+  const handleCreateBoard = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
+    await createBoard(data.name, data.color, data.schema, data.format_string, data.macros);
+    setShowCreateBoard(false);
   };
 
-  const handleEditCategory = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
-    const cat = editingCategory();
-    if (!cat) return;
-    await updateCategory(cat.id, data);
-    setEditingCategory(undefined);
+  const handleEditBoard = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
+    const board = editingBoard();
+    if (!board) return;
+    await updateBoard(board.id, data);
+    setEditingBoard(undefined);
   };
 
   const renderListCard = (list: List) => (
@@ -83,8 +83,8 @@ const Dashboard: Component = () => {
       <div class="page-header">
         <h1>Lists</h1>
         <div class="header-actions">
-          <button class="btn-ghost" onClick={() => setShowCreateCategory(true)}>
-            + Category
+          <button class="btn-ghost" onClick={() => setShowCreateBoard(true)}>
+            + Board
           </button>
           <button class="btn-primary" onClick={() => setShowCreateList(true)}>
             + New List
@@ -94,27 +94,27 @@ const Dashboard: Component = () => {
 
       <div class="dashboard">
         <Show
-          when={(categories() ?? []).length > 0 || (lists() ?? []).length > 0}
+          when={(boards() ?? []).length > 0 || (lists() ?? []).length > 0}
           fallback={
             <div class="empty-state">
-              <p>No lists yet. Create a category and list to get started.</p>
-              <button class="btn-primary" onClick={() => setShowCreateCategory(true)}>
-                + New Category
+              <p>No lists yet. Create a board and list to get started.</p>
+              <button class="btn-primary" onClick={() => setShowCreateBoard(true)}>
+                + New Board
               </button>
             </div>
           }
         >
-          <For each={categories() ?? []}>
-            {(cat) => (
-              <div class="dashboard-category">
-                <div class="dashboard-category-header">
-                  <h2 style={`border-left: 3px solid ${cat.color}; padding-left: 8px`}>{cat.name}</h2>
-                  <button class="btn-icon" onClick={() => setEditingCategory(cat)} title="Edit category">
+          <For each={boards() ?? []}>
+            {(board) => (
+              <div class="dashboard-board">
+                <div class="dashboard-board-header">
+                  <h2 style={`border-left: 3px solid ${board.color}; padding-left: 8px`}>{board.name}</h2>
+                  <button class="btn-icon" onClick={() => setEditingBoard(board)} title="Edit board">
                     ⚙
                   </button>
                 </div>
                 <Show
-                  when={listsForCategory(cat.id).length > 0}
+                  when={listsForBoard(board.id).length > 0}
                   fallback={
                     <div style="color: var(--text-dim); font-size: 13px; padding: 4px 0 12px">
                       No lists yet
@@ -122,7 +122,7 @@ const Dashboard: Component = () => {
                   }
                 >
                   <div class="list-grid">
-                    <For each={listsForCategory(cat.id)}>
+                    <For each={listsForBoard(board.id)}>
                       {(list) => renderListCard(list)}
                     </For>
                   </div>
@@ -138,20 +138,20 @@ const Dashboard: Component = () => {
         open={showCreateList()}
         onClose={() => setShowCreateList(false)}
         onSave={handleCreateList}
-        categories={categories() ?? []}
+        boards={boards() ?? []}
       />
 
-      <CategoryFormModal
-        open={showCreateCategory()}
-        onClose={() => setShowCreateCategory(false)}
-        onSave={handleCreateCategory}
+      <BoardFormModal
+        open={showCreateBoard()}
+        onClose={() => setShowCreateBoard(false)}
+        onSave={handleCreateBoard}
       />
 
-      <CategoryFormModal
-        open={editingCategory() !== undefined}
-        onClose={() => setEditingCategory(undefined)}
-        onSave={handleEditCategory}
-        initial={editingCategory()}
+      <BoardFormModal
+        open={editingBoard() !== undefined}
+        onClose={() => setEditingBoard(undefined)}
+        onSave={handleEditBoard}
+        initial={editingBoard()}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { clearDatabase, createCategory } from "./helpers.js";
+import { clearDatabase, createBoard } from "./helpers.js";
 
 // Minimal 1×1 white PNG — content doesn't matter (server is mocked); only mimeType matters for the client check
 const TINY_PNG = Buffer.from(
@@ -70,9 +70,9 @@ test.describe("import modal", () => {
     await expect(page.locator(".modal")).toContainText("globally");
   });
 
-  test("Import from category context menu opens scoped modal", async ({ page }) => {
-    await createCategory(page, "Movies");
-    await page.locator(".sidebar-category-header", { hasText: "Movies" }).click({ button: "right" });
+  test("Import from board context menu opens scoped modal", async ({ page }) => {
+    await createBoard(page, "Movies");
+    await page.locator(".sidebar-board-header", { hasText: "Movies" }).click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Import" }).click();
     await expect(page.locator(".modal h2")).toHaveText("Import from Screenshot");
     await expect(page.locator(".modal")).toContainText('into "Movies"');
@@ -86,10 +86,10 @@ test.describe("import modal", () => {
   });
 
   test("uploading an image shows a preview of extracted items", async ({ page }) => {
-    await createCategory(page, "Movies");
+    await createBoard(page, "Movies");
     await setupSyncConfig(page);
     await mockImportRoute(page, {
-      categories: [{
+      boards: [{
         name: "Movies",
         lists: [
           { name: "Watchlist", items: [{ title: "Inception" }, { title: "The Matrix" }] },
@@ -111,10 +111,10 @@ test.describe("import modal", () => {
   });
 
   test("confirming import creates items in the database", async ({ page }) => {
-    await createCategory(page, "Movies");
+    await createBoard(page, "Movies");
     await setupSyncConfig(page);
     await mockImportRoute(page, {
-      categories: [{
+      boards: [{
         name: "Movies",
         lists: [{ name: "Watchlist", items: [{ title: "Inception" }, { title: "The Matrix" }] }],
       }],
@@ -133,10 +133,10 @@ test.describe("import modal", () => {
   });
 
   test("done button closes the modal after import", async ({ page }) => {
-    await createCategory(page, "Movies");
+    await createBoard(page, "Movies");
     await setupSyncConfig(page);
     await mockImportRoute(page, {
-      categories: [{
+      boards: [{
         name: "Movies",
         lists: [{ name: "Watchlist", items: [{ title: "Inception" }] }],
       }],
@@ -152,11 +152,11 @@ test.describe("import modal", () => {
   });
 
   test("already-existing items are shown as skip in preview", async ({ page }) => {
-    await createCategory(page, "Movies");
+    await createBoard(page, "Movies");
     await setupSyncConfig(page);
 
     const twoItemsResponse = {
-      categories: [{
+      boards: [{
         name: "Movies",
         lists: [{ name: "Watchlist", items: [{ title: "Inception" }, { title: "The Matrix" }] }],
       }],
@@ -184,16 +184,16 @@ test.describe("import modal", () => {
   });
 
   test("attributes are shown as pills in the preview", async ({ page }) => {
-    await createCategory(page, "Movies", [{ key: "imdb", label: "IMDB", type: "number" }]);
+    await createBoard(page, "Movies", [{ key: "imdb", label: "IMDB", type: "number" }]);
     await setupSyncConfig(page);
     await mockImportRoute(page, {
-      categories: [{
+      boards: [{
         name: "Movies",
         lists: [{ name: "Watchlist", items: [{ title: "Inception", attributes: { imdb: 8.8 } }] }],
       }],
     });
 
-    await page.locator(".sidebar-category-header", { hasText: "Movies" }).click({ button: "right" });
+    await page.locator(".sidebar-board-header", { hasText: "Movies" }).click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Import" }).click();
     await uploadFakeImage(page);
 
@@ -202,15 +202,15 @@ test.describe("import modal", () => {
   });
 
   test("list-scoped import opens from list context menu and adds items to that list", async ({ page }) => {
-    await createCategory(page, "Movies");
+    await createBoard(page, "Movies");
     await setupSyncConfig(page);
     // Gemini returns a flat list of items (list scope prompt)
     await mockImportRoute(page, {
-      categories: [{ name: "items", lists: [{ name: "items", items: [{ title: "Inception" }, { title: "The Matrix" }] }] }],
+      boards: [{ name: "items", lists: [{ name: "items", items: [{ title: "Inception" }, { title: "The Matrix" }] }] }],
     });
 
     // Create a list by clicking "+ New List" in the sidebar
-    await page.locator(".sidebar-category-header", { hasText: "Movies" }).click();
+    await page.locator(".sidebar-board-header", { hasText: "Movies" }).click();
     await page.locator(".sidebar-item.sidebar-new", { hasText: "+ New List" }).click();
     // Inline rename appears — type name and confirm
     const renameInput = page.locator(".sidebar-rename-input");
@@ -227,8 +227,8 @@ test.describe("import modal", () => {
 
     await uploadFakeImage(page);
     await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
-    // Category header should NOT appear for list scope
-    await expect(page.locator(".import-preview-category")).toHaveCount(0);
+    // Board header should NOT appear for list scope
+    await expect(page.locator(".import-preview-board")).toHaveCount(0);
     await expect(page.locator(".import-summary")).toContainText("2 new items");
 
     await page.getByRole("button", { name: /Import 2 items/ }).click();
@@ -240,10 +240,10 @@ test.describe("import modal", () => {
   });
 
   test("Back button returns to the upload screen", async ({ page }) => {
-    await createCategory(page, "Movies");
+    await createBoard(page, "Movies");
     await setupSyncConfig(page);
     await mockImportRoute(page, {
-      categories: [{ name: "Movies", lists: [{ name: "Watchlist", items: [{ title: "Inception" }] }] }],
+      boards: [{ name: "Movies", lists: [{ name: "Watchlist", items: [{ title: "Inception" }] }] }],
     });
 
     await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();

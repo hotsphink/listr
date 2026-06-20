@@ -31,7 +31,7 @@ async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<
   console.log(`[import] ${new Date().toISOString()} scope=${scope.type} model=${config.gemini_model ?? "gemini-2.0-flash-lite"} image=${imageKB}KB`);
   const t0 = Date.now();
   const result = await extractFromImage(image, mime_type, scope, config.gemini, config.gemini_model);
-  console.log(`[import] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${result.categories?.length ?? 0} categories`);
+  console.log(`[import] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${result.boards?.length ?? 0} boards`);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify(result));
 }
@@ -140,15 +140,15 @@ wss.on("connection", (ws: WebSocket) => {
 
     if (msg.type === "pull") {
       const since: number = typeof msg.since === "number" ? msg.since : 0;
-      const categories = getEntitiesSince("category", key, since);
+      const boards = getEntitiesSince("board", key, since);
       const lists = getEntitiesSince("list", key, since);
       const items = getEntitiesSince("item", key, since);
       const assets = getEntitiesSince("asset", key, since);
       const tombstones = getTombstonesSince(key, since);
       const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
       for (const k of Object.keys(pushCounts)) delete pushCounts[k];
-      console.log(`[sync] ${ts()} ${keyTag(key)} pull since=${since}${pushed ? ` pushed: ${pushed}` : ""} → cat=${categories.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
-      ws.send(JSON.stringify({ type: "snapshot", categories, lists, items, assets, tombstones, server_time: Date.now() }));
+      console.log(`[sync] ${ts()} ${keyTag(key)} pull since=${since}${pushed ? ` pushed: ${pushed}` : ""} → boards=${boards.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
+      ws.send(JSON.stringify({ type: "snapshot", boards, lists, items, assets, tombstones, server_time: Date.now() }));
       return;
     }
 

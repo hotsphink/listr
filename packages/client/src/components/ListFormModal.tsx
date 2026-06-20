@@ -1,40 +1,40 @@
 import { type Component, createSignal, createEffect, For, Show } from "solid-js";
-import type { Category, List } from "@listr/shared";
+import type { Board, List } from "@listr/shared";
 import Modal from "./Modal.js";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (data: { name: string; category_id: string; format_string: string | null }) => void;
-  categories: Category[];
+  onSave: (data: { name: string; board_id: string; format_string: string | null }) => void;
+  boards: Board[];
   initial?: List;
-  defaultCategoryId?: string | null;
+  defaultBoardId?: string | null;
 }
 
 const ListFormModal: Component<Props> = (props) => {
   const [name, setName] = createSignal("");
-  const [categoryId, setCategoryId] = createSignal("");
+  const [boardId, setBoardId] = createSignal("");
   const [formatOverride, setFormatOverride] = createSignal("");
   const [overrideFormat, setOverrideFormat] = createSignal(false);
 
   createEffect(() => {
     if (props.open) {
       setName(props.initial?.name ?? "");
-      setCategoryId(props.initial?.category_id ?? props.defaultCategoryId ?? props.categories[0]?.id ?? "");
+      setBoardId(props.initial?.board_id ?? props.defaultBoardId ?? props.boards[0]?.id ?? "");
       const hasOverride = props.initial?.format_string != null;
       setOverrideFormat(hasOverride);
       setFormatOverride(props.initial?.format_string ?? "");
     }
   });
 
-  const selectedCategory = () => props.categories.find((c) => c.id === categoryId());
+  const selectedBoard = () => props.boards.find((b) => b.id === boardId());
 
   const handleSubmit = (e: Event) => {
     e.preventDefault();
-    if (!name().trim() || !categoryId()) return;
+    if (!name().trim() || !boardId()) return;
     props.onSave({
       name: name().trim(),
-      category_id: categoryId(),
+      board_id: boardId(),
       format_string: overrideFormat() ? formatOverride() : null,
     });
   };
@@ -52,18 +52,18 @@ const ListFormModal: Component<Props> = (props) => {
           />
         </div>
         <div class="form-field">
-          <label>Category</label>
+          <label>Board</label>
           <select
-            value={categoryId()}
-            onChange={(e) => setCategoryId(e.currentTarget.value)}
+            value={boardId()}
+            onChange={(e) => setBoardId(e.currentTarget.value)}
           >
-            <For each={props.categories}>
-              {(cat) => <option value={cat.id}>{cat.name}</option>}
+            <For each={props.boards}>
+              {(board) => <option value={board.id}>{board.name}</option>}
             </For>
           </select>
         </div>
-        <Show when={selectedCategory()}>
-          {(cat) => (
+        <Show when={selectedBoard()}>
+          {(board) => (
             <div class="form-field">
               <div class="checkbox-field">
                 <input
@@ -72,24 +72,24 @@ const ListFormModal: Component<Props> = (props) => {
                   onChange={(e) => {
                     setOverrideFormat(e.currentTarget.checked);
                     if (e.currentTarget.checked && !formatOverride()) {
-                      setFormatOverride(cat().format_string);
+                      setFormatOverride(board().format_string);
                     }
                   }}
                 />
                 <label style="margin-bottom: 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text)">
-                  Override category format string
+                  Override board format string
                 </label>
               </div>
               <Show when={overrideFormat()}>
                 <input
                   value={formatOverride()}
                   onInput={(e) => setFormatOverride(e.currentTarget.value)}
-                  placeholder={cat().format_string}
+                  placeholder={board().format_string}
                 />
               </Show>
               <Show when={!overrideFormat()}>
                 <div style="font-size: 12px; color: var(--text-muted)">
-                  Using: {cat().format_string}
+                  Using: {board().format_string}
                 </div>
               </Show>
             </div>

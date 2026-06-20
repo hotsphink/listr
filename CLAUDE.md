@@ -1,6 +1,6 @@
 # Listr
 
-Trello-like list management app with customizable per-category attribute schemas.
+Trello-like list management app with customizable per-board attribute schemas.
 
 ## Structure
 
@@ -24,8 +24,8 @@ Monorepo with pnpm workspaces:
 - SolidJS for fine-grained reactivity (no VDOM)
 - Dexie.js wraps IndexedDB; reactive subscriptions via `createEffect` + `liveQuery`
 - `title` is a first-class Item field, not part of the dynamic schema
-- Attribute schema and default format string live on Category, not List
-- Lists belong to Categories; a List can override the Category's format string
+- Attribute schema and default format string live on Board, not List
+- Lists belong to Boards; a List can override the Board's format string
 - Format strings: `{key}`, `{key:modifier}`, `{content|}` conditionals, `{key:?true:false}` ternary
 - View modes: list (default), table, card, board (per-list, persisted)
 - Use `jj` for version control, not git

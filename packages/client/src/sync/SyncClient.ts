@@ -335,13 +335,13 @@ class SyncClient {
     const config = await db.sync_config.get("default");
     const since = config?.last_sync_key === this.key ? (config?.last_sync_at ?? 0) : 0;
 
-    const [cats, lists, items, assets] = await Promise.all([
-      db.categories.where("updated_at").above(since).toArray(),
+    const [boards, lists, items, assets] = await Promise.all([
+      db.boards.where("updated_at").above(since).toArray(),
       db.lists.where("updated_at").above(since).toArray(),
       db.items.where("updated_at").above(since).toArray(),
       db.assets.where("updated_at").above(since).toArray(),
     ]);
-    for (const e of cats) send({ type: "push_entity", entity_type: "category", data: e });
+    for (const e of boards) send({ type: "push_entity", entity_type: "board", data: e });
     for (const e of lists) send({ type: "push_entity", entity_type: "list", data: e });
     for (const e of items) send({ type: "push_entity", entity_type: "item", data: e });
     for (const a of assets) send({ type: "push_entity", entity_type: "asset", data: assetToSync(a) });
@@ -367,7 +367,7 @@ class SyncClient {
   }
 
   private async applySnapshot(msg: any): Promise<void> {
-    for (const e of msg.categories ?? []) await this.mergeEntity("category", e);
+    for (const e of msg.boards ?? []) await this.mergeEntity("board", e);
     for (const e of msg.lists ?? []) await this.mergeEntity("list", e);
     for (const e of msg.items ?? []) await this.mergeEntity("item", e);
     for (const e of msg.assets ?? []) await this.mergeEntity("asset", e);
@@ -390,7 +390,7 @@ class SyncClient {
       }
       return;
     }
-    const table = entityType === "category" ? db.categories : entityType === "list" ? db.lists : db.items;
+    const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : db.items;
     const existing = await (table as any).get(incoming.id);
     const toStore = applyIncomingEntity(entityType, incoming, existing);
     if (toStore) await (table as any).put(toStore);
@@ -403,7 +403,7 @@ class SyncClient {
       entity_id: entityId,
       deleted_at: deletedAt,
     });
-    if (entityType === "category") await db.categories.delete(entityId);
+    if (entityType === "board") await db.boards.delete(entityId);
     else if (entityType === "list") await db.lists.delete(entityId);
     else if (entityType === "item") await db.items.delete(entityId);
   }
