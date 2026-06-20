@@ -55,7 +55,7 @@ function buildPrompt(scope: ImportScope): string {
     lines.push("Extract every visible card or item into the single flat list. Do not split by board column or list name.");
     lines.push("");
   } else {
-    lines.push("Extract structured data from this Trello board screenshot.");
+    lines.push("Extract structured data from this screenshot of a list of boards.");
     lines.push("");
     lines.push("Return a JSON object with this exact structure (no markdown fences):");
     lines.push('{ "boards": [ { "name": "...", "lists": [ { "name": "...", "items": [ { "title": "..." } ] } ] } ] }');
@@ -64,7 +64,7 @@ function buildPrompt(scope: ImportScope): string {
     if (scope.type === "board" && scope.name) {
       lines.push(`This board is named "${scope.name}". Use "${scope.name}" as the single board name.`);
     } else {
-      lines.push("The board title becomes the board name. Each Trello list becomes a list within that board.");
+      lines.push("The board title becomes the board name. Each list becomes a list within that board.");
     }
     lines.push("");
   }
@@ -80,10 +80,9 @@ function buildPrompt(scope: ImportScope): string {
     lines.push('Example: the card "Poor things 2h21 7.8" → { "title": "Poor things", "duration": "2h21", "imdb": 7.8 }');
     lines.push("");
     lines.push("Rules:");
-    lines.push("- Only include an attribute field when you are confident about its value.");
-    lines.push("- When uncertain, leave the full text in the title and omit the attribute.");
+    lines.push("- Include an attribute field when you are somewhat confident about its value.");
+    lines.push("- When too uncertain, leave the full text in the title and omit the attribute.");
     lines.push("- The title is the card text remaining after identified attribute values are removed.");
-    lines.push("- Preserve parenthetical notes like (SC) or (CF) in the title — they are not attributes.");
     lines.push("- number attributes must be JSON numbers, not strings.");
   } else {
     lines.push("Extract only \"title\" from each card. Do not add any other fields.");
