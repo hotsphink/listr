@@ -42,6 +42,7 @@ const ALLOWED_ORIGINS = new Set([
   "https://finkripper.heron-moth.ts.net",
   "https://finkripper.heron-moth.ts.net:10000",
   "https://finkripper.heron-moth.ts.net:8443",
+  "https://finkripper.heron-moth.ts.net:3000",
   "http://localhost:3000",
   "https://localhost:3000",
 ]);

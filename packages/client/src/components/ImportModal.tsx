@@ -26,9 +26,11 @@ interface Props {
 }
 
 async function getApiUrl(): Promise<string | null> {
-  const cfg = await db.sync_config.get("default");
-  if (!cfg?.sync_url) return null;
-  return cfg.sync_url.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
+  const endpoints = await db.sync_endpoints.orderBy("position").toArray();
+  const ep = endpoints.find((e) => e.enabled);
+  if (!ep?.host) return null;
+  const proto = ep.secure ? "https" : "http";
+  return `${proto}://${ep.host}:${ep.port}`;
 }
 
 async function fetchExtraction(imageBase64: string, mimeType: string, scope: ImportScope): Promise<ImportedBoard[]> {
