@@ -81,6 +81,17 @@ describe("renderFormatString", () => {
     expect(renderFormatString("{title:lower}", item)).toBe("inception");
   });
 
+  it("applies url modifier to encode for use in URLs", () => {
+    const item = makeItem("Edward Scissorhands");
+    expect(renderFormatString("{title:url}", item)).toBe("Edward%20Scissorhands");
+  });
+
+  it("applies url modifier in a markdown link URL", () => {
+    const item = makeItem("Edward Scissorhands");
+    const result = renderFormatStringHtml("[IMDB](https://www.imdb.com/find/?q={title:url})", item);
+    expect(result).toBe('<a href="https://www.imdb.com/find/?q=Edward%20Scissorhands">IMDB</a>');
+  });
+
   it("applies fallback modifier for missing values", () => {
     const item = makeItem("Inception", {});
     expect(renderFormatString("{rating:fallback=N/A} - {title}", item)).toBe("N/A - Inception");
@@ -397,5 +408,39 @@ describe("image syntax", () => {
     expect(result).toContain('<b><i>tt1375666</i></b>');
     expect(result).toContain('(2h28m)');
     expect(result).toContain('74% RT');
+  });
+});
+
+describe("links in format strings", () => {
+  const item = makeItem("Test");
+
+  it("renders markdown link as <a> in HTML mode", () => {
+    const result = renderFormatStringHtml("[IMDB](https://imdb.com)", item);
+    expect(result).toBe('<a href="https://imdb.com">IMDB</a>');
+  });
+
+  it("renders markdown link with placeholder in text", () => {
+    const result = renderFormatStringHtml("[{title}](https://example.com)", item);
+    expect(result).toBe('<a href="https://example.com">Test</a>');
+  });
+
+  it("leaves markdown link as-is in plain text mode", () => {
+    const result = renderFormatString("[IMDB](https://imdb.com)", item);
+    expect(result).toBe("[IMDB](https://imdb.com)");
+  });
+
+  it("passes through <a> tag written directly in format string", () => {
+    const result = renderFormatStringHtml('<a href="https://imdb.com">IMDB</a>', item);
+    expect(result).toBe('<a href="https://imdb.com">IMDB</a>');
+  });
+
+  it("escapes double quotes in markdown link URL", () => {
+    const result = renderFormatStringHtml('[x](https://example.com/q?a="b")', item);
+    expect(result).toContain('href="https://example.com/q?a=&quot;b&quot;"');
+  });
+
+  it("renders markdown link mixed with other content", () => {
+    const result = renderFormatStringHtml("{title} — [details](https://example.com)", item);
+    expect(result).toBe('Test — <a href="https://example.com">details</a>');
   });
 });

@@ -189,11 +189,18 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function convertMarkdownLinks(text: string): string {
+  return text.replace(/\[([^\]]*)\]\(([^)]*)\)/g, (_, linkText, url) =>
+    `<a href="${url.replace(/"/g, "&quot;")}">${linkText}</a>`,
+  );
+}
+
 type ModifierFn = (value: unknown, arg?: string) => string;
 
 const builtinModifiers: Record<string, ModifierFn> = {
   upper: (v) => String(v).toUpperCase(),
   lower: (v) => String(v).toLowerCase(),
+  url: (v) => encodeURIComponent(String(v)),
   fallback: (v, arg) => (v != null && v !== "" ? formatValue(v) : arg ?? ""),
   stars: (v) => {
     const n = Number(v);
@@ -342,7 +349,7 @@ function renderSegments(
   for (const seg of segments) {
     switch (seg.kind) {
       case "literal":
-        result += seg.text;
+        result += html ? convertMarkdownLinks(seg.text) : seg.text;
         break;
 
       case "placeholder": {
@@ -436,7 +443,8 @@ export function renderFormatStringHtml(
 ): string {
   const schemaMap = new Map(schema?.map((d) => [d.key, d]));
   const segments = parseFormatString(format);
-  return renderSegments(segments, item, customModifiers, false, schemaMap, macros, undefined, true, urlResolver) ?? escapeHtml(item.title);
+  const rendered = renderSegments(segments, item, customModifiers, false, schemaMap, macros, undefined, true, urlResolver) ?? escapeHtml(item.title);
+  return convertMarkdownLinks(rendered);
 }
 
 export function validateFormatString(format: string, macros?: Record<string, string>): string | null {

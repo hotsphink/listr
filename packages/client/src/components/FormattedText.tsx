@@ -1,7 +1,7 @@
 import { type Component, createEffect } from "solid-js";
 
-const ALLOWED_ELEMENTS = ["b", "i", "em", "strong", "u", "s", "span", "img"];
-const ALLOWED_ATTRIBUTES = { src: ["img"], alt: ["img"] };
+const ALLOWED_ELEMENTS = ["b", "i", "em", "strong", "u", "s", "span", "img", "a"];
+const ALLOWED_ATTRIBUTES = { src: ["img"], alt: ["img"], href: ["a"], target: ["a"], rel: ["a"] };
 
 const FormattedText: Component<{ html: string; class?: string }> = (props) => {
   let el!: HTMLSpanElement;
