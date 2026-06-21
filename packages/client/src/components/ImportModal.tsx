@@ -260,6 +260,8 @@ const ImportModal: Component<Props> = (props) => {
   const [nativeResult, setNativeResult] = createSignal<ImportStats | null>(null);
 
   let fileInputRef!: HTMLInputElement;
+  let cameraInputRef!: HTMLInputElement;
+  const isTouchDevice = "ontouchstart" in window;
 
   onMount(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -397,11 +399,21 @@ const ImportModal: Component<Props> = (props) => {
         </div>
         <input ref={fileInputRef} type="file" accept="image/*,.json" style="display:none"
           onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) processFile(f); e.currentTarget.value = ""; }} />
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style="display:none"
+          onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) processFile(f); e.currentTarget.value = ""; }} />
         <Show when={error()}>
           {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
         </Show>
         <div class="modal-actions">
           <button class="btn-ghost" onClick={handleClose}>Cancel</button>
+          <Show when={isTouchDevice}>
+            <button class="btn-ghost" disabled={phase() === "extracting"} onClick={() => cameraInputRef.click()}>
+              Take photo
+            </button>
+          </Show>
+          <button class="btn-ghost" disabled={phase() === "extracting"} onClick={() => fileInputRef.click()}>
+            Choose file…
+          </button>
         </div>
       </Show>
 
