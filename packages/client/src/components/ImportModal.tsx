@@ -2,7 +2,8 @@ import { type Component, createSignal, Show, For, createMemo, onMount, onCleanup
 import type { AttributeDefinition } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createBoard, createList, bulkCreateItems } from "../db/operations.js";
-import { isNativeExport, previewNativeImport, applyNativeImport } from "../db/exportImport.js";
+import { syncClient } from "../sync/SyncClient.js";
+import { isNativeExport, previewNativeImport, applyNativeImport, computeAiImportOrder } from "../db/exportImport.js";
 import type { NativeExport, ImportStats } from "../db/exportImport.js";
 import Modal from "./Modal.js";
 
@@ -33,7 +34,7 @@ async function getApiUrl(): Promise<string | null> {
   return `${proto}://${ep.host}:${ep.port}`;
 }
 
-async function fetchExtraction(imageBase64: string, mimeType: string, scope: ImportScope): Promise<ImportedBoard[]> {
+async function fetchExtraction(imageBase64: string, mimeType: string, scope: ImportScope): Promise<{ boards: ImportedBoard[]; raw: string }> {
   const apiUrl = await getApiUrl();
   if (!apiUrl) throw new Error("No sync server configured. Set up a sync server first — the AI key lives there.");
 
@@ -49,8 +50,40 @@ async function fetchExtraction(imageBase64: string, mimeType: string, scope: Imp
     }),
   });
 
-  const data = await resp.json() as any;
-  if (!resp.ok) throw new Error(data.error ?? `Server error ${resp.status}`);
+  const raw = await resp.text();
+  (window as any).lastImportRawResult = raw;
+  console.log("Import response received — inspect with: window.lastImportRawResult");
+  if (!resp.ok) {
+    let msg = `Server error ${resp.status}`;
+    try { msg = (JSON.parse(raw) as any).error ?? msg; } catch {}
+    throw new Error(msg);
+  }
+  const data = JSON.parse(raw) as any;
+  return { boards: normalizeExtraction(data, scope), raw };
+}
+
+// AI returns attributes as top-level fields alongside title; move them into attributes.
+function normalizeItem(raw: any): ImportedItem {
+  const { title, ...attrs } = raw;
+  return { title: String(title ?? ""), attributes: attrs };
+}
+
+function normalizeExtraction(data: any, scope: ImportScope): ImportedBoard[] {
+  if (Array.isArray(data.items)) {
+    // List scope: {"items": [...]}
+    const name = scope.type === "list" ? scope.name : "Items";
+    const items = data.items.map(normalizeItem);
+    return [{ name, lists: [{ name, items }] }];
+  }
+  if (Array.isArray(data.lists)) {
+    // Board/global scope: {"lists": [{name, items}, ...]}
+    const boardName = scope.type === "board" ? scope.name : "Import";
+    const lists = data.lists.map((l: any) => ({
+      name: l.name,
+      items: (l.items ?? []).map(normalizeItem),
+    }));
+    return [{ name: boardName, lists }];
+  }
   return (data.boards ?? []) as ImportedBoard[];
 }
 
@@ -104,10 +137,56 @@ async function buildPreview(extracted: ImportedBoard[], scope: ImportScope): Pro
   });
 }
 
+async function applyAttributeMerge(listId: string, allPreviewItems: PreviewItem[]): Promise<void> {
+  const skipItems = allPreviewItems.filter((i) => i.skip && Object.keys(i.attributes).length > 0);
+  if (skipItems.length === 0) return;
+  const existingItems = await db.items.where("list_id").equals(listId).toArray();
+  const titleToItem = new Map(existingItems.map((i) => [i.title.toLowerCase(), i]));
+  const ts = Date.now();
+  for (const preview of skipItems) {
+    const existing = titleToItem.get(preview.title.toLowerCase());
+    if (!existing) continue;
+    const merged: Record<string, unknown> = { ...existing.attributes };
+    let changed = false;
+    for (const [key, value] of Object.entries(preview.attributes)) {
+      const cur = existing.attributes[key];
+      if (value != null && value !== "" && (cur == null || cur === "")) {
+        merged[key] = value;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await db.items.update(existing.id, { attributes: merged, updated_at: ts });
+      const updated = await db.items.get(existing.id);
+      if (updated) syncClient.pushEntity("item", updated);
+    }
+  }
+}
+
+async function applyImportOrder(listId: string, allPreviewItems: PreviewItem[]): Promise<void> {
+  const allItems = await db.items.where("list_id").equals(listId).sortBy("position");
+  const titleToId = new Map(allItems.map((i) => [i.title.toLowerCase(), i.id]));
+  const importedIds = allPreviewItems
+    .map((i) => titleToId.get(i.title.toLowerCase()))
+    .filter((id): id is string => id !== undefined);
+  const updates = computeAiImportOrder(importedIds, allItems);
+  if (updates.length > 0) {
+    const ts = Date.now();
+    await db.transaction("rw", db.items, async () => {
+      for (const { id, position } of updates) {
+        await db.items.update(id, { position, updated_at: ts });
+      }
+    });
+  }
+}
+
 async function performImport(preview: PreviewBoard[], scope: ImportScope): Promise<number> {
   if (scope.type === "list") {
-    const newItems = preview.flatMap((b) => b.lists.flatMap((l) => l.items.filter((i) => !i.skip)));
+    const allPreviewItems = preview.flatMap((b) => b.lists.flatMap((l) => l.items));
+    const newItems = allPreviewItems.filter((i) => !i.skip);
     if (newItems.length > 0) await bulkCreateItems(scope.id, newItems);
+    await applyAttributeMerge(scope.id, allPreviewItems);
+    await applyImportOrder(scope.id, allPreviewItems);
     return newItems.length;
   }
 
@@ -132,6 +211,8 @@ async function performImport(preview: PreviewBoard[], scope: ImportScope): Promi
         await bulkCreateItems(listId, newItems);
         total += newItems.length;
       }
+      await applyAttributeMerge(listId, list.items);
+      await applyImportOrder(listId, list.items);
     }
   }
   return total;
@@ -172,6 +253,8 @@ const ImportModal: Component<Props> = (props) => {
   const [preview, setPreview] = createSignal<PreviewBoard[]>([]);
   const [importedCount, setImportedCount] = createSignal(0);
   const [dragging, setDragging] = createSignal(false);
+  const [rawJson, setRawJson] = createSignal<string | null>(null);
+  const [showRaw, setShowRaw] = createSignal(false);
   const [nativeDoc, setNativeDoc] = createSignal<NativeExport | null>(null);
   const [nativeStats, setNativeStats] = createSignal<ImportStats | null>(null);
   const [nativeResult, setNativeResult] = createSignal<ImportStats | null>(null);
@@ -195,6 +278,8 @@ const ImportModal: Component<Props> = (props) => {
     setPhase("idle");
     setError(null);
     setPreview([]);
+    setRawJson(null);
+    setShowRaw(false);
     setNativeDoc(null);
     setNativeStats(null);
     setNativeResult(null);
@@ -231,7 +316,8 @@ const ImportModal: Component<Props> = (props) => {
     setPhase("extracting");
     try {
       const base64 = await fileToBase64(file);
-      const extracted = await fetchExtraction(base64, file.type, props.scope);
+      const { boards: extracted, raw } = await fetchExtraction(base64, file.type, props.scope);
+      setRawJson(raw);
       const prev = await buildPreview(extracted, props.scope);
       setPreview(prev);
       setPhase("preview");
@@ -405,12 +491,22 @@ const ImportModal: Component<Props> = (props) => {
             )}
           </For>
         </div>
+        <Show when={rawJson()}>
+          <div style="margin-top: 8px">
+            <button type="button" class="btn-ghost btn-xs" onClick={() => setShowRaw((v) => !v)}>
+              {showRaw() ? "Hide raw JSON" : "Show raw JSON"}
+            </button>
+            <Show when={showRaw()}>
+              <pre style="margin-top: 6px; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all">{rawJson()}</pre>
+            </Show>
+          </div>
+        </Show>
         <Show when={error()}>
           {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
         </Show>
         <div class="modal-actions">
           <button class="btn-ghost" onClick={() => { setError(null); setPhase("idle"); }} disabled={phase() === "importing"}>Back</button>
-          <button class="btn-primary" onClick={handleConfirm} disabled={phase() === "importing" || totalNew() === 0}>
+          <button class="btn-primary" onClick={handleConfirm} disabled={phase() === "importing"}>
             {phase() === "importing" ? "Importing..." : `Import ${totalNew()} item${totalNew() !== 1 ? "s" : ""}`}
           </button>
         </div>

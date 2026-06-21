@@ -379,3 +379,28 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
 
   return stats;
 }
+
+/**
+ * Given an ordered list of item IDs from an AI import and all items currently
+ * in the list, returns the position updates needed so that:
+ *   - imported items appear first, in import array order
+ *   - items not in the import are appended after, in their original relative order
+ * Only items whose position actually changes are returned.
+ */
+export function computeAiImportOrder(
+  importedIds: string[],
+  allItems: { id: string; position: number }[],
+): { id: string; position: number }[] {
+  const existingIds = new Set(allItems.map((i) => i.id));
+  const knownImported = importedIds.filter((id) => existingIds.has(id));
+  const importedSet = new Set(knownImported);
+  const nonImported = [...allItems]
+    .filter((i) => !importedSet.has(i.id))
+    .sort((a, b) => a.position - b.position)
+    .map((i) => i.id);
+  const orderedIds = [...knownImported, ...nonImported];
+  const currentPos = new Map(allItems.map((i) => [i.id, i.position]));
+  return orderedIds
+    .map((id, i) => ({ id, position: i }))
+    .filter(({ id, position }) => currentPos.get(id) !== position);
+}

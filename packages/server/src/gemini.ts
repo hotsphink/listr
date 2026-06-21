@@ -50,22 +50,15 @@ function buildPrompt(scope: ImportScope): string {
     lines.push("Extract all visible items from this screenshot.");
     lines.push("");
     lines.push("Return a JSON object with this exact structure (no markdown fences):");
-    lines.push('{ "boards": [ { "name": "items", "lists": [ { "name": "items", "items": [ { "title": "..." } ] } ] } ] }');
+    lines.push('{ "items": [ { "title": "..." } ] }');
     lines.push("");
     lines.push("Extract every visible card or item into the single flat list. Do not split by board column or list name.");
     lines.push("");
   } else {
-    lines.push("Extract structured data from this screenshot of a list of boards.");
+    lines.push("Extract structured data from this screenshot of a set of lists.");
     lines.push("");
     lines.push("Return a JSON object with this exact structure (no markdown fences):");
-    lines.push('{ "boards": [ { "name": "...", "lists": [ { "name": "...", "items": [ { "title": "..." } ] } ] } ] }');
-    lines.push("");
-
-    if (scope.type === "board" && scope.name) {
-      lines.push(`This board is named "${scope.name}". Use "${scope.name}" as the single board name.`);
-    } else {
-      lines.push("The board title becomes the board name. Each list becomes a list within that board.");
-    }
+    lines.push('{ "lists": [ { "name": "...", "items": [ { "title": "..." } ] } ] }');
     lines.push("");
   }
 
