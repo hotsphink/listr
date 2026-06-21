@@ -63,7 +63,19 @@ export function useSortable(
           const curIdx = columns.reduce(
             (best, col, i) => (col.offsetLeft <= scrollEl.scrollLeft + 1 ? i : best), 0
           );
-          if (rect.right - dragX < SENSITIVITY && curIdx < columns.length - 1) {
+
+          // Map drag position from viewport coords into scroll-space, then find which
+          // column it falls over. If it's a different column than the current snap
+          // position, scroll there — this handles partially-visible adjacent columns.
+          const dragXInScroll = dragX - rect.left + scrollEl.scrollLeft;
+          const overIdx = columns.findIndex((col) =>
+            dragXInScroll >= col.offsetLeft && dragXInScroll < col.offsetLeft + col.offsetWidth
+          );
+
+          if (overIdx !== -1 && overIdx !== curIdx) {
+            scrollEl.scrollTo({ left: columns[overIdx].offsetLeft, behavior: "smooth" });
+            lastSnapTime = now;
+          } else if (rect.right - dragX < SENSITIVITY && curIdx < columns.length - 1) {
             scrollEl.scrollTo({ left: columns[curIdx + 1].offsetLeft, behavior: "smooth" });
             lastSnapTime = now;
           } else if (dragX - rect.left < SENSITIVITY && curIdx > 0) {
