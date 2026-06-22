@@ -19,70 +19,118 @@ export function useSortable(
 
   // Edge-scroll state
   let dragX = 0;
+  let dragY = 0;
   let dragStartX = 0;
   let scrollUnlocked = false;
   let lastSnapTime = 0;
   let scrollRaf: number | null = null;
 
-  const updateDragX = (e: Event) => {
-    if (e instanceof TouchEvent) dragX = e.touches[0]?.clientX ?? dragX;
-    else if (e instanceof MouseEvent) dragX = e.clientX;
+  // Firefox desktop leaves TouchEvent undefined when touch events are disabled,
+  // so referencing it in `instanceof` throws a ReferenceError. Guard on typeof.
+  const isTouchEvent = (e: unknown): e is TouchEvent =>
+    typeof TouchEvent !== "undefined" && e instanceof TouchEvent;
+
+  const updateDrag = (e: Event) => {
+    if (isTouchEvent(e)) {
+      dragX = e.touches[0]?.clientX ?? dragX;
+      dragY = e.touches[0]?.clientY ?? dragY;
+    } else if (e instanceof MouseEvent) {
+      dragX = e.clientX;
+      dragY = e.clientY;
+    }
   };
 
   const stopEdgeScroll = () => {
     if (scrollRaf !== null) { cancelAnimationFrame(scrollRaf); scrollRaf = null; }
-    document.removeEventListener("pointermove", updateDragX);
-    document.removeEventListener("touchmove", updateDragX);
+    document.removeEventListener("pointermove", updateDrag);
+    document.removeEventListener("touchmove", updateDrag);
     if (scrollEl) scrollEl.style.scrollSnapType = "";
   };
 
-  const startEdgeScroll = (initialX: number) => {
-    if (!scrollEl) return;
-    scrollEl.style.scrollSnapType = "none";
+  const startEdgeScroll = (initialX: number, initialY: number) => {
+    if (scrollEl) scrollEl.style.scrollSnapType = "none";
     dragX = initialX;
+    dragY = initialY;
     dragStartX = initialX;
     scrollUnlocked = false;
     lastSnapTime = 0;
-    document.addEventListener("pointermove", updateDragX, { passive: true });
-    document.addEventListener("touchmove", updateDragX, { passive: true });
+    document.addEventListener("pointermove", updateDrag, { passive: true });
+    document.addEventListener("touchmove", updateDrag, { passive: true });
 
     const SENSITIVITY = 80;
     const UNLOCK_THRESHOLD = 40; // px horizontal movement before edge-scroll activates
     const SNAP_COOLDOWN = 350;   // ms between column snaps
+    const VERT_ZONE = 80;        // px from top/bottom edge that triggers vertical scroll
+    const VERT_SPEED = 6;        // px per frame
+
+    const applyVerticalScroll = (vertEl: HTMLElement) => {
+      const vr = vertEl.getBoundingClientRect();
+      const fromTop = dragY - vr.top;
+      const fromBottom = vr.bottom - dragY;
+      if (fromTop < VERT_ZONE && vertEl.scrollTop > 0) {
+        const speed = Math.ceil(VERT_SPEED * (1 - fromTop / VERT_ZONE));
+        vertEl.scrollTop = Math.max(0, vertEl.scrollTop - speed);
+      } else if (fromBottom < VERT_ZONE) {
+        const maxScroll = vertEl.scrollHeight - vertEl.clientHeight;
+        if (vertEl.scrollTop < maxScroll) {
+          const speed = Math.ceil(VERT_SPEED * (1 - fromBottom / VERT_ZONE));
+          vertEl.scrollTop = Math.min(maxScroll, vertEl.scrollTop + speed);
+        }
+      }
+    };
 
     const tick = () => {
       if (!scrollUnlocked) {
         if (Math.abs(dragX - dragStartX) > UNLOCK_THRESHOLD) scrollUnlocked = true;
       }
 
-      if (scrollUnlocked) {
-        const rect = scrollEl.getBoundingClientRect();
-        const now = Date.now();
-        if (now - lastSnapTime > SNAP_COOLDOWN) {
-          const columns = Array.from(scrollEl.children) as HTMLElement[];
-          const curIdx = columns.reduce(
-            (best, col, i) => (col.offsetLeft <= scrollEl.scrollLeft + 1 ? i : best), 0
-          );
+      if (scrollEl) {
+        // Multi-column layout: find the scrollable items container inside the
+        // column currently under the drag position (handles cross-list drags).
+        const columns = Array.from(scrollEl.children) as HTMLElement[];
+        const hoveredCol = columns.find((col) => {
+          const r = col.getBoundingClientRect();
+          return dragX >= r.left && dragX < r.right;
+        });
+        if (hoveredCol) {
+          const vertEl = Array.from(hoveredCol.children).find((c) => {
+            const oy = getComputedStyle(c).overflowY;
+            return oy === "auto" || oy === "scroll" || oy === "overlay";
+          }) as HTMLElement | undefined;
+          if (vertEl) applyVerticalScroll(vertEl);
+        }
 
-          // Map drag position from viewport coords into scroll-space, then find which
-          // column it falls over. If it's a different column than the current snap
-          // position, scroll there — this handles partially-visible adjacent columns.
-          const dragXInScroll = dragX - rect.left + scrollEl.scrollLeft;
-          const overIdx = columns.findIndex((col) =>
-            dragXInScroll >= col.offsetLeft && dragXInScroll < col.offsetLeft + col.offsetWidth
-          );
+        if (scrollUnlocked) {
+          const rect = scrollEl.getBoundingClientRect();
+          const now = Date.now();
+          if (now - lastSnapTime > SNAP_COOLDOWN) {
+            const curIdx = columns.reduce(
+              (best, col, i) => (col.offsetLeft <= scrollEl.scrollLeft + 1 ? i : best), 0
+            );
 
-          if (overIdx !== -1 && overIdx !== curIdx) {
-            scrollEl.scrollTo({ left: columns[overIdx].offsetLeft, behavior: "smooth" });
-            lastSnapTime = now;
-          } else if (rect.right - dragX < SENSITIVITY && curIdx < columns.length - 1) {
-            scrollEl.scrollTo({ left: columns[curIdx + 1].offsetLeft, behavior: "smooth" });
-            lastSnapTime = now;
-          } else if (dragX - rect.left < SENSITIVITY && curIdx > 0) {
-            scrollEl.scrollTo({ left: columns[curIdx - 1].offsetLeft, behavior: "smooth" });
-            lastSnapTime = now;
+            // Map drag position from viewport coords into scroll-space, then find which
+            // column it falls over. If it's a different column than the current snap
+            // position, scroll there — this handles partially-visible adjacent columns.
+            const dragXInScroll = dragX - rect.left + scrollEl.scrollLeft;
+            const overIdx = columns.findIndex((col) =>
+              dragXInScroll >= col.offsetLeft && dragXInScroll < col.offsetLeft + col.offsetWidth
+            );
+
+            if (overIdx !== -1 && overIdx !== curIdx) {
+              scrollEl.scrollTo({ left: columns[overIdx].offsetLeft, behavior: "smooth" });
+              lastSnapTime = now;
+            } else if (rect.right - dragX < SENSITIVITY && curIdx < columns.length - 1) {
+              scrollEl.scrollTo({ left: columns[curIdx + 1].offsetLeft, behavior: "smooth" });
+              lastSnapTime = now;
+            } else if (dragX - rect.left < SENSITIVITY && curIdx > 0) {
+              scrollEl.scrollTo({ left: columns[curIdx - 1].offsetLeft, behavior: "smooth" });
+              lastSnapTime = now;
+            }
           }
         }
+      } else {
+        // Single-list context: scroll el itself vertically.
+        applyVerticalScroll(el);
       }
 
       scrollRaf = requestAnimationFrame(tick);
@@ -103,11 +151,12 @@ export function useSortable(
     onStart: (evt) => {
       navigator.vibrate?.(50);
       const oe = (evt as any).originalEvent as Event | undefined;
-      const x = oe instanceof TouchEvent ? (oe.touches[0]?.clientX ?? 0) : (oe as MouseEvent)?.clientX ?? 0;
-      startEdgeScroll(x);
+      const x = isTouchEvent(oe) ? (oe.touches[0]?.clientX ?? 0) : (oe as MouseEvent)?.clientX ?? 0;
+      const y = isTouchEvent(oe) ? (oe.touches[0]?.clientY ?? 0) : (oe as MouseEvent)?.clientY ?? 0;
+      startEdgeScroll(x, y);
     },
     onMove: (evt, originalEvent) => {
-      updateDragX(originalEvent);
+      updateDrag(originalEvent);
       if (evt.related?.classList.contains("view-add") ||
           evt.related?.classList.contains("add")) {
         return false;
