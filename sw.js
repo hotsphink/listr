@@ -1,4 +1,4 @@
-const CACHE_NAME = "listr-v1";
+const CACHE_NAME = "listr-v1782968060817";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -15,6 +15,12 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  // Always fetch the manifest fresh so icon/start_url changes take effect
+  // without requiring a manual cache clear.
+  if (new URL(event.request.url).pathname.endsWith("/manifest.json")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const fetched = fetch(event.request).then((response) => {
