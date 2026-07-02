@@ -89,12 +89,12 @@ test.describe("view mode switching", () => {
     await expect(page.locator(".modal .form-field input").first()).toHaveValue("Inception");
   });
 
-  test("search filters items", async ({ page }) => {
-    await page.locator(".search-input").fill("godfather");
+  test("filter hides non-matching items", async ({ page }) => {
+    await page.locator(".filter-input").fill("godfather");
     await expect(page.locator(".list-view-item")).toHaveCount(1);
     await expect(page.locator(".list-view-item").first()).toContainText("The Godfather");
 
-    await page.locator(".search-input").fill("");
+    await page.locator(".filter-input").fill("");
     await expect(page.locator(".list-view-item")).toHaveCount(2);
   });
 });

@@ -59,9 +59,9 @@ const ListView: Component = () => {
   const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
   const [showMultiEdit, setShowMultiEdit] = createSignal(false);             // multi-edit modal open
 
-  // Search
-  const [searchQuery, setSearchQuery] = createSignal("");
-  const [searchOpen, setSearchOpen] = createSignal(false); // mobile: search bar expanded
+  // Filter
+  const [filterQuery, setFilterQuery] = createSignal("");
+  const [filterOpen, setFilterOpen] = createSignal(false); // mobile: filter bar expanded
 
   let multiListViewEl: HTMLElement | undefined;
 
@@ -103,8 +103,8 @@ const ListView: Component = () => {
     setSelectedItemIds(new Set<string>());
     setSelectionMode(false);
     setItemCtxMenu(null);
-    setSearchQuery("");
-    setSearchOpen(false);
+    setFilterQuery("");
+    setFilterOpen(false);
     setEditingList(undefined);
 
     const sub1 = liveQuery(() => db.boards.get(boardId)).subscribe((v) => setBoard(v));
@@ -171,7 +171,7 @@ const ListView: Component = () => {
 
   const itemsForList = (listId: string): Item[] => {
     const allForList = itemsByList().get(listId) ?? [];
-    const q = searchQuery().toLowerCase().trim();
+    const q = filterQuery().toLowerCase().trim();
     if (!q) return allForList;
     return allForList.filter((item) => {
       if (item.title.toLowerCase().includes(q)) return true;
@@ -408,19 +408,19 @@ const ListView: Component = () => {
                   </div>
                   <div class="header-actions">
                     <input
-                      class="search-input"
+                      class="filter-input"
                       type="text"
-                      placeholder="Search..."
-                      value={searchQuery()}
-                      onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                      placeholder="Filter..."
+                      value={filterQuery()}
+                      onInput={(e) => setFilterQuery(e.currentTarget.value)}
                     />
                     <button
-                      class="search-toggle-btn"
-                      classList={{ active: searchOpen() }}
-                      onClick={() => setSearchOpen((v) => !v)}
-                      aria-label="Search"
+                      class="filter-toggle-btn"
+                      classList={{ active: filterOpen() }}
+                      onClick={() => setFilterOpen((v) => !v)}
+                      aria-label="Filter"
                     >
-                      🔍
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h11A1.5 1.5 0 0 1 15 2.5v1.5a1.5 1.5 0 0 1-.44 1.06L10 9.62V14a1 1 0 0 1-1.45.9l-2-1A1 1 0 0 1 6 13v-3.38L1.44 5.06A1.5 1.5 0 0 1 1 4V2.5zm1.5-.5a.5.5 0 0 0-.5.5V4a.5.5 0 0 0 .15.35L7.5 9.2V13l1 .5V9.2l4.85-4.85A.5.5 0 0 0 13.5 4V2.5a.5.5 0 0 0-.5-.5h-11z"/></svg>
                     </button>
                     <div class="view-switcher" role="tablist" aria-label="View mode">
                       <For each={VIEW_MODES}>
@@ -451,20 +451,20 @@ const ListView: Component = () => {
                   </div>
                 </div>
 
-                <Show when={searchOpen()}>
-                  <div class="mobile-search-bar">
+                <Show when={filterOpen()}>
+                  <div class="mobile-filter-bar">
                     <input
-                      class="search-input"
+                      class="filter-input"
                       type="text"
-                      placeholder="Search..."
-                      value={searchQuery()}
-                      onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                      placeholder="Filter..."
+                      value={filterQuery()}
+                      onInput={(e) => setFilterQuery(e.currentTarget.value)}
                       ref={(el) => setTimeout(() => el.focus(), 50)}
                     />
                     <button
-                      class="mobile-search-bar-close"
-                      onClick={() => { setSearchOpen(false); setSearchQuery(""); }}
-                      aria-label="Close search"
+                      class="mobile-filter-bar-close"
+                      onClick={() => { setFilterOpen(false); setFilterQuery(""); }}
+                      aria-label="Close filter"
                     >
                       ✕
                     </button>
