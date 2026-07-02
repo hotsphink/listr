@@ -8,6 +8,7 @@
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter @listr/client test:e2e",
     "deploy": "pnpm build && cp -r packages/client/dist/. ../listr-pages/ && cp README.md ../listr-pages/",
+    "deploy:pwa": "pnpm --filter @listr/client build:deploy && cp -r packages/client/dist/. ../listr-pages/ && cp README.md ../listr-pages/",
     "preinstall": "npx only-allow pnpm"
   }
 }

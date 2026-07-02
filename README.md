@@ -10,6 +10,25 @@ checkout containing this README.md by running `pnpm preview`.
 This will give you full local capabilities. You can, like, make lists and stuff.
 Data will be stored in your browser's IndexedDB storage.
 
+#### Building
+
+`pnpm build` produces a production build in `packages/client/dist/`. This is
+what gets deployed to GitHub Pages and is safe to publish — the service worker
+uses a stable cache key so repeat deploys don't force unnecessary client
+updates.
+
+`pnpm build:deploy` (in `packages/client`) builds for production but also
+stamps the service worker with the current timestamp, so the browser detects
+a new version and updates immediately on the next page load. Use this when
+you want to test PWA behaviour — icon changes, `start_url`, offline caching —
+without waiting for the browser to notice a cache miss on its own. Because the
+PWA icon is set at install time by the OS, you still need to uninstall and
+re-add the app after changing icons, but at least the new manifest will be
+live and fresh when you do.
+
+Non-production builds (`pnpm build --mode staging`, etc.) stamp the service
+worker automatically.
+
 ### Server
 
 If you would like to access your lists across multiple devices, you will need a
