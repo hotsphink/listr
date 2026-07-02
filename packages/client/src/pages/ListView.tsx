@@ -141,19 +141,15 @@ const ListView: Component = () => {
   const visibleLists = createMemo(() => {
     const sel = selectedListIds();
     const all = allLists();
-    if (sel.size === 0) return all;
-    const catFiltered = all.filter((l) => sel.has(l.id));
-    return catFiltered.length > 0 ? catFiltered : all;
+    // Mobile: never narrow — sidebar selection is highlight-only for now.
+    // Desktop: narrow only when more than one list is selected; a single
+    // selection just highlights in the sidebar without hiding other lists.
+    if (isTouch || sel.size <= 1) return all;
+    const filtered = all.filter((l) => sel.has(l.id));
+    return filtered.length > 0 ? filtered : all;
   });
 
-  const headerTitle = createMemo(() => {
-    const sel = selectedListIds();
-    if (sel.size === 1) {
-      const vl = visibleLists();
-      if (vl.length === 1) return vl[0].name;
-    }
-    return board()?.name ?? "";
-  });
+  const headerTitle = () => board()?.name ?? "";
 
   const schema = createMemo((): AttributeDefinition[] => {
     const b = board();
