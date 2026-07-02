@@ -1,4 +1,4 @@
-const CACHE_NAME = "listr-v1782969153419";
+const CACHE_NAME = "listr-v1782969488893";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
