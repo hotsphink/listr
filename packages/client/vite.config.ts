@@ -6,7 +6,7 @@ const certKey = new URL("../../certs/tailscale.key", import.meta.url);
 const certCrt = new URL("../../certs/tailscale.crt", import.meta.url);
 
 export default defineConfig(({ mode }) => {
-  const https = existsSync(certKey)
+  const https = !process.env.VITE_NO_HTTPS && existsSync(certKey)
     ? { key: readFileSync(certKey), cert: readFileSync(certCrt) }
     : undefined;
 

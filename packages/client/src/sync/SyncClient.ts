@@ -109,6 +109,10 @@ class EndpointConnection {
       this.callbacks.onNeedsRetry();
       return;
     }
+    if (!this.key) {
+      this.setPhase({ phase: "error", message: "No sync key configured" });
+      return;
+    }
     const proto = secure ? "wss" : "ws";
     const url = `${proto}://${host}:${port}/sync`;
     this.setPhase({ phase: "connecting" });
@@ -153,6 +157,12 @@ class EndpointConnection {
             if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
           };
           this.callbacks.onReady(send, serverId);
+          return;
+        }
+
+        if (msg.type === "error" && this.currentPhase === "handshaking") {
+          this.setPhase({ phase: "error", message: msg.message ?? "Server rejected connection" });
+          ws.close();
           return;
         }
 

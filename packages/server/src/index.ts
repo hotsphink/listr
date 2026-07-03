@@ -43,6 +43,7 @@ const ALLOWED_ORIGINS = new Set([
   "https://finkripper.heron-moth.ts.net:10000",
   "https://finkripper.heron-moth.ts.net:8443",
   "https://finkripper.heron-moth.ts.net:3000",
+  "https://finktop.heron-moth.ts.net",
   "http://localhost:3000",
   "https://localhost:3000",
 ]);
@@ -92,22 +93,23 @@ const httpServer = config.tls === false
 const wss = new WebSocketServer({ server: httpServer });
 
 // sync_key → connected clients
-const rooms = new Map<string, Set<WebSocket>>();
+const clients = new Map<string, Set<WebSocket>>();
 
 const ts = () => new Date().toISOString();
 const keyTag = (k: string) => `[${k.slice(0, 8)}]`;
 
 function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
-  const room = rooms.get(syncKey);
-  if (!room) return;
+  const client = clients.get(syncKey);
+  if (!client) return;
   const json = JSON.stringify(msg);
-  for (const ws of room) {
+  for (const ws of client) {
     if (ws !== sender && ws.readyState === WebSocket.OPEN) ws.send(json);
   }
 }
 
 wss.on("connection", (ws: WebSocket) => {
   let syncKey: string | null = null;
+  let clientId: string | null = null;
   let connectedAt = 0;
   const pushCounts: Partial<Record<string, number>> = {};
 
@@ -124,10 +126,11 @@ wss.on("connection", (ws: WebSocket) => {
       const k = typeof msg.key === "string" ? msg.key.trim() : "";
       if (!k) { ws.send(JSON.stringify({ type: "error", message: "Missing key" })); return; }
       syncKey = k;
+      clientId = typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?";
       connectedAt = Date.now();
-      if (!rooms.has(k)) rooms.set(k, new Set());
-      rooms.get(k)!.add(ws);
-      console.log(`[ws] ${ts()} ${keyTag(k)} connect room=${rooms.get(k)!.size}`);
+      if (!clients.has(k)) clients.set(k, new Set());
+      clients.get(k)!.add(ws);
+      console.log(`[ws] ${ts()} ${keyTag(k)} connect client=${clientId}`);
       ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID }));
       return;
     }
@@ -178,12 +181,12 @@ wss.on("connection", (ws: WebSocket) => {
 
   ws.on("close", () => {
     if (syncKey) {
-      rooms.get(syncKey)?.delete(ws);
+      clients.get(syncKey)?.delete(ws);
       const secs = Math.round((Date.now() - connectedAt) / 1000);
-      console.log(`[ws] ${ts()} ${keyTag(syncKey)} disconnect after=${secs}s room=${rooms.get(syncKey)?.size ?? 0}`);
+      console.log(`[ws] ${ts()} ${keyTag(syncKey)} disconnect after=${secs}s client=${clientId ?? "?"}`);
     }
   });
-  ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKey ? keyTag(syncKey) : "[?]"} error: ${err.message}`));
+  ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKey ? keyTag(syncKey) : "[?]"} client=${clientId ?? "?"} error: ${err.message}`));
 });
 
 const proto = config.tls === false ? "ws" : "wss";
