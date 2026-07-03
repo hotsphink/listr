@@ -378,15 +378,60 @@ class SyncClient {
   }
 
   private async applySnapshot(msg: any): Promise<void> {
-    for (const e of msg.boards ?? []) await this.mergeEntity("board", e);
-    for (const e of msg.lists ?? []) await this.mergeEntity("list", e);
-    for (const e of msg.items ?? []) await this.mergeEntity("item", e);
-    for (const e of msg.assets ?? []) await this.mergeEntity("asset", e);
-    for (const t of msg.tombstones ?? []) {
-      await this.applyTombstone(t.entity_type, t.entity_id, t.deleted_at);
-    }
+    await this.mergeEntityBatch("board", msg.boards ?? []);
+    await this.mergeEntityBatch("list", msg.lists ?? []);
+    await this.mergeEntityBatch("item", msg.items ?? []);
+    await this.mergeAssetBatch(msg.assets ?? []);
+    await this.applyTombstoneBatch(msg.tombstones ?? []);
     if (msg.server_time) {
       await db.sync_config.update("default", { last_sync_at: msg.server_time, last_sync_key: this.key });
+    }
+  }
+
+  private async mergeEntityBatch(entityType: "board" | "list" | "item", incoming: any[]): Promise<void> {
+    if (!incoming.length) return;
+    const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : db.items;
+    const existing = await (table as any).bulkGet(incoming.map((e: any) => e.id));
+    const toStore = incoming.map((e: any, i: number) => applyIncomingEntity(entityType, e, existing[i])).filter(Boolean);
+    if (toStore.length) await (table as any).bulkPut(toStore);
+  }
+
+  private async mergeAssetBatch(incoming: any[]): Promise<void> {
+    if (!incoming.length) return;
+    const existing = await db.assets.bulkGet(incoming.map((e: any) => e.id));
+    const toStore: ReturnType<typeof assetFromSync>[] = [];
+    for (let i = 0; i < incoming.length; i++) {
+      const merged = applyIncomingEntity("asset", incoming[i], existing[i] as any);
+      if (merged) {
+        const asset = assetFromSync(merged as Record<string, unknown>);
+        toStore.push(asset);
+        registerAsset(asset).catch(console.error);
+      }
+    }
+    if (toStore.length) await db.assets.bulkPut(toStore);
+  }
+
+  private async applyTombstoneBatch(tombstones: any[]): Promise<void> {
+    if (!tombstones.length) return;
+    await db.tombstones.bulkPut(
+      tombstones.map((t: any) => ({
+        id: `${t.entity_type}:${t.entity_id}`,
+        entity_type: t.entity_type,
+        entity_id: t.entity_id,
+        deleted_at: t.deleted_at,
+      })),
+    );
+    const groups = new Map<string, { id: string; deleted_at: number }[]>();
+    for (const t of tombstones) {
+      if (!groups.has(t.entity_type)) groups.set(t.entity_type, []);
+      groups.get(t.entity_type)!.push({ id: t.entity_id, deleted_at: t.deleted_at });
+    }
+    for (const [entityType, entries] of groups) {
+      const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : entityType === "item" ? db.items : null;
+      if (!table) continue;
+      const existing = await (table as any).bulkGet(entries.map((e) => e.id));
+      const toDelete = entries.filter((e, i) => !existing[i] || existing[i].updated_at <= e.deleted_at).map((e) => e.id);
+      if (toDelete.length) await (table as any).bulkDelete(toDelete);
     }
   }
 
