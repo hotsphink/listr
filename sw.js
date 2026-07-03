@@ -1,4 +1,4 @@
-const CACHE_NAME = "listr-v1782969488893";
+const CACHE_NAME = "listr-v1785885143750";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -11,6 +11,10 @@ self.addEventListener("activate", (event) => {
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("fetch", (event) => {
