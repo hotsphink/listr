@@ -140,6 +140,13 @@ const ListView: Component = () => {
     onCleanup(() => sub.unsubscribe());
   });
 
+  createEffect(() => {
+    const [id] = selectedListIds();
+    if (!id || !multiListViewEl) return;
+    const col = multiListViewEl.querySelector<HTMLElement>(`[data-list-id="${id}"]`);
+    col?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  });
+
   const visibleLists = allLists;
 
   const headerTitle = () => board()?.name ?? "";
@@ -479,7 +486,7 @@ const ListView: Component = () => {
                   const items = () => itemsForList(list.id);
                   const allItemsForList = () => itemsByList().get(list.id) ?? [];
                   return (
-                    <div class="multi-list-column">
+                    <div class="multi-list-column" data-list-id={list.id}>
                       <div
                         class="multi-list-column-header"
                         onClick={() => {
