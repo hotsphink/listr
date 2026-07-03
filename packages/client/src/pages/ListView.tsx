@@ -138,16 +138,7 @@ const ListView: Component = () => {
     onCleanup(() => sub.unsubscribe());
   });
 
-  const visibleLists = createMemo(() => {
-    const sel = selectedListIds();
-    const all = allLists();
-    // Mobile: never narrow — sidebar selection is highlight-only for now.
-    // Desktop: narrow only when more than one list is selected; a single
-    // selection just highlights in the sidebar without hiding other lists.
-    if (isTouch || sel.size <= 1) return all;
-    const filtered = all.filter((l) => sel.has(l.id));
-    return filtered.length > 0 ? filtered : all;
-  });
+  const visibleLists = allLists;
 
   const headerTitle = () => board()?.name ?? "";
 

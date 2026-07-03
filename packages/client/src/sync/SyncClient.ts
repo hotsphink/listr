@@ -217,6 +217,7 @@ class SyncClient {
   }
 
   async forceFullSync(): Promise<void> {
+    await Promise.all([db.boards.clear(), db.lists.clear(), db.items.clear(), db.assets.clear(), db.tombstones.clear()]);
     await db.sync_config.update("default", { last_sync_at: 0, last_sync_key: "" });
     for (const conn of this.connections.values()) conn.resetAndReconnect();
   }
@@ -413,9 +414,11 @@ class SyncClient {
       entity_id: entityId,
       deleted_at: deletedAt,
     });
-    if (entityType === "board") await db.boards.delete(entityId);
-    else if (entityType === "list") await db.lists.delete(entityId);
-    else if (entityType === "item") await db.items.delete(entityId);
+    const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : entityType === "item" ? db.items : null;
+    if (table) {
+      const existing = await (table as any).get(entityId);
+      if (!existing || existing.updated_at <= deletedAt) await (table as any).delete(entityId);
+    }
   }
 }
 

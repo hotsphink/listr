@@ -18,24 +18,30 @@ sql.exec(`
   CREATE TABLE IF NOT EXISTS boards (
     id TEXT PRIMARY KEY,
     sync_key TEXT NOT NULL,
+    created_at INTEGER,
     updated_at INTEGER NOT NULL,
     data TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS lists (
     id TEXT PRIMARY KEY,
     sync_key TEXT NOT NULL,
+    board_id TEXT,
+    created_at INTEGER,
     updated_at INTEGER NOT NULL,
     data TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
     sync_key TEXT NOT NULL,
+    list_id TEXT,
+    created_at INTEGER,
     updated_at INTEGER NOT NULL,
     data TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
     sync_key TEXT NOT NULL,
+    created_at INTEGER,
     updated_at INTEGER NOT NULL,
     data TEXT NOT NULL
   );
@@ -52,6 +58,46 @@ sql.exec(`
   CREATE INDEX IF NOT EXISTS idx_assets ON assets(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_tombstones ON tombstones(sync_key, deleted_at);
 `);
+
+// Migrate existing databases that predate the extracted columns.
+function migrate(): void {
+  function hasColumn(table: string, col: string): boolean {
+    const cols = sql.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    return cols.some((c) => c.name === col);
+  }
+
+  if (!hasColumn("boards", "created_at")) {
+    sql.exec(`ALTER TABLE boards ADD COLUMN created_at INTEGER`);
+    sql.exec(`UPDATE boards SET created_at = json_extract(data, '$.created_at')`);
+  }
+
+  if (!hasColumn("lists", "board_id")) {
+    sql.exec(`ALTER TABLE lists ADD COLUMN board_id TEXT`);
+    sql.exec(`UPDATE lists SET board_id = json_extract(data, '$.board_id')`);
+  }
+  sql.exec(`DELETE FROM lists WHERE board_id IS NULL`);
+  if (!hasColumn("lists", "created_at")) {
+    sql.exec(`ALTER TABLE lists ADD COLUMN created_at INTEGER`);
+    sql.exec(`UPDATE lists SET created_at = json_extract(data, '$.created_at')`);
+  }
+  sql.exec(`CREATE INDEX IF NOT EXISTS idx_lists_board ON lists(board_id)`);
+
+  if (!hasColumn("items", "list_id")) {
+    sql.exec(`ALTER TABLE items ADD COLUMN list_id TEXT`);
+    sql.exec(`UPDATE items SET list_id = json_extract(data, '$.list_id')`);
+  }
+  if (!hasColumn("items", "created_at")) {
+    sql.exec(`ALTER TABLE items ADD COLUMN created_at INTEGER`);
+    sql.exec(`UPDATE items SET created_at = json_extract(data, '$.created_at')`);
+  }
+  sql.exec(`CREATE INDEX IF NOT EXISTS idx_items_list ON items(list_id)`);
+
+  if (!hasColumn("assets", "created_at")) {
+    sql.exec(`ALTER TABLE assets ADD COLUMN created_at INTEGER`);
+    sql.exec(`UPDATE assets SET created_at = json_extract(data, '$.created_at')`);
+  }
+}
+migrate();
 
 export function getServerId(): string {
   const row = sql.prepare("SELECT value FROM server_config WHERE key = 'server_id'").get() as { value: string } | undefined;
@@ -77,12 +123,20 @@ export function upsertEntity(type: EntityType, data: Record<string, unknown>, sy
     .get(data.id as string) as { updated_at: number } | undefined;
   if (existing && existing.updated_at >= (data.updated_at as number)) return false;
   const effectiveKey = type === "asset" ? "__global__" : syncKey;
+
+  const extraCols: string[] = ["created_at"];
+  const extraVals: unknown[] = [data.created_at ?? null];
+  if (type === "list") { extraCols.push("board_id"); extraVals.push(data.board_id ?? null); }
+  if (type === "item") { extraCols.push("list_id"); extraVals.push(data.list_id ?? null); }
+
+  const baseCols = ["id", "sync_key", "updated_at", "data"];
+  const allCols = [...baseCols, ...extraCols];
+  const placeholders = allCols.map(() => "?").join(", ");
+  const onConflict = ["sync_key", "updated_at", "data", ...extraCols].map((c) => `${c}=excluded.${c}`).join(", ");
+
   sql
-    .prepare(
-      `INSERT INTO ${table} (id, sync_key, updated_at, data) VALUES (?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET sync_key=excluded.sync_key, updated_at=excluded.updated_at, data=excluded.data`,
-    )
-    .run(data.id, effectiveKey, data.updated_at, JSON.stringify(data));
+    .prepare(`INSERT INTO ${table} (${allCols.join(", ")}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${onConflict}`)
+    .run(data.id, effectiveKey, data.updated_at, JSON.stringify(data), ...extraVals);
   return true;
 }
 

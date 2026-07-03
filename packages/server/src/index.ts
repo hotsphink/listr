@@ -151,7 +151,7 @@ wss.on("connection", (ws: WebSocket) => {
       const tombstones = getTombstonesSince(key, since);
       const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
       for (const k of Object.keys(pushCounts)) delete pushCounts[k];
-      console.log(`[sync] ${ts()} ${keyTag(key)} pull since=${since}${pushed ? ` pushed: ${pushed}` : ""} → boards=${boards.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
+      console.log(`[sync] ${ts()} ${keyTag(key)} client=${clientId} pull since=${since}${pushed ? ` pushed: ${pushed}` : ""} → boards=${boards.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
       ws.send(JSON.stringify({ type: "snapshot", boards, lists, items, assets, tombstones, server_time: Date.now() }));
       return;
     }
