@@ -5,7 +5,11 @@ import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
 import type { AttributeDefinition, Board, Item, List } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createItem, updateItem, deleteItem, updateList } from "../db/operations.js";
+import { createItem, updateItem, deleteItem, updateList, deleteList } from "../db/operations.js";
+import { exportList } from "../db/exportImport.js";
+import type { NativeExport } from "../db/exportImport.js";
+import ImportModal from "../components/ImportModal.js";
+import type { ImportScope } from "../components/ImportModal.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { assetUrls } from "../sync/assetStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
@@ -38,6 +42,15 @@ const formatCellValue = (value: unknown, type: string): string => {
   return String(value);
 };
 
+function triggerDownload(data: NativeExport, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
 const ListView: Component = () => {
   const params = useParams();
   const location = useLocation();
@@ -52,6 +65,8 @@ const ListView: Component = () => {
   const [prependToList, setPrependToList] = createSignal(false);             // true = insert before first item
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();    // item open in edit modal
   const [editingList, setEditingList] = createSignal<List | undefined>();    // list open in settings modal
+  const [listCtxMenu, setListCtxMenu] = createSignal<{ x: number; y: number; list: List } | null>(null);
+  const [listImportScope, setListImportScope] = createSignal<ImportScope | null>(null);
 
   // Selection state
   const [selectedItemIds, setSelectedItemIds] = createSignal<Set<string>>(new Set());
@@ -245,6 +260,19 @@ const ListView: Component = () => {
     const ctx = itemCtxMenu();
     if (ctx) { setEditingItem(ctx.item); setItemCtxMenu(null); }
   };
+
+  const listCtxMenuItems = createMemo((): MenuItem[] => {
+    const ctx = listCtxMenu();
+    if (!ctx) return [];
+    const { list } = ctx;
+    const b = board();
+    return [
+      { label: "Configure", action: () => { setListCtxMenu(null); setEditingList(list); } },
+      { label: "Import", action: () => { setListCtxMenu(null); b && setListImportScope({ type: "list", id: list.id, name: list.name, schema: b.schema, format_string: list.format_string ?? b.format_string, macros: b.macros ?? {} }); } },
+      { label: "Export", action: async () => { setListCtxMenu(null); const data = await exportList(list.id); triggerDownload(data, `listr-list-${list.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
+      { label: "Delete", danger: true, action: async () => { setListCtxMenu(null); if (!confirm(`Delete "${list.name}" and all its items?`)) return; await deleteList(list.id); } },
+    ];
+  });
 
   const itemCtxMenuItems = createMemo((): MenuItem[] => {
     const ctx = itemCtxMenu();
@@ -489,6 +517,7 @@ const ListView: Component = () => {
                     <div class="multi-list-column" data-list-id={list.id}>
                       <div
                         class="multi-list-column-header"
+                        onContextMenu={(e) => { e.preventDefault(); setListCtxMenu({ x: e.clientX, y: e.clientY, list }); }}
                         onClick={() => {
                           if (isTouch) {
                             const now = Date.now();
@@ -639,6 +668,19 @@ const ListView: Component = () => {
                 }}
               </For>
             </div>
+
+            <Show when={listCtxMenu() !== null}>
+              {(_) => {
+                const pos = () => listCtxMenu()!;
+                return (
+                  <ContextMenu x={pos().x} y={pos().y} items={listCtxMenuItems()} onClose={() => setListCtxMenu(null)} />
+                );
+              }}
+            </Show>
+
+            <Show when={listImportScope()}>
+              {(scope) => <ImportModal open={true} onClose={() => setListImportScope(null)} scope={scope()} />}
+            </Show>
 
             <Show when={itemCtxMenu() !== null}>
               {(_) => {

@@ -1098,11 +1098,11 @@ tbody tr {
 }
 
 .multi-list-column-name {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 1;
 }
 
 .multi-list-column-count {
@@ -1121,19 +1121,11 @@ tbody tr {
   padding: 0 2px;
   cursor: pointer;
   flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.1s, color 0.1s;
-}
-.multi-list-column-header:hover .multi-list-add-btn {
-  opacity: 1;
+  margin-left: auto;
+  transition: color 0.1s;
 }
 .multi-list-add-btn:hover {
   color: var(--text);
-}
-@media (hover: none) {
-  .multi-list-add-btn {
-    opacity: 1;
-  }
 }
 
 .multi-list-items {
