@@ -69,6 +69,8 @@ const ListView: Component = () => {
   // Touch interaction bookkeeping (not signals — no reactive subscribers need these)
   let lastTapItemId: string | null = null;  // for double-tap-to-edit detection
   let lastTapTime = 0;
+  let lastTapListId: string | null = null;  // for double-tap list header to edit
+  let lastTapListTime = 0;
   let lastContextMenuTime = 0;              // suppresses click fired after a long-press contextmenu
   let touchSelectTimer: ReturnType<typeof setTimeout> | null = null; // pending delayed selection
   let touchStartX = 0;
@@ -480,7 +482,18 @@ const ListView: Component = () => {
                     <div class="multi-list-column">
                       <div
                         class="multi-list-column-header"
-                        onClick={() => setSelectedListIds(new Set([list.id]))}
+                        onClick={() => {
+                          if (isTouch) {
+                            const now = Date.now();
+                            if (lastTapListId === list.id && now - lastTapListTime < 350) {
+                              lastTapListId = null; lastTapListTime = 0;
+                              setEditingList(list);
+                              return;
+                            }
+                            lastTapListId = list.id; lastTapListTime = now;
+                          }
+                          setSelectedListIds(new Set([list.id]));
+                        }}
                       >
                         <span class="multi-list-column-name">{list.name}</span>
                         <span class="multi-list-column-count">{items().length}</span>

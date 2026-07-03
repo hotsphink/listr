@@ -55,6 +55,8 @@ const Sidebar: Component<Props> = (props) => {
   const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
+  const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
   const listsForBoard = (boardId: string) =>
     (lists() ?? []).filter((l) => l.board_id === boardId);
 
@@ -233,7 +235,7 @@ const Sidebar: Component<Props> = (props) => {
                       class="sidebar-board-header"
                       classList={{ expanded: isExpanded() }}
                       style={`border-left: 3px solid ${board.color}`}
-                      onClick={() => { setSelectedListIds(new Set<string>()); props.onClose?.(); navigate(`/board/${board.id}`); toggleBoard(board.id); }}
+                      onClick={() => { toggleBoard(board.id); if (!isTouch) { setSelectedListIds(new Set<string>()); props.onClose?.(); navigate(`/board/${board.id}`); } }}
                       onContextMenu={(e) => handleContextMenu(e, { kind: "board", board })}
                     >
                       <span class="sidebar-board-chevron">{isExpanded() ? "▾" : "▸"}</span>
