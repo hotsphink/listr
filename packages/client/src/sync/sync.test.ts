@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyIncomingEntity } from "./mergeLogic.js";
+import { applyIncomingEntity, shouldDeleteOnTombstone } from "./mergeLogic.js";
 
 function makeList(id: string, updatedAt: number, viewMode = "list") {
   return { id, updated_at: updatedAt, view_mode: viewMode, name: "Test List" };
@@ -35,6 +35,28 @@ describe("applyIncomingEntity — view_mode isolation", () => {
     expect(applyIncomingEntity("list", incoming, existing)).toBeNull();
   });
 });
+
+// ── shouldDeleteOnTombstone: client tombstone vs entity LWW ───────────────────
+
+describe("shouldDeleteOnTombstone — tombstone vs entity LWW", () => {
+  it("deletes entity older than tombstone (tombstone wins)", () => {
+    expect(shouldDeleteOnTombstone({ updated_at: 100 }, 200)).toBe(true);
+  });
+
+  it("deletes entity at same timestamp as tombstone (tombstone wins)", () => {
+    expect(shouldDeleteOnTombstone({ updated_at: 100 }, 100)).toBe(true);
+  });
+
+  it("preserves entity newer than tombstone (entity wins)", () => {
+    expect(shouldDeleteOnTombstone({ updated_at: 200 }, 100)).toBe(false);
+  });
+
+  it("deletes when no local entity exists", () => {
+    expect(shouldDeleteOnTombstone(undefined, 100)).toBe(true);
+  });
+});
+
+// ── applyIncomingEntity — boards and items ────────────────────────────────────
 
 describe("applyIncomingEntity — boards and items", () => {
   it("applies newer board normally", () => {

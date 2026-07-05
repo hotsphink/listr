@@ -1,6 +1,6 @@
 import { db } from "../db/database.js";
 import { setSyncStatus, setSyncStatusMessage } from "./syncStore.js";
-import { applyIncomingEntity, type EntityType } from "./mergeLogic.js";
+import { applyIncomingEntity, shouldDeleteOnTombstone, type EntityType } from "./mergeLogic.js";
 import { assetToSync, assetFromSync, registerAsset } from "./assetStore.js";
 import {
   setEndpointStatus,
@@ -222,6 +222,15 @@ class SyncClient {
     for (const conn of this.connections.values()) conn.resetAndReconnect();
   }
 
+  // Pushes all local data to the server without clearing it first.
+  // Use this to recover from a situation where the server is missing local data
+  // (e.g. after server data loss or a forced refresh on another device wiped
+  // the server copy). Unlike forceFullSync, local data is preserved.
+  async forcePushAll(): Promise<void> {
+    await db.sync_config.update("default", { last_sync_at: 0, last_sync_key: "" });
+    for (const conn of this.connections.values()) conn.resetAndReconnect();
+  }
+
   pushEntity(entityType: EntityType, data: unknown): void {
     const msg = { type: "push_entity", entity_type: entityType, data };
     for (const send of this.senders.values()) send(msg);
@@ -430,7 +439,7 @@ class SyncClient {
       const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : entityType === "item" ? db.items : null;
       if (!table) continue;
       const existing = await (table as any).bulkGet(entries.map((e) => e.id));
-      const toDelete = entries.filter((e, i) => !existing[i] || existing[i].updated_at <= e.deleted_at).map((e) => e.id);
+      const toDelete = entries.filter((e, i) => shouldDeleteOnTombstone(existing[i], e.deleted_at)).map((e) => e.id);
       if (toDelete.length) await (table as any).bulkDelete(toDelete);
     }
   }
@@ -462,7 +471,7 @@ class SyncClient {
     const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : entityType === "item" ? db.items : null;
     if (table) {
       const existing = await (table as any).get(entityId);
-      if (!existing || existing.updated_at <= deletedAt) await (table as any).delete(entityId);
+      if (shouldDeleteOnTombstone(existing, deletedAt)) await (table as any).delete(entityId);
     }
   }
 }

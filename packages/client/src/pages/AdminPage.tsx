@@ -141,6 +141,9 @@ const AdminPage: Component = () => {
             <button class="btn" type="button" disabled={syncStatus() !== "connected"} onClick={() => syncClient.forceFullSync()}>
               Refresh from server
             </button>
+            <button class="btn" type="button" disabled={syncStatus() !== "connected"} onClick={() => syncClient.forcePushAll()}>
+              Push all to server
+            </button>
             <Show when={connectedServerId()}>
               <span class="field-hint">server id {connectedServerId()}</span>
             </Show>

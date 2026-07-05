@@ -1,6 +1,19 @@
 export type EntityType = "board" | "list" | "item" | "asset";
 
 /**
+ * Returns true if a tombstone (deleted_at) should delete the local entity.
+ * Tombstone wins when deleted_at >= entity.updated_at, i.e. the entity is
+ * at most as recent as the deletion. Entity wins if it was updated after the
+ * tombstone (updated_at > deleted_at).
+ */
+export function shouldDeleteOnTombstone(
+  entity: { updated_at: number } | undefined,
+  deletedAt: number,
+): boolean {
+  return !entity || entity.updated_at <= deletedAt;
+}
+
+/**
  * Decides whether an incoming entity from sync should be applied locally.
  * Returns the value to store, or null if the local version should be kept.
  *
