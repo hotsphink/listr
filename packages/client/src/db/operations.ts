@@ -2,6 +2,8 @@ import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import type { Board, List, Item, AttributeDefinition, ViewMode } from "@listr/shared";
 
+const POSITION_STEP = 64;
+
 function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -31,7 +33,7 @@ export async function createBoard(
     id: generateId(),
     name,
     color,
-    position: (maxPos?.position ?? -1) + 1,
+    position: (maxPos?.position ?? -POSITION_STEP) + POSITION_STEP,
     schema,
     format_string: formatString,
     macros,
@@ -85,7 +87,7 @@ export async function createList(
     board_id: boardId,
     name,
     icon: "",
-    position: (maxPos?.position ?? -1) + 1,
+    position: (maxPos?.position ?? -POSITION_STEP) + POSITION_STEP,
     format_string: null,
     view_mode: "list",
     created_at: now(),
@@ -148,8 +150,9 @@ export async function createItem(
   if (position !== undefined) {
     pos = position;
   } else {
-    const maxPos = await db.items.where("list_id").equals(listId).last();
-    pos = (maxPos?.position ?? -1) + 1;
+    const listItems = await db.items.where("list_id").equals(listId).sortBy("position");
+    const last = listItems[listItems.length - 1];
+    pos = last ? last.position + POSITION_STEP : 0;
   }
   const item: Item = {
     id: generateId(),
@@ -198,8 +201,9 @@ export async function bulkCreateItems(
 ): Promise<Item[]> {
   const schema = await getSchemaForList(listId);
 
-  const maxPos = await db.items.where("list_id").equals(listId).last();
-  let pos = (maxPos?.position ?? -1) + 1;
+  const existingItems = await db.items.where("list_id").equals(listId).sortBy("position");
+  const lastItem = existingItems[existingItems.length - 1];
+  let pos = lastItem ? lastItem.position + POSITION_STEP : 0;
   const timestamp = now();
 
   const newItems: Item[] = items.map((input) => {
@@ -213,11 +217,13 @@ export async function bulkCreateItems(
       }
     }
 
+    const currentPos = pos;
+    pos += POSITION_STEP;
     return {
       id: generateId(),
       list_id: listId,
       title: input.title,
-      position: pos++,
+      position: currentPos,
       created_at: timestamp,
       updated_at: timestamp,
       attributes: resolvedAttrs,

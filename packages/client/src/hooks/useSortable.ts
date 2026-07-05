@@ -8,7 +8,7 @@ export { computeReorder };
 
 export function useSortable(
   el: HTMLElement,
-  getItems: () => { id: string }[],
+  getItems: () => { id: string; position: number }[],
   options?: Partial<Sortable.Options> & {
     indexOffset?: number;
     onCrossMove?: (itemId: string, toEl: HTMLElement, rawNewIndex: number) => Promise<void>;
