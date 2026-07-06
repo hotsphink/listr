@@ -55,7 +55,18 @@ const Sidebar: Component<Props> = (props) => {
   const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
-  const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  // Reset all transient UI state when the panel closes so stale modals/renames
+  // don't reappear on the next open.
+  createEffect(() => {
+    if (!props.open) {
+      setEditingBoard(undefined);
+      setShowCreateBoard(false);
+      setRenamingId(null);
+      setContextMenu(null);
+      setMultiListCtxMenu(null);
+      setImportScope(null);
+    }
+  });
 
   const listsForBoard = (boardId: string) =>
     (lists() ?? []).filter((l) => l.board_id === boardId);
@@ -83,7 +94,7 @@ const Sidebar: Component<Props> = (props) => {
       const board = (boards() ?? []).find((b) => b.id === list.board_id);
       return [
         { label: "Rename", action: () => setRenamingId(list.id) },
-        { label: "Configure", action: () => { setSelectedListIds(new Set([list.id])); props.onClose?.(); navigate(`/board/${list.board_id}`, { state: { openSettings: list.id } }); } },
+        { label: "Edit", action: () => { setSelectedListIds(new Set([list.id])); props.onClose?.(); navigate(`/board/${list.board_id}`, { state: { openSettings: list.id } }); } },
         { label: "Import", action: () => board && setImportScope({
             type: "list",
             id: list.id,
@@ -109,7 +120,7 @@ const Sidebar: Component<Props> = (props) => {
       const board = ctx.target.board;
       return [
         { label: "Rename", action: () => setRenamingId(board.id) },
-        { label: "Configure", action: () => setEditingBoard(board) },
+        { label: "Edit", action: () => setEditingBoard(board) },
         { label: "Import", action: () => setImportScope({
             type: "board",
             id: board.id,
@@ -191,7 +202,6 @@ const Sidebar: Component<Props> = (props) => {
     } else {
       setSelectedListIds(new Set([list.id]));
     }
-    props.onClose?.();
     navigate(`/board/${list.board_id}`);
   };
 
@@ -235,11 +245,10 @@ const Sidebar: Component<Props> = (props) => {
                       class="sidebar-board-header"
                       classList={{ expanded: isExpanded() }}
                       style={`border-left: 3px solid ${board.color}`}
-                      onClick={() => { toggleBoard(board.id); if (!isTouch) { setSelectedListIds(new Set<string>()); props.onClose?.(); navigate(`/board/${board.id}`); } }}
                       onContextMenu={(e) => handleContextMenu(e, { kind: "board", board })}
                     >
-                      <span class="sidebar-board-chevron">{isExpanded() ? "▾" : "▸"}</span>
-                      {board.name}
+                      <span class="sidebar-board-chevron" onClick={(e) => { e.stopPropagation(); toggleBoard(board.id); }}>{isExpanded() ? "▾" : "▸"}</span>
+                      <span class="sidebar-board-name" onDblClick={() => setEditingBoard(board)}>{board.name}</span>
                       <span class="sidebar-board-count">{listsForBoard(board.id).length}</span>
                     </div>
                   }

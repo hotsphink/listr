@@ -245,7 +245,10 @@ const BoardFormModal: Component<Props> = (props) => {
   const macroKeys = () => Object.keys(macros());
 
   return (
-    <Modal open={props.open} onClose={props.onClose}>
+    <Modal open={props.open} onClose={props.onClose} class="board-form">
+      <div class="modal-page-header">
+        <button class="modal-page-back" type="button" onClick={props.onClose} aria-label="Back">←</button>
+      </div>
       <h2>{props.initial ? "Edit Board" : "New Board"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-row">

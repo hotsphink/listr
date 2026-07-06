@@ -4,6 +4,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   children: JSX.Element;
+  class?: string;
 }
 
 const Modal: Component<Props> = (props) => {
@@ -19,11 +20,11 @@ const Modal: Component<Props> = (props) => {
   return (
     <Show when={props.open}>
       <div
-        class="modal-overlay"
+        class={props.class ? `modal-overlay ${props.class}-overlay` : "modal-overlay"}
         ref={overlayRef}
         onClick={(e) => { if (e.target === overlayRef) props.onClose(); }}
       >
-        <div class="modal">{props.children}</div>
+        <div class={props.class ? `modal ${props.class}` : "modal"}>{props.children}</div>
       </div>
     </Show>
   );

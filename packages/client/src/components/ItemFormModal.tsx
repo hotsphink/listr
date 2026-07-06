@@ -42,6 +42,7 @@ const ItemFormModal: Component<Props> = (props) => {
           <input
             value={title()}
             onInput={(e) => setTitle(e.currentTarget.value)}
+            autocapitalize="words"
             autofocus
           />
         </div>

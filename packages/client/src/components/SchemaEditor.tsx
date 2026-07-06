@@ -49,54 +49,62 @@ const SchemaEditor: Component<Props> = (props) => {
       <Index each={props.schema}>
         {(attr, i) => (
           <div class="schema-entry">
-            <input
-              placeholder="Key"
-              title="Attribute key (used in format strings)"
-              value={attr().key}
-              onBlur={(e) => updateAt(i, { key: e.currentTarget.value })}
-              style="max-width: 100px"
-            />
-            <input
-              placeholder="Label"
-              title="Display label (shown in table headers and forms)"
-              value={attr().label}
-              onBlur={(e) => updateAt(i, { label: e.currentTarget.value })}
-            />
-            <select
-              title="Attribute type"
-              value={attr().type}
-              onChange={(e) => {
-                const newType = e.currentTarget.value as AttributeType;
-                updateAt(i, { type: newType, default_value: undefined });
-              }}
-              style="max-width: 110px"
-            >
-              <For each={ATTRIBUTE_TYPES}>
-                {(t) => <option value={t.value}>{t.label}</option>}
-              </For>
-            </select>
-            {(attr().type === "enum" || attr().type === "tags") && (
+            {/* Row 1 on mobile: key + label + delete. display:contents on desktop. */}
+            <div class="schema-entry-main">
               <input
-                placeholder="opt1, opt2, ..."
-                title="Options (comma-separated)"
-                value={(attr().options ?? []).join(", ")}
-                onBlur={(e) =>
-                  updateAt(i, {
-                    options: e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean),
-                  })
-                }
-                style="max-width: 160px"
+                class="schema-key"
+                placeholder="Key"
+                title="Attribute key (used in format strings)"
+                value={attr().key}
+                onBlur={(e) => updateAt(i, { key: e.currentTarget.value })}
               />
-            )}
-            <DefaultValueInput
-              type={attr().type}
-              value={attr().default_value}
-              options={attr().options}
-              onChange={(v) => updateAt(i, { default_value: v })}
-            />
-            <button type="button" class="btn-icon" onClick={() => removeAt(i)} title="Remove attribute">
-              ×
-            </button>
+              <input
+                placeholder="Label"
+                title="Display label (shown in table headers and forms)"
+                value={attr().label}
+                onBlur={(e) => updateAt(i, { label: e.currentTarget.value })}
+              />
+              <button type="button" class="btn-icon" onClick={() => removeAt(i)} title="Remove attribute">
+                ×
+              </button>
+            </div>
+            {/* Row 2 on mobile: type + options + default. display:contents on desktop. */}
+            <div class="schema-entry-detail">
+              <select
+                class="schema-type"
+                title="Attribute type"
+                value={attr().type}
+                onChange={(e) => {
+                  const newType = e.currentTarget.value as AttributeType;
+                  updateAt(i, { type: newType, default_value: undefined });
+                }}
+              >
+                <For each={ATTRIBUTE_TYPES}>
+                  {(t) => <option value={t.value}>{t.label}</option>}
+                </For>
+              </select>
+              {(attr().type === "enum" || attr().type === "tags") && (
+                <input
+                  class="schema-options"
+                  placeholder="opt1, opt2, ..."
+                  title="Options (comma-separated)"
+                  value={(attr().options ?? []).join(", ")}
+                  onBlur={(e) =>
+                    updateAt(i, {
+                      options: e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean),
+                    })
+                  }
+                />
+              )}
+              <div class="schema-default-wrap">
+                <DefaultValueInput
+                  type={attr().type}
+                  value={attr().default_value}
+                  options={attr().options}
+                  onChange={(v) => updateAt(i, { default_value: v })}
+                />
+              </div>
+            </div>
           </div>
         )}
       </Index>
@@ -122,7 +130,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
         title="Default value for new items"
         value={props.value != null ? String(props.value) : ""}
         onBlur={(e) => props.onChange(e.currentTarget.value || undefined)}
-        style="max-width: 80px"
       />
     }>
       <Match when={props.type === "url"}>
@@ -131,7 +138,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
           title="Default value for new items"
           value={props.value != null ? String(props.value) : ""}
           onBlur={(e) => props.onChange(e.currentTarget.value || undefined)}
-          style="max-width: 80px"
         />
       </Match>
       <Match when={props.type === "number"}>
@@ -145,7 +151,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
             const v = e.currentTarget.valueAsNumber;
             props.onChange(isNaN(v) ? undefined : v);
           }}
-          style="max-width: 80px"
         />
       </Match>
       <Match when={props.type === "boolean"}>
@@ -153,7 +158,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
           title="Default value for new items"
           value={props.value === true ? "true" : "false"}
           onChange={(e) => props.onChange(e.currentTarget.value === "true")}
-          style="max-width: 80px"
         >
           <option value="false">No</option>
           <option value="true">Yes</option>
@@ -164,7 +168,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
           title="Default value for new items"
           value={props.value != null ? String(props.value) : ""}
           onChange={(e) => props.onChange(e.currentTarget.value || undefined)}
-          style="max-width: 100px"
         >
           <option value="">(none)</option>
           <For each={props.options ?? []}>
@@ -178,7 +181,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
           title="Default value for new items"
           value={props.value != null ? String(props.value) : ""}
           onChange={(e) => props.onChange(e.currentTarget.value || undefined)}
-          style="max-width: 100px"
         />
       </Match>
       <Match when={props.type === "duration"}>
@@ -192,7 +194,6 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
             const v = e.currentTarget.valueAsNumber;
             props.onChange(isNaN(v) ? undefined : v);
           }}
-          style="max-width: 80px"
         />
       </Match>
     </Switch>

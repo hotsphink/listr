@@ -267,7 +267,7 @@ const ListView: Component = () => {
     const { list } = ctx;
     const b = board();
     return [
-      { label: "Configure", action: () => { setListCtxMenu(null); setEditingList(list); } },
+      { label: "Edit", action: () => { setListCtxMenu(null); setEditingList(list); } },
       { label: "Import", action: () => { setListCtxMenu(null); b && setListImportScope({ type: "list", id: list.id, name: list.name, schema: b.schema, format_string: list.format_string ?? b.format_string, macros: b.macros ?? {} }); } },
       { label: "Export", action: async () => { setListCtxMenu(null); const data = await exportList(list.id); triggerDownload(data, `listr-list-${list.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
       { label: "Delete", danger: true, action: async () => { setListCtxMenu(null); if (!confirm(`Delete "${list.name}" and all its items?`)) return; await deleteList(list.id); } },

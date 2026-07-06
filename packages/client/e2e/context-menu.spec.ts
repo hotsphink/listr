@@ -19,7 +19,7 @@ test.describe("sidebar context menu", () => {
     const items = menu.locator(".context-menu-item");
     await expect(items).toHaveCount(4);
     await expect(items.nth(0)).toHaveText("Rename");
-    await expect(items.nth(1)).toHaveText("Configure");
+    await expect(items.nth(1)).toHaveText("Edit");
     await expect(items.nth(2)).toHaveText("Import");
     await expect(items.nth(3)).toHaveText("Delete");
   });
@@ -70,7 +70,7 @@ test.describe("sidebar context menu", () => {
   test("configure opens the list settings modal", async ({ page }) => {
     const sidebarItem = page.locator(".sidebar-item", { hasText: "Watchlist" });
     await sidebarItem.click({ button: "right" });
-    await page.locator(".context-menu-item", { hasText: "Configure" }).click();
+    await page.locator(".context-menu-item", { hasText: "Edit" }).click();
     await expect(page.locator(".modal h2")).toHaveText("Edit List");
   });
 
