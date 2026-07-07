@@ -22,6 +22,7 @@ import ListFormModal from "../components/ListFormModal.js";
 import FormattedText from "../components/FormattedText.js";
 import ContextMenu from "../components/ContextMenu.js";
 import type { MenuItem } from "../components/ContextMenu.js";
+import MoveToListModal from "../components/MoveToListModal.js";
 
 const VIEW_MODES: { mode: "list" | "table" | "card"; label: string }[] = [
   { mode: "list", label: "List" },
@@ -73,6 +74,7 @@ const ListView: Component = () => {
   const [anchorItemId, setAnchorItemId] = createSignal<string | null>(null); // shift-click range anchor
   const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
   const [showMultiEdit, setShowMultiEdit] = createSignal(false);             // multi-edit modal open
+  const [showMoveToList, setShowMoveToList] = createSignal(false);           // move-to-list picker open
 
   // Filter
   const [filterQuery, setFilterQuery] = createSignal("");
@@ -274,6 +276,28 @@ const ListView: Component = () => {
     ];
   });
 
+  const handleMoveToList = async (targetListId: string) => {
+    setShowMoveToList(false);
+    // Only move items not already in the target list — picking the same list is a no-op cancel.
+    const toMove: Item[] = [];
+    for (const items of itemsByList().values()) {
+      for (const item of items) {
+        if (selectedItemIds().has(item.id) && item.list_id !== targetListId) toMove.push(item);
+      }
+    }
+    if (!toMove.length) return;
+    const targetItems = itemsByList().get(targetListId) ?? [];
+    const basePos = targetItems.length > 0 ? targetItems[targetItems.length - 1].position + 1 : 0;
+    const timestamp = Date.now();
+    for (let i = 0; i < toMove.length; i++) {
+      const item = toMove[i];
+      const updated_at = timestamp + i;
+      await db.items.update(item.id, { list_id: targetListId, position: basePos + i, updated_at });
+      syncClient.pushEntity("item", { ...item, list_id: targetListId, position: basePos + i, updated_at });
+    }
+    exitSelectionMode();
+  };
+
   const itemCtxMenuItems = createMemo((): MenuItem[] => {
     const ctx = itemCtxMenu();
     const menuItems: MenuItem[] = [];
@@ -284,6 +308,7 @@ const ListView: Component = () => {
     if (n > 1) {
       menuItems.push({ label: `Edit ${n} items`, action: () => { setShowMultiEdit(true); setItemCtxMenu(null); } });
     }
+    menuItems.push({ label: "Move to list", action: () => { setShowMoveToList(true); setItemCtxMenu(null); } });
     menuItems.push({ label: `Delete ${n} item${n !== 1 ? "s" : ""}`, danger: true, action: handleDeleteSelectedItems });
     return menuItems;
   });
@@ -504,6 +529,7 @@ const ListView: Component = () => {
                 </button>
                 <span class="selection-bar-count">{selectedItemIds().size} selected</span>
                 <button class="btn-ghost" onClick={handleEditFromBar}>Edit</button>
+                <button class="btn-ghost" onClick={() => setShowMoveToList(true)}>Move</button>
                 <button class="btn-danger" onClick={handleDeleteSelectedItems}>Delete</button>
               </div>
             </Show>
@@ -726,6 +752,13 @@ const ListView: Component = () => {
               onSave={handleEditList}
               boards={allBoards() ?? []}
               initial={editingList()}
+            />
+
+            <MoveToListModal
+              open={showMoveToList()}
+              onClose={() => setShowMoveToList(false)}
+              onSelect={handleMoveToList}
+              currentBoardId={board()?.id}
             />
           </>
         )}
