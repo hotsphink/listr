@@ -727,6 +727,9 @@ tbody tr {
 .move-to-list-item:hover {
   background: var(--bg-hover);
 }
+.move-to-list-new {
+  color: var(--text-dim);
+}
 
 /* Full-page modal header (back arrow) — hidden on desktop */
 .modal-page-header { display: none; }
@@ -1170,6 +1173,27 @@ tbody tr {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   max-height: calc(100vh - 100px);
+}
+
+.multi-list-new-column {
+  flex: 0 0 160px;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: flex-start;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.multi-list-new-column:hover {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 .multi-list-vertical {

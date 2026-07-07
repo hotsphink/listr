@@ -5,7 +5,7 @@ import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
 import type { AttributeDefinition, Board, Item, List } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createItem, updateItem, deleteItem, updateList, deleteList } from "../db/operations.js";
+import { createItem, updateItem, deleteItem, updateList, deleteList, createList } from "../db/operations.js";
 import { exportList } from "../db/exportImport.js";
 import type { NativeExport } from "../db/exportImport.js";
 import ImportModal from "../components/ImportModal.js";
@@ -221,6 +221,13 @@ const ListView: Component = () => {
     if (!item) return;
     await deleteItem(item.id);
     setEditingItem(undefined);
+  };
+
+  const handleNewList = async () => {
+    const b = board();
+    if (!b) return;
+    const list = await createList("New List", b.id);
+    setEditingList(list);
   };
 
   const handleEditList = async (data: { name: string; board_id: string; format_string: string | null }) => {
@@ -693,6 +700,9 @@ const ListView: Component = () => {
                   );
                 }}
               </For>
+              <div class="multi-list-new-column" onClick={handleNewList}>
+                + New list
+              </div>
             </div>
 
             <Show when={listCtxMenu() !== null}>

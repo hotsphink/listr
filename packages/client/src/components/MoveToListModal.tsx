@@ -2,6 +2,7 @@ import { type Component, For, Show, createMemo, createSignal, createEffect } fro
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import { db } from "../db/database.js";
+import { createList } from "../db/operations.js";
 import Modal from "./Modal.js";
 
 interface Props {
@@ -34,13 +35,16 @@ const MoveToListModal: Component<Props> = (props) => {
     });
 
   const groups = createMemo(() =>
-    (boards() ?? [])
-      .map((board) => ({
-        board,
-        lists: (lists() ?? []).filter((l) => l.board_id === board.id),
-      }))
-      .filter((g) => g.lists.length > 0),
+    (boards() ?? []).map((board) => ({
+      board,
+      lists: (lists() ?? []).filter((l) => l.board_id === board.id),
+    })),
   );
+
+  const handleNewList = async (boardId: string) => {
+    const list = await createList("New List", boardId);
+    props.onSelect(list.id);
+  };
 
   return (
     <Modal open={props.open} onClose={props.onClose}>
@@ -74,6 +78,13 @@ const MoveToListModal: Component<Props> = (props) => {
                       </button>
                     )}
                   </For>
+                  <button
+                    type="button"
+                    class="move-to-list-item move-to-list-new"
+                    onClick={() => handleNewList(board.id)}
+                  >
+                    + New list
+                  </button>
                 </Show>
               </div>
             );
