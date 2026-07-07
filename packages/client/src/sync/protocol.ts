@@ -5,4 +5,5 @@
 // Bump this whenever the wire protocol changes in a way that is not backward
 // compatible with older servers. Keep the server's supported range
 // (packages/server/src/protocol.ts) in sync.
-export const PROTOCOL_VERSION = 1;
+// v2: items switched from numeric `position` to `after_id` linked-list ordering.
+export const PROTOCOL_VERSION = 2;

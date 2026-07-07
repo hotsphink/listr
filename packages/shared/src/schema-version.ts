@@ -10,4 +10,5 @@
 //
 // Bump this whenever the stored shape of an entity changes, and add the
 // corresponding upcast/migration (see memory: project_data_format_versioning).
-export const ENTITY_SCHEMA_VERSION = 1;
+// v2: items use `after_id` linked-list ordering instead of numeric `position`.
+export const ENTITY_SCHEMA_VERSION = 2;

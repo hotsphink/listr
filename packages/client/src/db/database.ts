@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
 import type { Asset, Board, Item, List } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, migrateListToAfterId } from "@listr/shared";
 
 export interface SyncConfig {
   id: string; // always "default"
@@ -140,6 +141,49 @@ export class ListrDB extends Dexie {
       tombstones: "id, entity_type, deleted_at",
       assets: "id, updated_at",
       sync_endpoints: "id, position",
+    });
+
+    // Replaces numeric `position` on items with `after_id` linked-list pointers.
+    // Uses the shared migrateListToAfterId so local rows convert identically to
+    // the offline server migration (see packages/shared/src/migrate-after-id.ts).
+    this.version(7).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+    }).upgrade(async (tx) => {
+      const allItems = await tx.table("items").toArray();
+      const ts = Date.now();
+
+      // Group items by list.
+      const byList = new Map<string, any[]>();
+      for (const item of allItems) {
+        if (!byList.has(item.list_id)) byList.set(item.list_id, []);
+        byList.get(item.list_id)!.push(item);
+      }
+
+      // Convert each list to an after_id chain, then strip the old position field
+      // and stamp the new record shape version.
+      for (const [listId, items] of byList) {
+        const { afterIds, mixed } = migrateListToAfterId(items);
+        if (mixed) {
+          console.warn(`[migrate v7] list ${listId} mixed position/after_id items; order is heuristic`);
+        }
+        for (const item of items) {
+          await tx.table("items").update(item.id, {
+            after_id: afterIds.get(item.id) ?? null,
+            schema_version: ENTITY_SCHEMA_VERSION,
+          });
+        }
+      }
+
+      // Remove position from all items.
+      await tx.table("items").toCollection().modify((item: any) => {
+        delete item.position;
+      });
     });
 
     // Renames categories → boards; renames lists.category_id → lists.board_id

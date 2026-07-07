@@ -2,7 +2,89 @@ import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { ENTITY_SCHEMA_VERSION, type Board, type List, type Item, type AttributeDefinition, type ViewMode } from "@listr/shared";
 
+// Boards and lists still use numeric `position` ordering; only items moved to
+// after_id linked-list ordering.
 const POSITION_STEP = 64;
+
+// ---------------------------------------------------------------------------
+// Chain utilities (after_id linked-list ordering)
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk a set of items linked by after_id and return them in chain order.
+ * Forks (multiple items sharing an after_id, e.g. from concurrent edits) are
+ * resolved by created_at tiebreak. Orphaned items (dangling after_id pointers
+ * from concurrent deletes) are appended at the end.
+ */
+export function resolveChain<T extends { id: string; after_id?: string | null; created_at?: number }>(
+  items: T[],
+): T[] {
+  const byAfterId = new Map<string | null, T[]>();
+  for (const item of items) {
+    const key = item.after_id ?? null;
+    if (!byAfterId.has(key)) byAfterId.set(key, []);
+    byAfterId.get(key)!.push(item);
+  }
+
+  const result: T[] = [];
+  const visited = new Set<string>();
+
+  function walk(afterId: string | null) {
+    const nexts = byAfterId.get(afterId) ?? [];
+    nexts.sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0)); // stable tiebreak
+    for (const item of nexts) {
+      if (visited.has(item.id)) continue; // cycle guard
+      visited.add(item.id);
+      result.push(item);
+      walk(item.id);
+    }
+  }
+
+  walk(null);
+
+  // Append orphans (items whose after_id points to a deleted/missing item)
+  for (const item of items) {
+    if (!visited.has(item.id)) result.push(item);
+  }
+
+  return result;
+}
+
+/**
+ * Compute the after_id updates needed to move `movedId` so that it follows
+ * `newAfterId`. Returns 1–3 records: the moved item, its old successor (which
+ * skips over it), and the old successor of the target position (which now
+ * follows the moved item). Only the changed records are returned.
+ */
+export function reorderByAfterId(
+  items: { id: string; after_id: string | null }[],
+  movedId: string,
+  newAfterId: string | null,
+): { id: string; after_id: string | null }[] {
+  const moved = items.find((i) => i.id === movedId);
+  if (!moved || moved.after_id === newAfterId) return [];
+
+  const updates: { id: string; after_id: string | null }[] = [];
+
+  // 1. The moved item now follows newAfterId
+  updates.push({ id: movedId, after_id: newAfterId });
+
+  // 2. The item that used to follow moved skips over it (follows moved's old predecessor)
+  const movedOldSuccessor = items.find((i) => i.after_id === movedId && i.id !== movedId);
+  if (movedOldSuccessor) {
+    updates.push({ id: movedOldSuccessor.id, after_id: moved.after_id });
+  }
+
+  // 3. The item that used to follow newAfterId now follows moved
+  const targetOldSuccessor = items.find(
+    (i) => i.after_id === newAfterId && i.id !== movedId,
+  );
+  if (targetOldSuccessor && targetOldSuccessor.id !== movedOldSuccessor?.id) {
+    updates.push({ id: targetOldSuccessor.id, after_id: movedId });
+  }
+
+  return updates;
+}
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -130,11 +212,20 @@ async function getSchemaForList(listId: string): Promise<AttributeDefinition[]> 
   return board?.schema ?? [];
 }
 
+/**
+ * Create an item and link it into the list's after_id chain.
+ * `afterId` controls placement:
+ *   - undefined → append to the end of the list (default)
+ *   - null      → insert at the very top
+ *   - <id>      → insert immediately after that item
+ * If an item already followed the insertion point, it is re-linked to follow the
+ * new item so the chain stays intact.
+ */
 export async function createItem(
   listId: string,
   title: string,
   attributes: Record<string, unknown> = {},
-  position?: number,
+  afterId?: string | null,
 ): Promise<Item> {
   const schema = await getSchemaForList(listId);
 
@@ -148,32 +239,50 @@ export async function createItem(
     }
   }
 
-  let pos: number;
-  if (position !== undefined) {
-    pos = position;
+  const listItems = await db.items.where("list_id").equals(listId).toArray();
+  const chain = resolveChain(listItems);
+
+  // Resolve the predecessor pointer for the new item.
+  let predecessorId: string | null;
+  if (afterId === undefined) {
+    predecessorId = chain.length > 0 ? chain[chain.length - 1].id : null;
   } else {
-    const listItems = await db.items.where("list_id").equals(listId).sortBy("position");
-    const last = listItems[listItems.length - 1];
-    pos = last ? last.position + POSITION_STEP : 0;
+    predecessorId = afterId;
   }
+
+  const id = generateId();
+  const timestamp = now();
   const item: Item = {
-    id: generateId(),
+    id,
     list_id: listId,
     title,
-    position: pos,
-    created_at: now(),
-    updated_at: now(),
+    after_id: predecessorId,
+    created_at: timestamp,
+    updated_at: timestamp,
     attributes: resolvedAttrs,
     schema_version: ENTITY_SCHEMA_VERSION,
   };
-  await db.items.add(item);
+
+  // The item that used to follow the insertion point now follows the new item.
+  const displaced = listItems.find((i) => (i.after_id ?? null) === predecessorId);
+
+  await db.transaction("rw", db.items, async () => {
+    await db.items.add(item);
+    if (displaced) {
+      await db.items.update(displaced.id, { after_id: id, updated_at: timestamp });
+    }
+  });
+
   syncClient.pushEntity("item", item);
+  if (displaced) {
+    syncClient.pushEntity("item", { ...displaced, after_id: id, updated_at: timestamp });
+  }
   return item;
 }
 
 export async function updateItem(
   id: string,
-  updates: Partial<Pick<Item, "title" | "position" | "attributes">>,
+  updates: Partial<Pick<Item, "title" | "after_id" | "attributes">>,
 ): Promise<void> {
   await db.items.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.items.get(id);
@@ -204,9 +313,9 @@ export async function bulkCreateItems(
 ): Promise<Item[]> {
   const schema = await getSchemaForList(listId);
 
-  const existingItems = await db.items.where("list_id").equals(listId).sortBy("position");
-  const lastItem = existingItems[existingItems.length - 1];
-  let pos = lastItem ? lastItem.position + POSITION_STEP : 0;
+  const existingItems = await db.items.where("list_id").equals(listId).toArray();
+  const chain = resolveChain(existingItems);
+  let prevId: string | null = chain.length > 0 ? chain[chain.length - 1].id : null;
   const timestamp = now();
 
   const newItems: Item[] = items.map((input) => {
@@ -220,18 +329,19 @@ export async function bulkCreateItems(
       }
     }
 
-    const currentPos = pos;
-    pos += POSITION_STEP;
-    return {
-      id: generateId(),
+    const id = generateId();
+    const item: Item = {
+      id,
       list_id: listId,
       title: input.title,
-      position: currentPos,
+      after_id: prevId,
       created_at: timestamp,
       updated_at: timestamp,
       attributes: resolvedAttrs,
       schema_version: ENTITY_SCHEMA_VERSION,
     };
+    prevId = id;
+    return item;
   });
 
   await db.items.bulkAdd(newItems);

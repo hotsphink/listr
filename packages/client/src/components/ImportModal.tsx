@@ -164,7 +164,7 @@ async function applyAttributeMerge(listId: string, allPreviewItems: PreviewItem[
 }
 
 async function applyImportOrder(listId: string, allPreviewItems: PreviewItem[]): Promise<void> {
-  const allItems = await db.items.where("list_id").equals(listId).sortBy("position");
+  const allItems = await db.items.where("list_id").equals(listId).toArray();
   const titleToId = new Map(allItems.map((i) => [i.title.toLowerCase(), i.id]));
   const importedIds = allPreviewItems
     .map((i) => titleToId.get(i.title.toLowerCase()))
@@ -173,8 +173,8 @@ async function applyImportOrder(listId: string, allPreviewItems: PreviewItem[]):
   if (updates.length > 0) {
     const ts = Date.now();
     await db.transaction("rw", db.items, async () => {
-      for (const { id, position } of updates) {
-        await db.items.update(id, { position, updated_at: ts });
+      for (const { id, after_id } of updates) {
+        await db.items.update(id, { after_id, updated_at: ts });
       }
     });
   }

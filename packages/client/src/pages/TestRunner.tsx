@@ -107,7 +107,7 @@ async function createTestItem(
     id: id(),
     list_id: list.id,
     title,
-    position: 0,
+    after_id: null,
     created_at: now(),
     updated_at: now(),
     attributes: resolvedAttrs,

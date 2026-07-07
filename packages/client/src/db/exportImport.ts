@@ -1,7 +1,7 @@
 import { ENTITY_SCHEMA_VERSION, type AttributeDefinition, type Item, type List, type ViewMode } from "@listr/shared";
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
-import { deleteBoard, deleteList, deleteItem } from "./operations.js";
+import { deleteBoard, deleteList, deleteItem, resolveChain } from "./operations.js";
 
 export interface NativeExport {
   listr_export: "1";
@@ -36,7 +36,6 @@ interface ExportedItem {
   id: string;
   deleted?: 1;
   title: string;
-  position: number;
   attributes: Record<string, unknown>;
 }
 
@@ -66,24 +65,22 @@ function buildListEntry(list: List, items: Item[]) {
     items: items.map((item) => ({
       id: item.id,
       title: item.title,
-      position: item.position,
       attributes: item.attributes,
     })),
   };
 }
 
 export async function exportAllData(): Promise<NativeExport> {
-  const [allBoards, lists, items] = await Promise.all([
+  const [allBoards, lists, allItems] = await Promise.all([
     db.boards.orderBy("position").toArray(),
     db.lists.orderBy("position").toArray(),
-    db.items.orderBy("position").toArray(),
+    db.items.toArray(),
   ]);
 
   const itemsByList = new Map<string, Item[]>();
-  for (const item of items) {
-    const arr = itemsByList.get(item.list_id);
-    if (arr) arr.push(item);
-    else itemsByList.set(item.list_id, [item]);
+  for (const list of lists) {
+    const raw = allItems.filter((i) => i.list_id === list.id);
+    itemsByList.set(list.id, resolveChain(raw));
   }
 
   const listsByBoard = new Map<string, List[]>();
@@ -115,14 +112,11 @@ export async function exportBoard(boardId: string): Promise<NativeExport> {
   const board = await db.boards.get(boardId);
   if (!board) throw new Error(`Board ${boardId} not found`);
   const lists = await db.lists.where("board_id").equals(boardId).sortBy("position");
-  const items = await db.items
-    .where("list_id").anyOf(lists.map((l) => l.id))
-    .sortBy("position");
+  const allItems = await db.items.where("list_id").anyOf(lists.map((l) => l.id)).toArray();
   const itemsByList = new Map<string, Item[]>();
-  for (const item of items) {
-    const arr = itemsByList.get(item.list_id);
-    if (arr) arr.push(item);
-    else itemsByList.set(item.list_id, [item]);
+  for (const list of lists) {
+    const raw = allItems.filter((i) => i.list_id === list.id);
+    itemsByList.set(list.id, resolveChain(raw));
   }
   return {
     listr_export: "1",
@@ -140,14 +134,14 @@ export async function exportList(listId: string): Promise<NativeExport> {
   if (!list) throw new Error(`List ${listId} not found`);
   const board = await db.boards.get(list.board_id);
   if (!board) throw new Error(`Board ${list.board_id} not found`);
-  const items = await db.items.where("list_id").equals(listId).sortBy("position");
+  const rawItems = await db.items.where("list_id").equals(listId).toArray();
   return {
     listr_export: "1",
     exported_at: Date.now(),
     boards: [{
       id: board.id, name: board.name, color: board.color, position: board.position,
       schema: board.schema, format_string: board.format_string, macros: board.macros,
-      lists: [buildListEntry(list, items)],
+      lists: [buildListEntry(list, resolveChain(rawItems))],
     }],
   };
 }
@@ -319,7 +313,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
             id: item.id,
             list_id: list.id,
             title: item.title,
-            position: 0,
+            after_id: null, // will be fixed in the chain-build step below
             attributes: item.attributes,
             created_at: timestamp,
             updated_at: timestamp,
@@ -331,23 +325,20 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         touchedItemIds.push(item.id);
       }
 
-      // Assign final positions: imported items in their import array order, then
-      // any items not in the import in their existing relative order after them.
-      // This handles both consistent insertions and full reorderings uniformly.
-      const allItems = await db.items.where("list_id").equals(list.id).sortBy("position");
+      // Build the after_id chain: imported items first (in import order),
+      // then non-imported items (in their existing chain order), then the add point.
+      const rawItems = await db.items.where("list_id").equals(list.id).toArray();
       const importedIdSet = new Set(importedIds);
-      const nonImported = allItems.filter((i) => !importedIdSet.has(i.id));
-      const orderedIds = [...importedIds, ...nonImported.map((i) => i.id)];
-      const currentPositions = new Map(allItems.map((i) => [i.id, i.position]));
-      for (let i = 0; i < orderedIds.length; i++) {
-        if (currentPositions.get(orderedIds[i]) !== i) {
-          await db.items.update(orderedIds[i], { position: i, updated_at: timestamp });
-          if (!importedIdSet.has(orderedIds[i])) {
-            repositionedItemIds.push(orderedIds[i]);
-          }
-          // Imported items are already in touchedItemIds; bulkGet below fetches
-          // their final state including the updated position.
+      const existingChain = resolveChain(rawItems).filter((i) => !importedIdSet.has(i.id));
+      const orderedIds = [...importedIds, ...existingChain.map((i) => i.id)];
+      const currentAfterId = new Map(rawItems.map((i) => [i.id, i.after_id]));
+      let prevId: string | null = null;
+      for (const id of orderedIds) {
+        if (currentAfterId.get(id) !== prevId) {
+          await db.items.update(id, { after_id: prevId, updated_at: timestamp });
+          if (!importedIdSet.has(id)) repositionedItemIds.push(id);
         }
+        prevId = id;
       }
     }
   }
@@ -385,25 +376,27 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
 
 /**
  * Given an ordered list of item IDs from an AI import and all items currently
- * in the list, returns the position updates needed so that:
+ * in the list, returns the after_id updates needed so that:
  *   - imported items appear first, in import array order
- *   - items not in the import are appended after, in their original relative order
- * Only items whose position actually changes are returned.
+ *   - items not in the import are appended after, in their existing chain order
+ * Only items whose after_id actually changes are returned.
  */
 export function computeAiImportOrder(
   importedIds: string[],
-  allItems: { id: string; position: number }[],
-): { id: string; position: number }[] {
-  const existingIds = new Set(allItems.map((i) => i.id));
+  allItems: { id: string; after_id: string | null }[],
+): { id: string; after_id: string | null }[] {
+  const chain = resolveChain(allItems);
+  const existingIds = new Set(chain.map((i) => i.id));
   const knownImported = importedIds.filter((id) => existingIds.has(id));
   const importedSet = new Set(knownImported);
-  const nonImported = [...allItems]
-    .filter((i) => !importedSet.has(i.id))
-    .sort((a, b) => a.position - b.position)
-    .map((i) => i.id);
+  const nonImported = chain.filter((i) => !importedSet.has(i.id)).map((i) => i.id);
   const orderedIds = [...knownImported, ...nonImported];
-  const currentPos = new Map(allItems.map((i) => [i.id, i.position]));
-  return orderedIds
-    .map((id, i) => ({ id, position: i }))
-    .filter(({ id, position }) => currentPos.get(id) !== position);
+  const currentAfterId = new Map(allItems.map((i) => [i.id, i.after_id]));
+  const updates: { id: string; after_id: string | null }[] = [];
+  let prevId: string | null = null;
+  for (const id of orderedIds) {
+    if (currentAfterId.get(id) !== prevId) updates.push({ id, after_id: prevId });
+    prevId = id;
+  }
+  return updates;
 }

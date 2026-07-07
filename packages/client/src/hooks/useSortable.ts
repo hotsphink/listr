@@ -2,20 +2,19 @@ import Sortable from "sortablejs";
 import { onCleanup } from "solid-js";
 import { db } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
-import { computeReorder } from "./reorderLogic.js";
+import { reorderByAfterId } from "./reorderLogic.js";
 
-export { computeReorder };
+export { reorderByAfterId };
 
 export function useSortable(
   el: HTMLElement,
-  getItems: () => { id: string; position: number }[],
+  getItems: () => { id: string; after_id: string | null }[],
   options?: Partial<Sortable.Options> & {
-    indexOffset?: number;
     onCrossMove?: (itemId: string, toEl: HTMLElement, rawNewIndex: number) => Promise<void>;
     scrollEl?: HTMLElement;
   },
 ) {
-  const { indexOffset = 0, onCrossMove, scrollEl, ...sortableOptions } = options ?? {};
+  const { onCrossMove, scrollEl, ...sortableOptions } = options ?? {};
 
   // Edge-scroll state
   let dragX = 0;
@@ -187,35 +186,39 @@ export function useSortable(
 
       if (rawOld === rawNew) return;
 
-      const oldIndex = rawOld - indexOffset;
-      const newIndex = rawNew - indexOffset;
-      if (oldIndex < 0 || newIndex < 0) return;
+      // Read the predecessor from the DOM *before* reverting.
+      const container = evt.from;
+      const predecessorEl = rawNew > 0 ? container.children[rawNew - 1] as HTMLElement : null;
+      const newAfterId = predecessorEl?.dataset.itemId ?? null;
 
-      const currentItems = getItems();
-      if (oldIndex >= currentItems.length || newIndex >= currentItems.length) return;
-
-      // Revert the DOM move — SolidJS re-renders from reactive state
-      const { item, from: container } = evt;
+      // Revert the DOM move — SolidJS re-renders from reactive state.
+      const { item, from: c } = evt;
       if (rawOld < rawNew) {
-        container.insertBefore(item, container.children[rawOld]);
+        c.insertBefore(item, c.children[rawOld]);
       } else {
-        container.insertBefore(item, container.children[rawOld + 1]);
+        c.insertBefore(item, c.children[rawOld + 1]);
       }
 
-      const updates = computeReorder(currentItems, oldIndex, newIndex);
+      const movedId = (evt.item as HTMLElement).dataset.itemId ?? "";
+      if (!movedId) return;
+
+      const currentItems = getItems();
+      const updates = reorderByAfterId(currentItems, movedId, newAfterId);
+      if (!updates.length) return;
+
       const timestamp = Date.now();
 
       await db.transaction("rw", db.items, async () => {
-        for (const { id, position } of updates) {
-          await db.items.update(id, { position, updated_at: timestamp });
+        for (const { id, after_id } of updates) {
+          await db.items.update(id, { after_id, updated_at: timestamp });
         }
       });
 
       // Push updated items to sync. Build from currentItems to avoid extra reads.
-      const byId = new Map((currentItems as any[]).map((it) => [it.id, it]));
-      for (const { id, position } of updates) {
+      const byId = new Map(currentItems.map((it) => [it.id, it]));
+      for (const { id, after_id } of updates) {
         const base = byId.get(id);
-        if (base) syncClient.pushEntity("item", { ...base, position, updated_at: timestamp });
+        if (base) syncClient.pushEntity("item", { ...base, after_id, updated_at: timestamp });
       }
     },
   });

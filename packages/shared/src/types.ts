@@ -61,7 +61,8 @@ export interface Item {
   id: string;
   list_id: string;
   title: string;
-  position: number;
+  /** ID of the item this item follows in the list (null = first). Replaces numeric position. */
+  after_id: string | null;
   created_at: number;
   updated_at: number;
   attributes: Record<string, unknown>;

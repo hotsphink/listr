@@ -5,7 +5,7 @@ import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
 import type { AttributeDefinition, Board, Item, List } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createItem, updateItem, deleteItem, updateList, deleteList, createList } from "../db/operations.js";
+import { createItem, updateItem, deleteItem, updateList, deleteList, createList, resolveChain } from "../db/operations.js";
 import { exportList } from "../db/exportImport.js";
 import type { NativeExport } from "../db/exportImport.js";
 import ImportModal from "../components/ImportModal.js";
@@ -149,8 +149,8 @@ const ListView: Component = () => {
     const sub = liveQuery(async () => {
       const map = new Map<string, Item[]>();
       await Promise.all(listIds.map(async (id) => {
-        const items = await db.items.where("list_id").equals(id).sortBy("position");
-        map.set(id, items);
+        const rawItems = await db.items.where("list_id").equals(id).toArray();
+        map.set(id, resolveChain(rawItems)); // chain order
       }));
       return map;
     }).subscribe((v) => setItemsByList(v));
@@ -199,11 +199,9 @@ const ListView: Component = () => {
     const listId = addingToList();
     if (!listId) return;
     if (prependToList()) {
-      const items = itemsByList().get(listId) ?? [];
-      const minPos = items.length > 0 ? Math.min(...items.map((i) => i.position)) - 1 : 0;
-      await createItem(listId, data.title, data.attributes, minPos);
+      await createItem(listId, data.title, data.attributes, null); // insert at top
     } else {
-      await createItem(listId, data.title, data.attributes);
+      await createItem(listId, data.title, data.attributes); // append to end
     }
     setAddingToList(null);
     setPrependToList(false);
@@ -293,14 +291,49 @@ const ListView: Component = () => {
       }
     }
     if (!toMove.length) return;
-    const targetItems = itemsByList().get(targetListId) ?? [];
-    const basePos = targetItems.length > 0 ? targetItems[targetItems.length - 1].position + 1 : 0;
+
     const timestamp = Date.now();
-    for (let i = 0; i < toMove.length; i++) {
-      const item = toMove[i];
-      const updated_at = timestamp + i;
-      await db.items.update(item.id, { list_id: targetListId, position: basePos + i, updated_at });
-      syncClient.pushEntity("item", { ...item, list_id: targetListId, position: basePos + i, updated_at });
+    const movedIds = new Set(toMove.map((i) => i.id));
+    const sourceLists = new Set(toMove.map((i) => i.list_id));
+
+    // Append the moved items to the end of the target list's chain, in order.
+    const rawTarget = await db.items.where("list_id").equals(targetListId).toArray();
+    const targetChain = resolveChain(rawTarget);
+    let prevId: string | null = targetChain.length > 0 ? targetChain[targetChain.length - 1].id : null;
+    const targetUpdates: { item: Item; after_id: string | null }[] = [];
+    for (const item of toMove) {
+      targetUpdates.push({ item, after_id: prevId });
+      prevId = item.id;
+    }
+
+    // Repair each source list: rebuild the chain over the items that remain so
+    // no successor is left pointing at a moved-away item.
+    const sourceRepairs: { id: string; after_id: string | null }[] = [];
+    for (const srcId of sourceLists) {
+      const rawSrc = await db.items.where("list_id").equals(srcId).toArray();
+      const remaining = resolveChain(rawSrc).filter((i) => !movedIds.has(i.id));
+      let p: string | null = null;
+      for (const it of remaining) {
+        if ((it.after_id ?? null) !== p) sourceRepairs.push({ id: it.id, after_id: p });
+        p = it.id;
+      }
+    }
+
+    await db.transaction("rw", db.items, async () => {
+      for (const { item, after_id } of targetUpdates) {
+        await db.items.update(item.id, { list_id: targetListId, after_id, updated_at: timestamp });
+      }
+      for (const { id, after_id } of sourceRepairs) {
+        await db.items.update(id, { after_id, updated_at: timestamp });
+      }
+    });
+
+    for (const { item, after_id } of targetUpdates) {
+      syncClient.pushEntity("item", { ...item, list_id: targetListId, after_id, updated_at: timestamp });
+    }
+    for (const { id } of sourceRepairs) {
+      const fresh = await db.items.get(id);
+      if (fresh) syncClient.pushEntity("item", fresh);
     }
     exitSelectionMode();
   };
@@ -422,23 +455,40 @@ const ListView: Component = () => {
     const toListId = toEl.dataset.listId;
     const offset = parseInt(toEl.dataset.indexOffset ?? "0");
     if (!toListId || !itemId) return;
-    const toItems = itemsByList().get(toListId) ?? [];
-    const toIndex = rawNewIndex - offset;
-    let newPosition: number;
-    if (toItems.length === 0) {
-      newPosition = 0;
-    } else if (toIndex <= 0) {
-      newPosition = toItems[0].position - 1;
-    } else if (toIndex >= toItems.length) {
-      newPosition = toItems[toItems.length - 1].position + 1;
-    } else {
-      newPosition = (toItems[toIndex - 1].position + toItems[toIndex].position) / 2;
-    }
-    const timestamp = Date.now();
-    await db.items.update(itemId, { list_id: toListId, position: newPosition, updated_at: timestamp });
+
     const sourceItem = [...itemsByList().values()].flatMap((its) => its).find((i) => i.id === itemId);
-    if (sourceItem) {
-      syncClient.pushEntity("item", { ...sourceItem, list_id: toListId, position: newPosition, updated_at: timestamp });
+    if (!sourceItem || sourceItem.list_id === toListId) return;
+
+    const timestamp = Date.now();
+
+    // Predecessor in the target chain, from the drop index (offset skips any
+    // non-item DOM children rendered before the list's items).
+    const toItems = itemsByList().get(toListId) ?? []; // chain order
+    const targetIndex = rawNewIndex - offset;
+    const predecessorId = targetIndex > 0 ? (toItems[targetIndex - 1]?.id ?? null) : null;
+
+    // Splice fix-ups: the target item that followed the insertion point now
+    // follows the moved item; the source item that followed the moved item skips
+    // over it (inherits the moved item's old predecessor).
+    const targetSuccessor = toItems.find((i) => (i.after_id ?? null) === predecessorId);
+    const rawSource = await db.items.where("list_id").equals(sourceItem.list_id).toArray();
+    const sourceSuccessor = rawSource.find((i) => (i.after_id ?? null) === itemId && i.id !== itemId);
+
+    await db.transaction("rw", db.items, async () => {
+      await db.items.update(itemId, { list_id: toListId, after_id: predecessorId, updated_at: timestamp });
+      if (sourceSuccessor) {
+        await db.items.update(sourceSuccessor.id, { after_id: sourceItem.after_id ?? null, updated_at: timestamp });
+      }
+      if (targetSuccessor) {
+        await db.items.update(targetSuccessor.id, { after_id: itemId, updated_at: timestamp });
+      }
+    });
+
+    syncClient.pushEntity("item", { ...sourceItem, list_id: toListId, after_id: predecessorId, updated_at: timestamp });
+    for (const s of [sourceSuccessor, targetSuccessor]) {
+      if (!s) continue;
+      const fresh = await db.items.get(s.id);
+      if (fresh) syncClient.pushEntity("item", fresh);
     }
   };
 

@@ -1,109 +1,104 @@
 import { describe, it, expect } from "vitest";
-import { computeReorder } from "./reorderLogic.js";
+import { reorderByAfterId, resolveChain } from "./reorderLogic.js";
 
-// Items with sparse positions (step 64) — the normal steady state
-const sparse = [
-  { id: "a", position: 0 },
-  { id: "b", position: 64 },
-  { id: "c", position: 128 },
-  { id: "d", position: 192 },
-];
+// Build a chain from an ordered list of ids.
+function chain(ids: string[]): { id: string; after_id: string | null }[] {
+  return ids.map((id, i) => ({ id, after_id: i === 0 ? null : ids[i - 1] }));
+}
 
-// Items with dense/contiguous positions — triggers full renumber
-const dense = [
-  { id: "a", position: 0 },
-  { id: "b", position: 1 },
-  { id: "c", position: 2 },
-  { id: "d", position: 3 },
-];
+// Apply updates to a chain and return the new chain order.
+function applyAndOrder(items: { id: string; after_id: string | null }[], updates: { id: string; after_id: string | null }[]): string[] {
+  const m = new Map(updates.map((u) => [u.id, u.after_id]));
+  const updated = items.map((i) => ({ ...i, after_id: m.has(i.id) ? m.get(i.id)! : i.after_id }));
+  return resolveChain(updated as any).map((i) => i.id);
+}
 
-describe("computeReorder — sparse insertion (no renumber)", () => {
-  it("inserts between two items using their mean", () => {
-    // Move a (0) to index 2: neighbors become c(128) and d(192), mean=160
-    const result = computeReorder(sparse, 0, 2);
-    expect(result).toEqual([{ id: "a", position: 160 }]);
+describe("reorderByAfterId", () => {
+  it("moves a middle item to the end", () => {
+    const items = chain(["a", "b", "c", "d"]);
+    // Move b to after d
+    const result = applyAndOrder(items, reorderByAfterId(items, "b", "d"));
+    expect(result).toEqual(["a", "c", "d", "b"]);
   });
 
-  it("moves to end using prev + 64", () => {
-    // Move a (0) to after d(192): prev=d(192), no next → 192+64=256
-    const result = computeReorder(sparse, 0, 3);
-    expect(result).toEqual([{ id: "a", position: 256 }]);
+  it("moves the last item to the beginning", () => {
+    const items = chain(["a", "b", "c"]);
+    // Move c to after null (first)
+    const result = applyAndOrder(items, reorderByAfterId(items, "c", null));
+    expect(result).toEqual(["c", "a", "b"]);
   });
 
-  it("moves to beginning using next - 64", () => {
-    // Move d (192) to before a(0): next=a(0), no prev → 0-64=-64
-    const result = computeReorder(sparse, 3, 0);
-    expect(result).toEqual([{ id: "d", position: -64 }]);
+  it("moves first item to the end", () => {
+    const items = chain(["a", "b", "c"]);
+    const result = applyAndOrder(items, reorderByAfterId(items, "a", "c"));
+    expect(result).toEqual(["b", "c", "a"]);
   });
 
-  it("only returns the one moved item", () => {
-    const result = computeReorder(sparse, 1, 3);
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("b");
-  });
-});
-
-describe("computeReorder — full renumber on collision", () => {
-  it("renumbers all items when mean collides", () => {
-    // Move a (0) to index 2: neighbors c(2) and d(3), mean=2.5→3 which collides with d(3)
-    const result = computeReorder(dense, 0, 2);
-    // New order: b, c, a, d
-    expect(result).toEqual([
-      { id: "b", position: 0 },
-      { id: "c", position: 64 },
-      { id: "a", position: 128 },
-      { id: "d", position: 192 },
-    ]);
+  it("moves item one position forward", () => {
+    const items = chain(["a", "b", "c"]);
+    // Move a to after b
+    const result = applyAndOrder(items, reorderByAfterId(items, "a", "b"));
+    expect(result).toEqual(["b", "a", "c"]);
   });
 
-  it("renumbers all items and returns them in new order", () => {
-    // Move a (0) to index 3 (end): prev=d(3), next=none → 3+64=67, no collision
-    // Actually that won't collide. Use a different dense case that does collide.
-    // Move b (1) to index 2: neighbors c(2) and d(3), mean=2.5→3 which collides with d(3)
-    const result = computeReorder(dense, 1, 2);
-    // New order: a, c, b, d
-    expect(result).toEqual([
-      { id: "a", position: 0 },
-      { id: "c", position: 64 },
-      { id: "b", position: 128 },
-      { id: "d", position: 192 },
-    ]);
-  });
-});
-
-describe("computeReorder — two-item list", () => {
-  const two = [
-    { id: "x", position: 0 },
-    { id: "y", position: 64 },
-  ];
-
-  it("moves first to end", () => {
-    // x (0) after y (64): prev=y(64), no next → 64+64=128
-    expect(computeReorder(two, 0, 1)).toEqual([{ id: "x", position: 128 }]);
+  it("moves item one position backward", () => {
+    const items = chain(["a", "b", "c"]);
+    // Move c to after a
+    const result = applyAndOrder(items, reorderByAfterId(items, "c", "a"));
+    expect(result).toEqual(["a", "c", "b"]);
   });
 
-  it("moves last to beginning", () => {
-    // y (64) before x (0): no prev, next=x(0) → 0-64=-64
-    expect(computeReorder(two, 1, 0)).toEqual([{ id: "y", position: -64 }]);
-  });
-});
-
-describe("computeReorder — edge cases", () => {
-  it("returns empty array when oldIndex equals newIndex", () => {
-    expect(computeReorder(sparse, 1, 1)).toEqual([]);
+  it("returns empty array for no-op (already in position)", () => {
+    const items = chain(["a", "b", "c"]);
+    // b already follows a
+    expect(reorderByAfterId(items, "b", "a")).toEqual([]);
   });
 
-  it("returns empty array for a single-item list", () => {
-    expect(computeReorder([{ id: "a", position: 0 }], 0, 0)).toEqual([]);
+  it("two-item list: move first to end", () => {
+    const items = chain(["x", "y"]);
+    const result = applyAndOrder(items, reorderByAfterId(items, "x", "y"));
+    expect(result).toEqual(["y", "x"]);
+  });
+
+  it("two-item list: move last to beginning", () => {
+    const items = chain(["x", "y"]);
+    const result = applyAndOrder(items, reorderByAfterId(items, "y", null));
+    expect(result).toEqual(["y", "x"]);
   });
 
   it("does not mutate the original array", () => {
-    const original = [
-      { id: "x", position: 0 },
-      { id: "y", position: 64 },
+    const items = chain(["a", "b", "c"]);
+    reorderByAfterId(items, "a", "c");
+    expect(items[0]).toEqual({ id: "a", after_id: null });
+  });
+});
+
+describe("resolveChain", () => {
+  it("resolves a simple chain", () => {
+    const items = chain(["a", "b", "c"]);
+    expect(resolveChain(items as any).map((i) => i.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("handles forks by created_at tiebreak", () => {
+    // Both b and c say they follow a
+    const items = [
+      { id: "a", after_id: null, created_at: 0, list_id: "", title: "", updated_at: 0, attributes: {} },
+      { id: "b", after_id: "a", created_at: 1, list_id: "", title: "", updated_at: 0, attributes: {} },
+      { id: "c", after_id: "a", created_at: 2, list_id: "", title: "", updated_at: 0, attributes: {} },
     ];
-    computeReorder(original, 0, 1);
-    expect(original[0].id).toBe("x");
-    expect(original[0].position).toBe(0);
+    const order = resolveChain(items).map((i) => i.id);
+    expect(order[0]).toBe("a");
+    expect(new Set(order)).toEqual(new Set(["a", "b", "c"]));
+  });
+
+  it("appends orphaned items at end", () => {
+    const items = [
+      { id: "a", after_id: null, created_at: 0, list_id: "", title: "", updated_at: 0, attributes: {} },
+      { id: "b", after_id: "missing", created_at: 1, list_id: "", title: "", updated_at: 0, attributes: {} },
+    ];
+    const order = resolveChain(items).map((i) => i.id);
+    expect(order).toContain("a");
+    expect(order).toContain("b");
+    expect(order).toHaveLength(2);
   });
 });

@@ -7,7 +7,7 @@ function makeItem(title: string, attrs: Record<string, unknown> = {}): Item {
     id: "test-id",
     list_id: "test-list",
     title,
-    position: 0,
+    after_id: null,
     created_at: Date.now(),
     updated_at: Date.now(),
     attributes: attrs,

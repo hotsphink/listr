@@ -7,5 +7,8 @@
 //
 // Keep in sync with the client's PROTOCOL_VERSION
 // (packages/client/src/sync/protocol.ts).
-export const MIN_PROTOCOL_VERSION = 1;
-export const MAX_PROTOCOL_VERSION = 1;
+// v2: items use `after_id` linked-list ordering instead of numeric `position`.
+// MIN is 2 so old position-format clients can't push into an after_id server and
+// corrupt shared ordering (the flag-day gate; see memory project_data_format_versioning).
+export const MIN_PROTOCOL_VERSION = 2;
+export const MAX_PROTOCOL_VERSION = 2;
