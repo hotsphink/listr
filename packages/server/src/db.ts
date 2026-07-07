@@ -36,7 +36,6 @@ const SCHEMA_SQL = `
   );
   CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
-    sync_key TEXT NOT NULL,
     created_at INTEGER,
     updated_at INTEGER NOT NULL,
     data TEXT NOT NULL
@@ -51,7 +50,7 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_boards ON boards(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_lists ON lists(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_items ON items(sync_key, updated_at);
-  CREATE INDEX IF NOT EXISTS idx_assets ON assets(sync_key, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_assets ON assets(updated_at);
   CREATE INDEX IF NOT EXISTS idx_tombstones ON tombstones(sync_key, deleted_at);
 `;
 
@@ -92,6 +91,13 @@ function applyMigrations(sql: Database.Database): void {
     sql.exec(`ALTER TABLE assets ADD COLUMN created_at INTEGER`);
     sql.exec(`UPDATE assets SET created_at = json_extract(data, '$.created_at')`);
   }
+  if (hasColumn("assets", "sync_key")) {
+    sql.exec(`CREATE TABLE assets_new (id TEXT PRIMARY KEY, created_at INTEGER, updated_at INTEGER NOT NULL, data TEXT NOT NULL)`);
+    sql.exec(`INSERT INTO assets_new SELECT id, created_at, updated_at, data FROM assets`);
+    sql.exec(`DROP TABLE assets`);
+    sql.exec(`ALTER TABLE assets_new RENAME TO assets`);
+    sql.exec(`CREATE INDEX IF NOT EXISTS idx_assets ON assets(updated_at)`);
+  }
 }
 
 function tableFor(type: EntityType): string {
@@ -121,7 +127,14 @@ export function createDbApi(sql: Database.Database) {
       .prepare(`SELECT deleted_at FROM tombstones WHERE entity_id = ? AND entity_type = ?`)
       .get(data.id as string, type) as { deleted_at: number } | undefined;
     if (tomb && tomb.deleted_at >= (data.updated_at as number)) return false;
-    const effectiveKey = type === "asset" ? "__global__" : syncKey;
+
+    if (type === "asset") {
+      sql
+        .prepare(`INSERT INTO assets (id, created_at, updated_at, data) VALUES (?, ?, ?, ?)
+                  ON CONFLICT(id) DO UPDATE SET created_at=excluded.created_at, updated_at=excluded.updated_at, data=excluded.data`)
+        .run(data.id, data.created_at ?? null, data.updated_at, JSON.stringify(data));
+      return true;
+    }
 
     const extraCols: string[] = ["created_at"];
     const extraVals: unknown[] = [data.created_at ?? null];
@@ -135,7 +148,7 @@ export function createDbApi(sql: Database.Database) {
 
     sql
       .prepare(`INSERT INTO ${table} (${allCols.join(", ")}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${onConflict}`)
-      .run(data.id, effectiveKey, data.updated_at, JSON.stringify(data), ...extraVals);
+      .run(data.id, syncKey, data.updated_at, JSON.stringify(data), ...extraVals);
     return true;
   }
 
