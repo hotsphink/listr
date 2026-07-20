@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { db, type SyncConfig, type SyncEndpoint } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
+import { PROTOCOL_VERSION } from "../sync/protocol.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { endpointStatuses } from "../store/endpointStatuses.js";
 import type { EndpointStatus } from "../store/endpointStatuses.js";
@@ -28,6 +29,13 @@ const PHASE_COLORS: Record<string, string> = {
 
 function shortId(uuid: string | null | undefined): string {
   return uuid ? uuid.replace(/-/g, "").slice(0, 8) : "";
+}
+
+// Injected by Vite (see vite.config.ts). Format for display, falling back to
+// the raw value if it isn't a parseable date.
+function formatBuildTime(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
 const AdminPage: Component = () => {
@@ -249,6 +257,20 @@ const AdminPage: Component = () => {
           <Show when={endpoints().length === 0}>
             <div class="admin-empty">No sync servers configured. Click + Add to get started.</div>
           </Show>
+        </div>
+
+        <div class="admin-section">
+          <h2>About</h2>
+          <div class="admin-field">
+            <label class="field-label">Client build</label>
+            <div class="admin-client-id">{formatBuildTime(__BUILD_TIME__)}</div>
+            <div class="field-hint">When this running client was built.</div>
+          </div>
+          <div class="admin-field">
+            <label class="field-label">Sync protocol version</label>
+            <div class="admin-client-id">{PROTOCOL_VERSION}</div>
+            <div class="field-hint">The server must understand this version to connect.</div>
+          </div>
         </div>
       </div>
     </div>

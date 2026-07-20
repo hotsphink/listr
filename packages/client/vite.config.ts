@@ -43,5 +43,10 @@ export default defineConfig(({ mode }) => {
     resolve: {
       conditions: ["development", "browser"],
     },
+    define: {
+      // Stamped at config-eval time: build time for production builds, dev-server
+      // start time in development. Surfaced on the admin page.
+      __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    },
   };
 });

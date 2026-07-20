@@ -9,6 +9,7 @@ import { upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince, get
 import type { EntityType } from "./db.js";
 import { config } from "./config.js";
 import { extractFromImage } from "./gemini.js";
+import { MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION } from "./protocol.js";
 
 const PORT = config.port ?? 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
@@ -125,13 +126,26 @@ wss.on("connection", (ws: WebSocket) => {
     if (msg.type === "hello") {
       const k = typeof msg.key === "string" ? msg.key.trim() : "";
       if (!k) { ws.send(JSON.stringify({ type: "error", message: "Missing key" })); return; }
+      // Reject clients whose protocol version we don't understand. Clients that
+      // predate versioning send no field → treated as version 0.
+      const clientVersion = typeof msg.protocol_version === "number" ? msg.protocol_version : 0;
+      if (clientVersion < MIN_PROTOCOL_VERSION || clientVersion > MAX_PROTOCOL_VERSION) {
+        const range = MIN_PROTOCOL_VERSION === MAX_PROTOCOL_VERSION
+          ? `${MIN_PROTOCOL_VERSION}`
+          : `${MIN_PROTOCOL_VERSION}–${MAX_PROTOCOL_VERSION}`;
+        const message = `Unsupported client protocol version ${clientVersion}; server understands ${range}. Please update the client.`;
+        console.log(`[ws] ${ts()} ${keyTag(k)} reject client=${typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?"} protocol=${clientVersion} (server ${range})`);
+        ws.send(JSON.stringify({ type: "error", message, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
+        ws.close(1008, "Unsupported protocol version");
+        return;
+      }
       syncKey = k;
       clientId = typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?";
       connectedAt = Date.now();
       if (!clients.has(k)) clients.set(k, new Set());
       clients.get(k)!.add(ws);
-      console.log(`[ws] ${ts()} ${keyTag(k)} connect client=${clientId}`);
-      ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID }));
+      console.log(`[ws] ${ts()} ${keyTag(k)} connect client=${clientId} protocol=${clientVersion}`);
+      ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
       return;
     }
 

@@ -1,4 +1,5 @@
 import { db } from "../db/database.js";
+import { PROTOCOL_VERSION } from "./protocol.js";
 import { setSyncStatus, setSyncStatusMessage } from "./syncStore.js";
 import { applyIncomingEntity, shouldDeleteOnTombstone, type EntityType } from "./mergeLogic.js";
 import { assetToSync, assetFromSync, registerAsset } from "./assetStore.js";
@@ -138,7 +139,7 @@ class EndpointConnection {
       ws.addEventListener("open", () => {
         clearConnectTimer();
         this.setPhase({ phase: "handshaking" });
-        ws.send(JSON.stringify({ type: "hello", key: this.key, client_id: this.clientId }));
+        ws.send(JSON.stringify({ type: "hello", key: this.key, client_id: this.clientId, protocol_version: PROTOCOL_VERSION }));
       });
 
       ws.addEventListener("message", (e: MessageEvent) => {
