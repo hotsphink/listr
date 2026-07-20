@@ -1,6 +1,6 @@
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
-import type { Board, List, Item, AttributeDefinition, ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, type Board, type List, type Item, type AttributeDefinition, type ViewMode } from "@listr/shared";
 
 const POSITION_STEP = 64;
 
@@ -39,6 +39,7 @@ export async function createBoard(
     macros,
     created_at: now(),
     updated_at: now(),
+    schema_version: ENTITY_SCHEMA_VERSION,
   };
   await db.boards.add(board);
   syncClient.pushEntity("board", board);
@@ -49,7 +50,7 @@ export async function updateBoard(
   id: string,
   updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format_string" | "macros">>,
 ): Promise<void> {
-  await db.boards.update(id, { ...updates, updated_at: now() });
+  await db.boards.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.boards.get(id);
   if (updated) syncClient.pushEntity("board", updated);
 }
@@ -92,6 +93,7 @@ export async function createList(
     view_mode: "list",
     created_at: now(),
     updated_at: now(),
+    schema_version: ENTITY_SCHEMA_VERSION,
   };
   await db.lists.add(list);
   syncClient.pushEntity("list", list);
@@ -102,7 +104,7 @@ export async function updateList(
   id: string,
   updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "board_id">>,
 ): Promise<void> {
-  await db.lists.update(id, { ...updates, updated_at: now() });
+  await db.lists.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.lists.get(id);
   if (updated) syncClient.pushEntity("list", updated);
 }
@@ -162,6 +164,7 @@ export async function createItem(
     created_at: now(),
     updated_at: now(),
     attributes: resolvedAttrs,
+    schema_version: ENTITY_SCHEMA_VERSION,
   };
   await db.items.add(item);
   syncClient.pushEntity("item", item);
@@ -172,7 +175,7 @@ export async function updateItem(
   id: string,
   updates: Partial<Pick<Item, "title" | "position" | "attributes">>,
 ): Promise<void> {
-  await db.items.update(id, { ...updates, updated_at: now() });
+  await db.items.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.items.get(id);
   if (updated) syncClient.pushEntity("item", updated);
 }
@@ -185,7 +188,7 @@ export async function updateItemAttribute(
   const item = await db.items.get(id);
   if (!item) throw new Error(`Item ${id} not found`);
   const attributes = { ...item.attributes, [key]: value };
-  await db.items.update(id, { attributes, updated_at: now() });
+  await db.items.update(id, { attributes, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.items.get(id);
   if (updated) syncClient.pushEntity("item", updated);
 }
@@ -227,6 +230,7 @@ export async function bulkCreateItems(
       created_at: timestamp,
       updated_at: timestamp,
       attributes: resolvedAttrs,
+      schema_version: ENTITY_SCHEMA_VERSION,
     };
   });
 

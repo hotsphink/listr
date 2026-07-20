@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@listr/shared": "workspace:*",
     "better-sqlite3": "^11.9.0",
     "ws": "^8.18.0"
   },

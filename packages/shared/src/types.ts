@@ -37,6 +37,8 @@ export interface Board {
   macros?: Record<string, string>;
   created_at: number;
   updated_at: number;
+  /** Data-shape version this record was authored under. Missing = pre-versioning (treat as 1). */
+  schema_version?: number;
 }
 
 export type ViewMode = "list" | "table" | "card";
@@ -51,6 +53,8 @@ export interface List {
   view_mode: ViewMode;
   created_at: number;
   updated_at: number;
+  /** Data-shape version this record was authored under. Missing = pre-versioning (treat as 1). */
+  schema_version?: number;
 }
 
 export interface Item {
@@ -61,6 +65,8 @@ export interface Item {
   created_at: number;
   updated_at: number;
   attributes: Record<string, unknown>;
+  /** Data-shape version this record was authored under. Missing = pre-versioning (treat as 1). */
+  schema_version?: number;
 }
 
 export interface Asset {

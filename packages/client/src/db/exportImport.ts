@@ -1,4 +1,4 @@
-import type { AttributeDefinition, Item, List, ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, type AttributeDefinition, type Item, type List, type ViewMode } from "@listr/shared";
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { deleteBoard, deleteList, deleteItem } from "./operations.js";
@@ -254,6 +254,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         macros: board.macros,
         created_at: timestamp,
         updated_at: timestamp,
+        schema_version: ENTITY_SCHEMA_VERSION,
       });
       stats.boards.created++;
     }
@@ -288,6 +289,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
           view_mode: list.view_mode,
           created_at: timestamp,
           updated_at: timestamp,
+          schema_version: ENTITY_SCHEMA_VERSION,
         });
         stats.lists.created++;
         boardsWithNewLists.add(board.id);
@@ -321,6 +323,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
             attributes: item.attributes,
             created_at: timestamp,
             updated_at: timestamp,
+            schema_version: ENTITY_SCHEMA_VERSION,
           });
           stats.items.created++;
         }

@@ -40,6 +40,23 @@ export class ListrDB extends Dexie {
   constructor() {
     super("listr");
 
+    // ── Data-format versioning ────────────────────────────────────────────
+    // IndexedDB persists the Dexie schema version below; when a client with a
+    // higher declared version opens an older local DB, the matching `.upgrade()`
+    // runs ONCE to migrate existing rows forward.
+    //
+    // Whenever you change the stored shape of an entity (add/rename/remove a
+    // field, change how ordering is represented, etc.):
+    //   1. Add a NEW `this.version(N+1).stores(...).upgrade(...)` block below.
+    //      Never edit an existing version block.
+    //   2. If the changed field is also synced to the server, bump the sync
+    //      PROTOCOL_VERSION (src/sync/protocol.ts) and the server's supported
+    //      range so old- and new-format clients can't share one server and
+    //      corrupt each other's data. NOTE: `.upgrade()` migrates only LOCAL
+    //      data at open time — it does NOT run on entities pulled over sync.
+    // See memory: project_data_format_versioning.
+    // ──────────────────────────────────────────────────────────────────────
+
     this.version(1).stores({
       categories: "id, position",
       lists: "id, category_id, position",

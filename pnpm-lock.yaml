@@ -47,6 +47,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@listr/shared':
+        specifier: workspace:*
+        version: link:../shared
       better-sqlite3:
         specifier: ^11.9.0
         version: 11.10.0
