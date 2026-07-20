@@ -418,37 +418,32 @@ const ImportModal: Component<Props> = (props) => {
       </Show>
 
       <Show when={phase() === "native_preview"}>
-        {() => {
-          const stats = nativeStats();
-          return (
-            <>
-              <p class="field-hint" style="margin-bottom: 16px">
-                Applying this export will upsert entities by ID. Items not in the export are left untouched.
-              </p>
-              <Show when={stats}>
-                {(s) => (
-                  <table class="import-native-stats">
-                    <thead>
-                      <tr><th></th><th>update</th><th>create</th><th>delete</th></tr>
-                    </thead>
-                    <tbody>
-                      <tr><td>Boards</td><td>{s().boards.updated}</td><td>{s().boards.created}</td><td>{s().boards.deleted}</td></tr>
-                      <tr><td>Lists</td><td>{s().lists.updated}</td><td>{s().lists.created}</td><td>{s().lists.deleted}</td></tr>
-                      <tr><td>Items</td><td>{s().items.updated}</td><td>{s().items.created}</td><td>{s().items.deleted}</td></tr>
-                    </tbody>
-                  </table>
-                )}
-              </Show>
-              <Show when={error()}>
-                {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
-              </Show>
-              <div class="modal-actions">
-                <button class="btn-ghost" onClick={reset}>Back</button>
-                <button class="btn-primary" onClick={handleNativeConfirm}>Apply</button>
-              </div>
-            </>
-          );
-        }}
+        <>
+          <p class="field-hint" style="margin-bottom: 16px">
+            Applying this export will upsert entities by ID. Items not in the export are left untouched.
+          </p>
+          <Show when={nativeStats()}>
+            {(s) => (
+              <table class="import-native-stats">
+                <thead>
+                  <tr><th></th><th>update</th><th>create</th><th>delete</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Boards</td><td>{s().boards.updated}</td><td>{s().boards.created}</td><td>{s().boards.deleted}</td></tr>
+                  <tr><td>Lists</td><td>{s().lists.updated}</td><td>{s().lists.created}</td><td>{s().lists.deleted}</td></tr>
+                  <tr><td>Items</td><td>{s().items.updated}</td><td>{s().items.created}</td><td>{s().items.deleted}</td></tr>
+                </tbody>
+              </table>
+            )}
+          </Show>
+          <Show when={error()}>
+            {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
+          </Show>
+          <div class="modal-actions">
+            <button class="btn-ghost" onClick={reset}>Back</button>
+            <button class="btn-primary" onClick={handleNativeConfirm}>Apply</button>
+          </div>
+        </>
       </Show>
 
       <Show when={phase() === "preview" || phase() === "importing"}>

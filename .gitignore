@@ -8,3 +8,4 @@ packages/server/src/*.js
 certs/
 work/
 .claude/*.local.*
+*.tsbuildinfo
