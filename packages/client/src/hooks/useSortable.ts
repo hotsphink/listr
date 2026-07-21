@@ -142,6 +142,12 @@ export function useSortable(
     delay: 300,
     delayOnTouchOnly: true,
     handle: ".drag-handle",
+    // "Physical" drag feel: use the fallback (JS-driven clone) instead of native
+    // HTML5 DnD. The original item leaves a plain gap (see .sortable-ghost) and a
+    // real-size clone floats above the columns following the pointer.
+    forceFallback: true,
+    fallbackOnBody: true,
+    fallbackClass: "sortable-fallback",
     ghostClass: "sortable-ghost",
     chosenClass: "sortable-chosen",
     dragClass: "sortable-drag",

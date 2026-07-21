@@ -1339,19 +1339,21 @@ tbody tr {
   right: 8px;
 }
 
+/* The item left behind while dragging: an empty gap, no visible placeholder. */
 .sortable-ghost {
-  opacity: 0.4;
+  visibility: hidden;
 }
 
 .sortable-chosen {
   cursor: grabbing;
-  transform: scale(1.04);
-  background: var(--accent-dim);
 }
 
-.sortable-drag {
-  opacity: 0.95;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+/* The clone that follows the pointer (fallback mode): solid, lifted, same size. */
+.sortable-drag,
+.sortable-fallback {
+  opacity: 1;
+  cursor: grabbing;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
 /* Import modal */
