@@ -396,6 +396,10 @@ class SyncClient {
     if (msg.server_time) {
       await db.sync_config.update("default", { last_sync_at: msg.server_time, last_sync_key: this.key });
     }
+    // A snapshot can bring in legacy item blobs from a not-yet-migrated server;
+    // heal them to the current after_id shape. Dynamic import avoids a static
+    // import cycle with operations.ts (which imports this module's syncClient).
+    void import("../db/operations.js").then((m) => m.healLegacyItems()).catch(console.error);
   }
 
   private async mergeEntityBatch(entityType: "board" | "list" | "item", incoming: any[]): Promise<void> {

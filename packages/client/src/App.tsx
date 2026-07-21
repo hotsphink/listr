@@ -7,6 +7,7 @@ import ListView from "./pages/ListView.js";
 import AdminPage from "./pages/AdminPage.js";
 import TestRunner from "./pages/TestRunner.js";
 import { db } from "./db/database.js";
+import { healLegacyItems } from "./db/operations.js";
 import { syncClient } from "./sync/SyncClient.js";
 import { initAssetStore } from "./sync/assetStore.js";
 import { selectionMode } from "./store/selectionMode.js";
@@ -18,6 +19,9 @@ const Layout: Component<{ children?: any }> = (props) => {
 
   onMount(async () => {
     await initAssetStore();
+    // Convert any legacy (pre-after_id) item rows this client is holding — e.g.
+    // pulled from a not-yet-migrated server — so they display and sync correctly.
+    healLegacyItems().catch(console.error);
   });
 
   createEffect(() => {

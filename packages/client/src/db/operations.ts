@@ -1,6 +1,6 @@
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
-import { ENTITY_SCHEMA_VERSION, type Board, type List, type Item, type AttributeDefinition, type ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, isCurrentSchemaVersion, type Board, type List, type Item, type AttributeDefinition, type ViewMode } from "@listr/shared";
 
 // Boards and lists still use numeric `position` ordering; only items moved to
 // after_id linked-list ordering.
@@ -11,12 +11,22 @@ const POSITION_STEP = 64;
 // ---------------------------------------------------------------------------
 
 /**
- * Walk a set of items linked by after_id and return them in chain order.
- * Forks (multiple items sharing an after_id, e.g. from concurrent edits) are
- * resolved by created_at tiebreak. Orphaned items (dangling after_id pointers
- * from concurrent deletes) are appended at the end.
+ * Walk a set of items linked by after_id and return them in display order.
+ *
+ * Robust to legacy `position`-ordered data. During the position→after_id
+ * transition a client can hold a mix: locally-migrated rows carry after_id,
+ * while rows pulled from a not-yet-migrated server still carry only `position`
+ * (sync ingestion writes blobs verbatim; the Dexie upgrade only touches local
+ * rows). Legacy items have no after_id, so they all share the `null` bucket —
+ * we order that bucket (and every fork) by `position` first, so a pure-legacy
+ * list renders in its intended order instead of creation order.
+ *
+ * Ordering within a fork: items with a `position` (legacy) come first, in
+ * numeric order; items without (migrated) follow, by created_at. after_id items
+ * that point at a legacy item splice in right after it. Orphans (dangling
+ * after_id from concurrent deletes) are appended at the end.
  */
-export function resolveChain<T extends { id: string; after_id?: string | null; created_at?: number }>(
+export function resolveChain<T extends { id: string; after_id?: string | null; created_at?: number; position?: number }>(
   items: T[],
 ): T[] {
   const byAfterId = new Map<string | null, T[]>();
@@ -26,12 +36,19 @@ export function resolveChain<T extends { id: string; after_id?: string | null; c
     byAfterId.get(key)!.push(item);
   }
 
+  const bySequence = (a: T, b: T): number => {
+    const pa = a.position, pb = b.position;
+    if (pa != null && pb != null) return pa - pb;   // both legacy: numeric position
+    if (pa != null) return -1;                      // legacy before migrated
+    if (pb != null) return 1;
+    return (a.created_at ?? 0) - (b.created_at ?? 0); // both migrated: created_at
+  };
+
   const result: T[] = [];
   const visited = new Set<string>();
 
   function walk(afterId: string | null) {
-    const nexts = byAfterId.get(afterId) ?? [];
-    nexts.sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0)); // stable tiebreak
+    const nexts = (byAfterId.get(afterId) ?? []).slice().sort(bySequence);
     for (const item of nexts) {
       if (visited.has(item.id)) continue; // cycle guard
       visited.add(item.id);
@@ -84,6 +101,76 @@ export function reorderByAfterId(
   }
 
   return updates;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy healing (position → after_id) for data that bypassed the Dexie upgrade
+// ---------------------------------------------------------------------------
+
+type HealableItem = {
+  id: string;
+  after_id?: string | null;
+  created_at?: number;
+  position?: number;
+  schema_version?: number;
+  updated_at?: number;
+};
+
+/**
+ * Given all items in one list, if any is legacy (schema_version below current),
+ * return the records to rewrite so the whole list becomes a clean after_id chain
+ * in resolveChain (display) order, each stamped current with `position` dropped.
+ * Only items whose after_id or schema_version actually changes are returned;
+ * returns [] when the list is already current. Detection keys on schema_version
+ * alone — never on which fields are present.
+ */
+type HealedItem<T> = T & { after_id: string | null; schema_version: number; updated_at: number };
+
+export function computeChainHeal<T extends HealableItem>(listItems: T[], timestamp: number): HealedItem<T>[] {
+  if (!listItems.some((i) => !isCurrentSchemaVersion(i.schema_version))) return [];
+
+  const ordered = resolveChain(listItems);
+  const updates: HealedItem<T>[] = [];
+  let prevId: string | null = null;
+  for (const item of ordered) {
+    if ((item.after_id ?? null) !== prevId || !isCurrentSchemaVersion(item.schema_version)) {
+      const healed = { ...item, after_id: prevId, schema_version: ENTITY_SCHEMA_VERSION, updated_at: timestamp };
+      delete (healed as { position?: number }).position;
+      updates.push(healed);
+    }
+    prevId = item.id;
+  }
+  return updates;
+}
+
+/**
+ * Convert any locally-held legacy item rows to the current after_id shape and
+ * push the healed records. Runs on startup and after each sync pull, because the
+ * Dexie upgrade only migrates rows present at DB-open — it never touches items
+ * pulled from a not-yet-migrated server (sync ingestion writes blobs verbatim).
+ * Without this, a current-version client keeps re-pushing legacy blobs, which
+ * the server now rejects (see upsertEntity). Idempotent: a no-op once clean.
+ */
+export async function healLegacyItems(): Promise<void> {
+  const all = await db.items.toArray();
+  if (!all.some((i) => !isCurrentSchemaVersion(i.schema_version))) return;
+
+  const byList = new Map<string, Item[]>();
+  for (const item of all) {
+    const arr = byList.get(item.list_id);
+    if (arr) arr.push(item);
+    else byList.set(item.list_id, [item]);
+  }
+
+  const timestamp = now();
+  for (const listItems of byList.values()) {
+    const updates = computeChainHeal(listItems, timestamp);
+    if (!updates.length) continue;
+    await db.transaction("rw", db.items, async () => {
+      for (const u of updates) await db.items.put(u);
+    });
+    for (const u of updates) syncClient.pushEntity("item", u);
+  }
 }
 
 function generateId(): string {

@@ -16,7 +16,7 @@
  *
  * SAFETY:
  *   - Run with the sync server STOPPED (SQLite is single-writer).
- *   - Dry run by default; pass --apply to write.
+ *   - Dry run by default; pass --apply to write. See scripts/cli.ts.
  *   - On --apply a timestamped backup copy is made first.
  *
  * Usage:
@@ -24,31 +24,11 @@
  *   (default DB: ~/.local/share/listr/listr.db)
  */
 import Database from "better-sqlite3";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { copyFileSync, existsSync } from "node:fs";
+import { parseScriptArgs } from "./cli.js";
 
 const POSITION_STEP = 64;
 
-const args = process.argv.slice(2);
-const apply = args.includes("--apply");
-const dbArg = args.find((a) => a.startsWith("--db="))?.slice("--db=".length);
-const DB_PATH = (dbArg ?? join(homedir(), ".local/share/listr/listr.db"))
-  .replace(/^~(?=$|\/)/, homedir());
-
-if (!existsSync(DB_PATH)) {
-  console.error(`DB not found: ${DB_PATH}`);
-  process.exit(1);
-}
-
-console.log(`DB:   ${DB_PATH}`);
-console.log(apply ? "MODE: APPLY (writing changes)" : "MODE: dry-run (no writes — pass --apply to write)");
-
-if (apply) {
-  const bak = `${DB_PATH}.bak-${Date.now()}`;
-  copyFileSync(DB_PATH, bak);
-  console.log(`Backup: ${bak}`);
-}
+const { dbPath: DB_PATH, apply } = parseScriptArgs("revert-items-to-position");
 
 interface ItemData {
   position?: number;

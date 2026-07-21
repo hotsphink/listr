@@ -101,4 +101,26 @@ describe("resolveChain", () => {
     expect(order).toContain("b");
     expect(order).toHaveLength(2);
   });
+
+  // Regression: legacy items pulled from a not-yet-migrated server carry only
+  // `position` (no after_id). They must order by position, not creation order.
+  it("orders legacy position-only items by position, not created_at", () => {
+    const items = [
+      { id: "c", position: 128, created_at: 1 }, // created first, but position last
+      { id: "a", position: 0, created_at: 3 },
+      { id: "b", position: 64, created_at: 2 },
+    ];
+    expect(resolveChain(items as any).map((i) => i.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("splices an after_id item into a legacy position list at its predecessor", () => {
+    // Legacy list a(0), b(64), c(128); a new item n was dropped after b.
+    const items = [
+      { id: "a", position: 0, created_at: 0 },
+      { id: "b", position: 64, created_at: 1 },
+      { id: "c", position: 128, created_at: 2 },
+      { id: "n", after_id: "b", created_at: 9 },
+    ];
+    expect(resolveChain(items as any).map((i) => i.id)).toEqual(["a", "b", "n", "c"]);
+  });
 });

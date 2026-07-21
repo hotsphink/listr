@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { ENTITY_SCHEMA_VERSION } from "@listr/shared";
 import { openDb } from "./db.js";
 
 type DbApi = ReturnType<typeof openDb>;
@@ -10,7 +11,7 @@ function makeList(id: string, updatedAt: number) {
 }
 
 function makeItem(id: string, updatedAt: number) {
-  return { id, updated_at: updatedAt, title: "Test", list_id: "l1" };
+  return { id, updated_at: updatedAt, title: "Test", list_id: "l1", after_id: null, schema_version: ENTITY_SCHEMA_VERSION };
 }
 
 function makeBoard(id: string, updatedAt: number) {
@@ -59,6 +60,38 @@ describe("upsertEntity — entity vs entity LWW", () => {
     expect(db.upsertEntity("board", makeBoard("b1", 50), KEY)).toBe(false);
     expect(db.upsertEntity("item", makeItem("i1", 100), KEY)).toBe(true);
     expect(db.upsertEntity("item", makeItem("i1", 200), KEY)).toBe(true);
+  });
+});
+
+// ── upsertEntity: item schema_version format gate ─────────────────────────────
+
+describe("upsertEntity — item format gate", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("rejects an item with no schema_version (legacy blob)", () => {
+    const legacy = { id: "i1", updated_at: 100, title: "Old", list_id: "l1", position: 0 };
+    expect(db.upsertEntity("item", legacy, KEY)).toBe(false);
+    expect(db.getEntitiesSince("item", KEY, 0)).toHaveLength(0);
+  });
+
+  it("rejects an item with an older schema_version", () => {
+    const old = { id: "i1", updated_at: 100, title: "Old", list_id: "l1", schema_version: ENTITY_SCHEMA_VERSION - 1 };
+    expect(db.upsertEntity("item", old, KEY)).toBe(false);
+  });
+
+  it("does not let a legacy re-push overwrite a stored current item", () => {
+    expect(db.upsertEntity("item", makeItem("i1", 100), KEY)).toBe(true);
+    const legacyNewer = { id: "i1", updated_at: 999, title: "Regressed", list_id: "l1", position: 0 };
+    expect(db.upsertEntity("item", legacyNewer, KEY)).toBe(false);
+    const [stored] = db.getEntitiesSince("item", KEY, 0) as any[];
+    expect(stored.title).toBe("Test");
+    expect(stored.schema_version).toBe(ENTITY_SCHEMA_VERSION);
+  });
+
+  it("still gates only items — boards/lists are unaffected", () => {
+    expect(db.upsertEntity("board", makeBoard("b1", 100), KEY)).toBe(true);
+    expect(db.upsertEntity("list", makeList("l1", 100), KEY)).toBe(true);
   });
 });
 

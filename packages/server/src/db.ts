@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { isCurrentSchemaVersion } from "@listr/shared";
 import { config } from "./config.js";
 
 export type EntityType = "board" | "list" | "item" | "asset";
@@ -117,6 +118,16 @@ export function createDbApi(sql: Database.Database) {
   }
 
   function upsertEntity(type: EntityType, data: Record<string, unknown>, syncKey: string): boolean {
+    // Format gate: refuse legacy/unversioned item blobs. The protocol version
+    // gates the client BINARY, but a current client can still carry old-format
+    // rows (the Dexie upgrade never touches sync-pulled data) and re-push them
+    // in its initial sync. Keyed on schema_version alone — never field-sniffing.
+    // Clients heal such rows to the current shape before their pushes are kept.
+    if (type === "item" && !isCurrentSchemaVersion(data.schema_version)) {
+      console.warn(`[sync] rejected legacy item ${data.id} (schema_version=${data.schema_version ?? "missing"})`);
+      return false;
+    }
+
     const table = tableFor(type);
     const existing = sql
       .prepare(`SELECT updated_at FROM ${table} WHERE id = ?`)
