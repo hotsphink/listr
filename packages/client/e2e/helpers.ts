@@ -68,7 +68,7 @@ export async function createListInBoard(
     });
     const listsDiv = catSection.locator(".sidebar-board-lists");
     if (!(await listsDiv.isVisible())) {
-      await catSection.locator(".sidebar-board-header").click();
+      await catSection.locator(".sidebar-board-chevron").click();
       await listsDiv.waitFor({ state: "visible" });
     }
     await catSection.locator(".sidebar-item.sidebar-new").click();

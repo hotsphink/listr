@@ -9,7 +9,8 @@ test.describe("view mode switching", () => {
       { key: "genre", label: "Genre" },
     ]);
     await createListInBoard(page, "My Movies", "Movies");
-    await expect(page.locator(".page-header h1")).toHaveText("My Movies");
+    // Board multi-column model: the page header always shows the board name.
+    await expect(page.locator(".page-header h1")).toHaveText("Movies");
 
     // Add two items
     await page.locator(".view-add").last().click();
@@ -63,14 +64,13 @@ test.describe("view mode switching", () => {
   });
 
   test("view mode persists after navigation", async ({ page }) => {
+    // View mode is a global setting in the board multi-column model.
     await page.locator(".view-switcher-btn", { hasText: "Cards" }).click();
     await expect(page.locator(".card-grid")).toBeVisible();
 
-    await page.locator(".sidebar-board-header", { hasText: "Movies" }).click();
+    // Navigate via the sidebar list item; still the same board, view mode persists.
+    await page.locator(".sidebar-item", { hasText: "My Movies" }).click();
     await expect(page.locator(".page-header h1")).toHaveText("Movies");
-
-    await page.locator(".multi-list-column-header", { hasText: "My Movies" }).click();
-    await expect(page.locator(".page-header h1")).toHaveText("My Movies");
     await expect(page.locator(".view-switcher-btn.active")).toHaveText("Cards");
     await expect(page.locator(".card-grid")).toBeVisible();
   });

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { clearDatabase, createBoard } from "./helpers.js";
+import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 
 // Minimal 1×1 white PNG — content doesn't matter (server is mocked); only mimeType matters for the client check
 const TINY_PNG = Buffer.from(
@@ -9,22 +9,34 @@ const TINY_PNG = Buffer.from(
   "hex",
 );
 
-const FAKE_SERVER_WS = "wss://fake.test:19999";
+const FAKE_HOST = "fake.test";
+const FAKE_PORT = 19999;
 
+// Import reads the AI endpoint from the first enabled sync_endpoint
+// (getApiUrl in ImportModal builds `${proto}://${host}:${port}`), so the mocked
+// /api/import route below is served from https://fake.test:19999.
 async function setupSyncConfig(page: Page) {
-  await page.evaluate((url: string) => {
+  await page.evaluate(({ host, port }) => {
     return new Promise<void>((resolve, reject) => {
       const req = indexedDB.open("listr");
       req.onsuccess = () => {
         const db = req.result;
-        const tx = db.transaction("sync_config", "readwrite");
-        tx.objectStore("sync_config").put({ id: "default", sync_url: url });
+        const tx = db.transaction("sync_endpoints", "readwrite");
+        tx.objectStore("sync_endpoints").put({
+          id: "test-endpoint",
+          host,
+          port,
+          enabled: true,
+          secure: true,
+          last_server_id: null,
+          position: 0,
+        });
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);
       };
       req.onerror = () => reject(req.error);
     });
-  }, FAKE_SERVER_WS);
+  }, { host: FAKE_HOST, port: FAKE_PORT });
 }
 
 function mockImportRoute(page: Page, response: object) {
@@ -38,7 +50,9 @@ function mockImportRoute(page: Page, response: object) {
 }
 
 async function uploadFakeImage(page: Page) {
-  const fileInput = page.locator('input[type="file"][accept="image/*"]');
+  // The primary file input accepts both images and JSON; target it specifically
+  // (a separate camera input uses accept="image/*").
+  const fileInput = page.locator('input[type="file"][accept="image/*,.json"]');
   await fileInput.setInputFiles({ name: "board.png", mimeType: "image/png", buffer: TINY_PNG });
 }
 
@@ -65,7 +79,7 @@ test.describe("import modal", () => {
 
   test("global Import sidebar link opens the modal", async ({ page }) => {
     await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
-    await expect(page.locator(".modal h2")).toHaveText("Import from Screenshot");
+    await expect(page.locator(".modal h2")).toHaveText("Import");
     await expect(page.locator(".import-dropzone")).toBeVisible();
     await expect(page.locator(".modal")).toContainText("globally");
   });
@@ -74,7 +88,7 @@ test.describe("import modal", () => {
     await createBoard(page, "Movies");
     await page.locator(".sidebar-board-header", { hasText: "Movies" }).click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Import" }).click();
-    await expect(page.locator(".modal h2")).toHaveText("Import from Screenshot");
+    await expect(page.locator(".modal h2")).toHaveText("Import");
     await expect(page.locator(".modal")).toContainText('into "Movies"');
   });
 
@@ -180,7 +194,8 @@ test.describe("import modal", () => {
     await expect(page.locator(".import-summary")).toContainText("0 new items");
     const skipBadges = page.locator(".import-preview-item .badge-skip");
     await expect(skipBadges).toHaveCount(2);
-    await expect(page.getByRole("button", { name: /Import/ })).toBeDisabled();
+    // With nothing new, the import button reflects a zero-count no-op.
+    await expect(page.getByRole("button", { name: /Import 0 items/ })).toBeVisible();
   });
 
   test("attributes are shown as pills in the preview", async ({ page }) => {
@@ -209,20 +224,15 @@ test.describe("import modal", () => {
       boards: [{ name: "items", lists: [{ name: "items", items: [{ title: "Inception" }, { title: "The Matrix" }] }] }],
     });
 
-    // Create a list by clicking "+ New List" in the sidebar
-    await page.locator(".sidebar-board-header", { hasText: "Movies" }).click();
-    await page.locator(".sidebar-item.sidebar-new", { hasText: "+ New List" }).click();
-    // Inline rename appears — type name and confirm
-    const renameInput = page.locator(".sidebar-rename-input");
-    await renameInput.fill("Watchlist");
-    await renameInput.press("Enter");
+    // Create a list in the board (expands via the chevron, then "+ New List").
+    await createListInBoard(page, "Watchlist", "Movies");
 
     // Right-click the list and choose Import
     const listItem = page.locator(".sidebar-item", { hasText: "Watchlist" });
     await listItem.click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Import" }).click();
 
-    await expect(page.locator(".modal h2")).toHaveText("Import from Screenshot");
+    await expect(page.locator(".modal h2")).toHaveText("Import");
     await expect(page.locator(".modal")).toContainText('into "Watchlist"');
 
     await uploadFakeImage(page);

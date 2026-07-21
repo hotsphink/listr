@@ -6,7 +6,8 @@ test.describe("sidebar context menu", () => {
     await clearDatabase(page);
     await createBoard(page, "Movies");
     await createListInBoard(page, "Watchlist", "Movies");
-    await expect(page.locator(".page-header h1")).toHaveText("Watchlist");
+    // Board multi-column model: header shows the board name.
+    await expect(page.locator(".page-header h1")).toHaveText("Movies");
   });
 
   test("right-click list shows context menu with rename, configure, delete", async ({ page }) => {
@@ -17,11 +18,12 @@ test.describe("sidebar context menu", () => {
     await expect(menu).toBeVisible();
 
     const items = menu.locator(".context-menu-item");
-    await expect(items).toHaveCount(4);
+    await expect(items).toHaveCount(5);
     await expect(items.nth(0)).toHaveText("Rename");
     await expect(items.nth(1)).toHaveText("Edit");
     await expect(items.nth(2)).toHaveText("Import");
-    await expect(items.nth(3)).toHaveText("Delete");
+    await expect(items.nth(3)).toHaveText("Export");
+    await expect(items.nth(4)).toHaveText("Delete");
   });
 
   test("right-click board shows context menu", async ({ page }) => {
@@ -30,7 +32,7 @@ test.describe("sidebar context menu", () => {
 
     const menu = page.locator(".context-menu");
     await expect(menu).toBeVisible();
-    await expect(menu.locator(".context-menu-item")).toHaveCount(4);
+    await expect(menu.locator(".context-menu-item")).toHaveCount(5);
   });
 
   test("context menu closes on Escape", async ({ page }) => {
@@ -52,7 +54,8 @@ test.describe("sidebar context menu", () => {
     await input.press("Enter");
 
     await expect(page.locator(".sidebar-item", { hasText: "Films" })).toBeVisible();
-    await expect(page.locator(".page-header h1")).toHaveText("Films");
+    // The list's column header reflects the new name (the page header stays the board name).
+    await expect(page.locator(".multi-list-column-name", { hasText: "Films" })).toBeVisible();
   });
 
   test("rename can be cancelled with Escape", async ({ page }) => {
@@ -76,7 +79,7 @@ test.describe("sidebar context menu", () => {
 
   test("delete removes the list", async ({ page }) => {
     await createListInBoard(page, "Books", "Movies");
-    await expect(page.locator(".page-header h1")).toHaveText("Books");
+    await expect(page.locator(".multi-list-column-name", { hasText: "Books" })).toBeVisible();
 
     page.on("dialog", (dialog) => dialog.accept());
     const watchlistItem = page.locator(".sidebar-item", { hasText: "Watchlist" });

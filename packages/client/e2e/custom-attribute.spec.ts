@@ -15,7 +15,7 @@ test.describe("custom attributes", () => {
 
     // Create a list in that board
     await createListInBoard(page, "My Movies", "Movies");
-    await expect(page.locator(".page-header h1")).toHaveText("My Movies");
+    await expect(page.locator(".page-header h1")).toHaveText("Movies");
 
     // Switch to table view to see attribute columns
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
@@ -51,7 +51,7 @@ test.describe("custom attributes", () => {
       { key: "director", label: "Director" },
     ]);
     await createListInBoard(page, "My Films", "Films");
-    await expect(page.locator(".page-header h1")).toHaveText("My Films");
+    await expect(page.locator(".page-header h1")).toHaveText("Films");
 
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
 
@@ -75,7 +75,7 @@ test.describe("custom attributes", () => {
       { key: "year", label: "Year", type: "number" },
     ], "{title} ({year})");
     await createListInBoard(page, "Watchlist", "Rated Movies");
-    await expect(page.locator(".page-header h1")).toHaveText("Watchlist");
+    await expect(page.locator(".page-header h1")).toHaveText("Rated Movies");
 
     // Default is list view — add an item
     await page.locator(".view-add").last().click();
