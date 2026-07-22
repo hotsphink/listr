@@ -11,10 +11,11 @@ export function useSortable(
   getItems: () => { id: string; after_id: string | null }[],
   options?: Partial<Sortable.Options> & {
     onCrossMove?: (itemId: string, toEl: HTMLElement, rawNewIndex: number) => Promise<void>;
+    onOptimisticReorder?: (updates: { id: string; after_id: string | null }[]) => void;
     scrollEl?: HTMLElement;
   },
 ) {
-  const { onCrossMove, scrollEl, ...sortableOptions } = options ?? {};
+  const { onCrossMove, onOptimisticReorder, scrollEl, ...sortableOptions } = options ?? {};
 
   // Edge-scroll state
   let dragX = 0;
@@ -211,6 +212,8 @@ export function useSortable(
       const currentItems = getItems();
       const updates = reorderByAfterId(currentItems, movedId, newAfterId);
       if (!updates.length) return;
+
+      onOptimisticReorder?.(updates);
 
       const timestamp = Date.now();
 

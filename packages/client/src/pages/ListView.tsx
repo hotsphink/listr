@@ -596,6 +596,17 @@ const ListView: Component = () => {
                 {(list) => {
                   const items = () => itemsForList(list.id);
                   const allItemsForList = () => itemsByList().get(list.id) ?? [];
+                  const applyOptimisticReorder = (updates: { id: string; after_id: string | null }[]) => {
+                    const updatesMap = new Map(updates.map(u => [u.id, u.after_id]));
+                    const newMap = new Map(itemsByList());
+                    const listItems = newMap.get(list.id) ?? [];
+                    newMap.set(list.id, resolveChain(
+                      listItems.map(item =>
+                        updatesMap.has(item.id) ? { ...item, after_id: updatesMap.get(item.id)! } : item
+                      )
+                    ));
+                    setItemsByList(newMap);
+                  };
                   return (
                     <div class="multi-list-column" data-list-id={list.id}>
                       <div
@@ -626,7 +637,7 @@ const ListView: Component = () => {
 
                       <Switch>
                         <Match when={appViewMode() === "list"}>
-                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
+                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, onOptimisticReorder: applyOptimisticReorder, scrollEl: multiListViewEl })}>
                             <For each={items()}>
                               {(item) => (
                                 <li
@@ -662,7 +673,7 @@ const ListView: Component = () => {
                                   </For>
                                 </tr>
                               </thead>
-                              <tbody data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
+                              <tbody data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, onOptimisticReorder: applyOptimisticReorder, scrollEl: multiListViewEl })}>
                                 <For each={items()}>
                                   {(item) => (
                                     <tr
@@ -696,7 +707,7 @@ const ListView: Component = () => {
 
                         <Match when={appViewMode() === "card"}>
                           <div class="card-container">
-                            <div class="card-grid" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, scrollEl: multiListViewEl })}>
+                            <div class="card-grid" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, onOptimisticReorder: applyOptimisticReorder, scrollEl: multiListViewEl })}>
                               <For each={items()}>
                                 {(item) => (
                                   <div
