@@ -248,7 +248,7 @@ const Sidebar: Component<Props> = (props) => {
                       onContextMenu={(e) => handleContextMenu(e, { kind: "board", board })}
                     >
                       <span class="sidebar-board-chevron" onClick={(e) => { e.stopPropagation(); toggleBoard(board.id); }}>{isExpanded() ? "▾" : "▸"}</span>
-                      <span class="sidebar-board-name" onDblClick={() => setEditingBoard(board)}>{board.name}</span>
+                      <span class="sidebar-board-name" onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }} onDblClick={() => setEditingBoard(board)}>{board.name}</span>
                       <span class="sidebar-board-count">{listsForBoard(board.id).length}</span>
                     </div>
                   }
@@ -263,7 +263,7 @@ const Sidebar: Component<Props> = (props) => {
                     />
                   </div>
                 </Show>
-                <Show when={isExpanded()}>
+                <div class="sidebar-board-lists-wrapper" classList={{ expanded: isExpanded() }}>
                   <div class="sidebar-board-lists">
                     <For each={listsForBoard(board.id)}>
                       {(list) => (
@@ -300,7 +300,7 @@ const Sidebar: Component<Props> = (props) => {
                       + New List
                     </div>
                   </div>
-                </Show>
+                </div>
               </div>
             );
           }}

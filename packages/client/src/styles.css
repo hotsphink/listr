@@ -200,11 +200,10 @@ body {
 }
 
 .sidebar-board-chevron {
-  font-size: 10px;
-  width: 12px;
+  font-size: 18px;
   text-align: center;
   flex-shrink: 0;
-  cursor: pointer;
+  cursor: s-resize;
   padding: 4px;
   margin: -4px;
 }
@@ -215,6 +214,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .sidebar-board-count {
@@ -236,6 +236,20 @@ body {
   font-weight: 400;
   color: var(--text-dim);
   vertical-align: middle;
+}
+
+.sidebar-board-lists-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.1s ease;
+}
+
+.sidebar-board-lists-wrapper.expanded {
+  grid-template-rows: 1fr;
+}
+
+.sidebar-board-lists {
+  overflow: hidden;
 }
 
 .sidebar-board-lists .sidebar-item {
@@ -398,6 +412,10 @@ body {
     cursor: pointer;
     padding: 4px 6px;
     line-height: 1;
+  }
+
+  .sidebar-board-header {
+    padding: 3px 8px;
   }
 }
 
