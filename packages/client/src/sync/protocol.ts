@@ -6,4 +6,5 @@
 // compatible with older servers. Keep the server's supported range
 // (packages/server/src/protocol.ts) in sync.
 // v2: items switched from numeric `position` to `after_id` linked-list ordering.
-export const PROTOCOL_VERSION = 2;
+// v3: multi-key sync — hello sends `keys[]`, push_entity/push_delete carry `sync_key`.
+export const PROTOCOL_VERSION = 3;

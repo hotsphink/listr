@@ -212,6 +212,17 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-board-shared-icon {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  opacity: 0.7;
 }
 
 .sidebar-board-count {
@@ -1795,4 +1806,197 @@ tbody tr {
   .schema-entry-main .btn-icon {
     order: 0;
   }
+}
+
+/* ── Board share modal ───────────────────────────────────────────────────── */
+.board-share .modal { max-width: 320px; }
+
+.share-loading {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 32px 0;
+}
+
+.share-qr-wrapper {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0;
+}
+
+.share-qr-code {
+  width: 220px;
+  height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.share-key-section {
+  margin-top: 8px;
+}
+
+.share-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-alt, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.share-url-text {
+  flex: 1;
+  font-size: 0.75rem;
+  word-break: break-all;
+  color: var(--text-dim);
+  font-family: monospace;
+}
+
+/* ── Scan share modal ────────────────────────────────────────────────────── */
+.scan-share .modal { max-width: 360px; }
+
+.scan-preview-wrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.scan-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Corner brackets overlay */
+.scan-overlay-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-color: var(--accent, #5b8def);
+  border-style: solid;
+  border-width: 0;
+}
+.scan-overlay-corner.tl { top: 12px; left: 12px; border-top-width: 3px; border-left-width: 3px; border-radius: 2px 0 0 0; }
+.scan-overlay-corner.tr { top: 12px; right: 12px; border-top-width: 3px; border-right-width: 3px; border-radius: 0 2px 0 0; }
+.scan-overlay-corner.bl { bottom: 12px; left: 12px; border-bottom-width: 3px; border-left-width: 3px; border-radius: 0 0 0 2px; }
+.scan-overlay-corner.br { bottom: 12px; right: 12px; border-bottom-width: 3px; border-right-width: 3px; border-radius: 0 0 2px 0; }
+
+.scan-no-camera {
+  padding: 12px 0 8px;
+}
+
+.scan-manual-form {
+  margin-top: 4px;
+}
+
+.scan-manual-label {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.scan-manual-row {
+  display: flex;
+  gap: 8px;
+}
+
+.scan-manual-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.scan-confirm {
+  padding: 8px 0;
+}
+
+.scan-board-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.scan-confirm-detail {
+  margin-bottom: 12px;
+}
+
+.scan-success {
+  text-align: center;
+  color: var(--success);
+  font-weight: 500;
+  padding: 24px 0;
+}
+
+/* ── Receive page (opened from share URL) ────────────────────────────────── */
+.receive-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+}
+
+.receive-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px 28px;
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+}
+
+.receive-card h2 {
+  margin: 0 0 12px;
+}
+
+.receive-board-name {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.receive-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.receive-saved {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--success);
+  font-weight: 500;
+  padding: 8px 0;
+}
+
+.receive-saved-icon {
+  font-size: 2rem;
+}
+
+.receive-syncing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 8px;
+  color: var(--text-dim);
+}
+
+.receive-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent, #5b8def);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

@@ -196,6 +196,7 @@ export async function createBoard(
   schema: AttributeDefinition[] = [],
   formatString: string = "{title}",
   macros?: Record<string, string>,
+  syncKey?: string,
 ): Promise<Board> {
   const maxPos = await db.boards.orderBy("position").last();
   const board: Board = {
@@ -206,6 +207,7 @@ export async function createBoard(
     schema,
     format_string: formatString,
     macros,
+    ...(syncKey ? { sync_key: syncKey } : {}),
     created_at: now(),
     updated_at: now(),
     schema_version: ENTITY_SCHEMA_VERSION,
@@ -217,7 +219,7 @@ export async function createBoard(
 
 export async function updateBoard(
   id: string,
-  updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format_string" | "macros">>,
+  updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format_string" | "macros" | "sync_key">>,
 ): Promise<void> {
   await db.boards.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.boards.get(id);
@@ -243,6 +245,28 @@ export async function deleteBoard(id: string): Promise<void> {
   for (const itemId of itemIds) syncClient.pushDelete("item", itemId);
   for (const list of lists) syncClient.pushDelete("list", list.id);
   syncClient.pushDelete("board", id);
+}
+
+/**
+ * Remove all boards sharing syncKey from this device only — no tombstones, no sync
+ * pushes. Drops the shared_keys subscription so this client stops pulling the namespace.
+ * Other clients keeping the same sync_key are unaffected.
+ */
+export async function removeByKey(syncKey: string): Promise<void> {
+  const boards = await db.boards.filter((b) => b.sync_key === syncKey).toArray();
+
+  await db.transaction("rw", [db.boards, db.lists, db.items], async () => {
+    for (const board of boards) {
+      const lists = await db.lists.where("board_id").equals(board.id).toArray();
+      for (const list of lists) {
+        await db.items.where("list_id").equals(list.id).delete();
+      }
+      await db.lists.where("board_id").equals(board.id).delete();
+      await db.boards.delete(board.id);
+    }
+  });
+
+  await db.shared_keys.delete(syncKey);
 }
 
 // --- Lists ---

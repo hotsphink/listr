@@ -35,6 +35,8 @@ export interface Board {
   schema: AttributeDefinition[];
   format_string: string;
   macros?: Record<string, string>;
+  /** If set, this board (and its lists/items) syncs under this namespace key instead of the default. */
+  sync_key?: string;
   created_at: number;
   updated_at: number;
   /** Data-shape version this record was authored under. Missing = pre-versioning (treat as 1). */

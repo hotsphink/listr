@@ -4,10 +4,12 @@ import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import type { Board, List } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createList, createBoard, updateList, deleteList, updateBoard, deleteBoard } from "../db/operations.js";
+import { createList, createBoard, updateList, deleteList, updateBoard, deleteBoard, removeByKey } from "../db/operations.js";
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import BoardFormModal from "./BoardFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
+import BoardShareModal from "./BoardShareModal.js";
+import ScanShareModal from "./ScanShareModal.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
 import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
@@ -52,6 +54,8 @@ const Sidebar: Component<Props> = (props) => {
   const [editingBoard, setEditingBoard] = createSignal<Board | undefined>();
   const [showCreateBoard, setShowCreateBoard] = createSignal(false);
   const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
+  const [sharingBoard, setSharingBoard] = createSignal<Board | undefined>();
+  const [showScanShare, setShowScanShare] = createSignal(false);
   const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
   const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
@@ -118,9 +122,11 @@ const Sidebar: Component<Props> = (props) => {
       ];
     } else {
       const board = ctx.target.board;
+      const canRemove = !!board.sync_key;
       return [
         { label: "Rename", action: () => setRenamingId(board.id) },
         { label: "Edit", action: () => setEditingBoard(board) },
+        { label: "Share", action: () => setSharingBoard(board) },
         { label: "Import", action: () => setImportScope({
             type: "board",
             id: board.id,
@@ -136,6 +142,23 @@ const Sidebar: Component<Props> = (props) => {
             triggerDownload(data, `listr-board-${board.name}-${date}.json`);
           }
         },
+        ...(canRemove ? [{
+          label: "Remove",
+          action: async () => {
+            const sk = board.sync_key!;
+            const others = (boards() ?? []).filter((b) => b.sync_key === sk && b.id !== board.id);
+            let msg = `Remove "${board.name}" from this device only?`;
+            if (others.length > 0) {
+              const names = others.map((b) => `"${b.name}"`).join(", ");
+              msg += ` This will also remove ${names}, which share${others.length === 1 ? "s" : ""} the same sync key.`;
+            }
+            msg += " Other devices keeping this sync key are unaffected.";
+            if (!confirm(msg)) return;
+            await removeByKey(sk);
+            props.onClose?.();
+            navigate("/");
+          },
+        }] : []),
         { label: "Delete", danger: true, action: async () => {
           const listCount = listsForBoard(board.id).length;
           const msg = listCount > 0
@@ -248,7 +271,15 @@ const Sidebar: Component<Props> = (props) => {
                       onContextMenu={(e) => handleContextMenu(e, { kind: "board", board })}
                     >
                       <span class="sidebar-board-chevron" onClick={(e) => { e.stopPropagation(); toggleBoard(board.id); }}>{isExpanded() ? "▾" : "▸"}</span>
-                      <span class="sidebar-board-name" onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }} onDblClick={() => setEditingBoard(board)}>{board.name}</span>
+                      <span class="sidebar-board-name" onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }} onDblClick={() => setEditingBoard(board)}>
+                        {board.name}
+                        <Show when={board.sync_key}>
+                          <svg class="sidebar-board-shared-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-label="Shared board">
+                            <circle cx="12" cy="4" r="1.5"/><circle cx="4" cy="8" r="1.5"/><circle cx="12" cy="12" r="1.5"/>
+                            <line x1="5.4" y1="7.2" x2="10.6" y2="4.8"/><line x1="5.4" y1="8.8" x2="10.6" y2="11.2"/>
+                          </svg>
+                        </Show>
+                      </span>
                       <span class="sidebar-board-count">{listsForBoard(board.id).length}</span>
                     </div>
                   }
@@ -327,6 +358,12 @@ const Sidebar: Component<Props> = (props) => {
         >
           ↓ Import
         </div>
+        <div
+          class="sidebar-item sidebar-new"
+          onClick={() => setShowScanShare(true)}
+        >
+          ⬚ Receive Share
+        </div>
       </div>
       <div class="sidebar-footer">
         <div class="sidebar-sync-btn" onClick={() => { props.onClose?.(); navigate("/admin"); }}>
@@ -360,12 +397,23 @@ const Sidebar: Component<Props> = (props) => {
         )}
       </Show>
 
+      <BoardShareModal
+        open={sharingBoard() !== undefined}
+        onClose={() => setSharingBoard(undefined)}
+        board={sharingBoard()}
+      />
+
+      <ScanShareModal
+        open={showScanShare()}
+        onClose={() => setShowScanShare(false)}
+      />
+
       <BoardFormModal
         open={editingBoard() !== undefined}
         onClose={() => setEditingBoard(undefined)}
         onSave={async (data) => {
           const board = editingBoard();
-          if (board) await updateBoard(board.id, { ...data, macros: data.macros });
+          if (board) await updateBoard(board.id, { ...data, macros: data.macros, sync_key: data.sync_key || undefined });
           setEditingBoard(undefined);
         }}
         initial={editingBoard()}
@@ -375,7 +423,7 @@ const Sidebar: Component<Props> = (props) => {
         open={showCreateBoard()}
         onClose={() => setShowCreateBoard(false)}
         onSave={async (data) => {
-          await createBoard(data.name, data.color, data.schema, data.format_string, data.macros);
+          await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, data.sync_key || undefined);
           setShowCreateBoard(false);
         }}
       />

@@ -1,4 +1,5 @@
 import { db } from "../db/database.js";
+import type { Board, List } from "@listr/shared";
 import { PROTOCOL_VERSION } from "./protocol.js";
 import { setSyncStatus, setSyncStatusMessage } from "./syncStore.js";
 import { applyIncomingEntity, shouldDeleteOnTombstone, type EntityType } from "./mergeLogic.js";
@@ -55,7 +56,7 @@ class EndpointConnection {
 
   constructor(
     config: SyncEndpointConfig,
-    private key: string,
+    private keys: string[],
     private clientId: string,
     private callbacks: EndpointCallbacks,
   ) {
@@ -110,7 +111,7 @@ class EndpointConnection {
       this.callbacks.onNeedsRetry();
       return;
     }
-    if (!this.key) {
+    if (!this.keys.length || !this.keys[0]) {
       this.setPhase({ phase: "error", message: "No sync key configured" });
       return;
     }
@@ -139,7 +140,7 @@ class EndpointConnection {
       ws.addEventListener("open", () => {
         clearConnectTimer();
         this.setPhase({ phase: "handshaking" });
-        ws.send(JSON.stringify({ type: "hello", key: this.key, client_id: this.clientId, protocol_version: PROTOCOL_VERSION }));
+        ws.send(JSON.stringify({ type: "hello", keys: this.keys, client_id: this.clientId, protocol_version: PROTOCOL_VERSION }));
       });
 
       ws.addEventListener("message", (e: MessageEvent) => {
@@ -198,18 +199,44 @@ class SyncClient {
   private senders = new Map<string, (msg: unknown) => void>();
   private statusPhases = new Map<string, EndpointPhase>();
   private currentEndpoints: SyncEndpointConfig[] = [];
-  private key = "";
+  private defaultKey = "";
+  private allKeys: string[] = []; // defaultKey + distinct board sync_keys
   private clientId = "";
 
+  // Entity routing caches — populated from board/list subscriptions and pushes
+  private boardSyncKeys = new Map<string, string>(); // boardId → sync_key (only boards with custom key)
+  private listBoardMap = new Map<string, string>(); // listId → boardId
+  private itemListMap = new Map<string, string>(); // itemId → listId
+  private explicitSharedKeys: string[] = []; // keys added via QR share, independent of boards
+
   setCredentials(key: string, clientId: string): void {
-    if (key === this.key && clientId === this.clientId) return;
-    this.key = key;
+    if (key === this.defaultKey && clientId === this.clientId) return;
+    this.defaultKey = key;
     this.clientId = clientId;
-    for (const conn of this.connections.values()) conn.stop();
-    this.connections.clear();
-    this.senders.clear();
-    this.statusPhases.clear();
-    this.applyEndpoints(this.currentEndpoints);
+    this.recomputeAllKeys();
+  }
+
+  /** Called reactively from App.tsx whenever the boards table changes. */
+  updateBoardKeys(boards: Board[]): void {
+    this.boardSyncKeys.clear();
+    for (const board of boards) {
+      if (board.sync_key) this.boardSyncKeys.set(board.id, board.sync_key);
+    }
+    this.recomputeAllKeys();
+  }
+
+  /** Called reactively from App.tsx whenever shared_keys table changes. */
+  updateSharedKeys(keys: string[]): void {
+    this.explicitSharedKeys = keys;
+    this.recomputeAllKeys();
+  }
+
+  /** Called reactively from App.tsx whenever the lists table changes. */
+  updateListBoards(lists: List[]): void {
+    this.listBoardMap.clear();
+    for (const list of lists) {
+      this.listBoardMap.set(list.id, list.board_id);
+    }
   }
 
   setEndpoints(endpoints: SyncEndpointConfig[]): void {
@@ -219,31 +246,80 @@ class SyncClient {
 
   async forceFullSync(): Promise<void> {
     await Promise.all([db.boards.clear(), db.lists.clear(), db.items.clear(), db.assets.clear(), db.tombstones.clear()]);
-    await db.sync_config.update("default", { last_sync_at: 0, last_sync_key: "" });
+    await db.key_sync_state.clear();
+    this.boardSyncKeys.clear();
+    this.listBoardMap.clear();
+    this.itemListMap.clear();
     for (const conn of this.connections.values()) conn.resetAndReconnect();
   }
 
-  // Pushes all local data to the server without clearing it first.
-  // Use this to recover from a situation where the server is missing local data
-  // (e.g. after server data loss or a forced refresh on another device wiped
-  // the server copy). Unlike forceFullSync, local data is preserved.
   async forcePushAll(): Promise<void> {
-    await db.sync_config.update("default", { last_sync_at: 0, last_sync_key: "" });
+    await db.key_sync_state.clear();
     for (const conn of this.connections.values()) conn.resetAndReconnect();
   }
 
   pushEntity(entityType: EntityType, data: unknown): void {
-    const msg = { type: "push_entity", entity_type: entityType, data };
+    const syncKey = this.effectiveKeyForEntity(entityType, data);
+    // Update routing caches so future pushDelete calls can find the key
+    if (entityType === "list") this.listBoardMap.set((data as any).id, (data as any).board_id);
+    if (entityType === "item") this.itemListMap.set((data as any).id, (data as any).list_id);
+    const msg = { type: "push_entity", entity_type: entityType, sync_key: syncKey, data };
     for (const send of this.senders.values()) send(msg);
   }
 
   pushDelete(entityType: EntityType, entityId: string): void {
+    const syncKey = this.effectiveKeyForEntityId(entityType, entityId);
     const deleted_at = Date.now();
     db.tombstones
-      .put({ id: `${entityType}:${entityId}`, entity_type: entityType, entity_id: entityId, deleted_at })
+      .put({ id: `${entityType}:${entityId}`, entity_type: entityType, entity_id: entityId, deleted_at, sync_key: syncKey })
       .catch(console.error);
-    const msg = { type: "push_delete", entity_type: entityType, entity_id: entityId, deleted_at };
+    const msg = { type: "push_delete", entity_type: entityType, entity_id: entityId, deleted_at, sync_key: syncKey };
     for (const send of this.senders.values()) send(msg);
+  }
+
+  private effectiveKeyForEntity(entityType: EntityType, data: any): string {
+    if (entityType === "board") return data.sync_key || this.defaultKey;
+    if (entityType === "list") {
+      const boardId = data.board_id as string;
+      return this.boardSyncKeys.get(boardId) ?? this.defaultKey;
+    }
+    if (entityType === "item") {
+      const listId = data.list_id as string;
+      const boardId = this.listBoardMap.get(listId);
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.defaultKey) : this.defaultKey;
+    }
+    return this.defaultKey; // assets are not namespaced
+  }
+
+  private effectiveKeyForEntityId(entityType: EntityType, entityId: string): string {
+    if (entityType === "board") return this.boardSyncKeys.get(entityId) ?? this.defaultKey;
+    if (entityType === "list") {
+      const boardId = this.listBoardMap.get(entityId);
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.defaultKey) : this.defaultKey;
+    }
+    if (entityType === "item") {
+      const listId = this.itemListMap.get(entityId);
+      const boardId = listId ? this.listBoardMap.get(listId) : undefined;
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.defaultKey) : this.defaultKey;
+    }
+    return this.defaultKey;
+  }
+
+  private recomputeAllKeys(): void {
+    if (!this.defaultKey) return;
+    const extra = [...new Set([...this.boardSyncKeys.values(), ...this.explicitSharedKeys])];
+    const newKeys = [this.defaultKey, ...extra.filter((k) => k !== this.defaultKey)];
+    const changed =
+      newKeys.length !== this.allKeys.length || newKeys.some((k, i) => k !== this.allKeys[i]);
+    if (changed) {
+      this.allKeys = newKeys;
+      // Restart all connections so they send the updated keys list in hello
+      for (const conn of this.connections.values()) conn.stop();
+      this.connections.clear();
+      this.senders.clear();
+      this.statusPhases.clear();
+      this.applyEndpoints(this.currentEndpoints);
+    }
   }
 
   private applyEndpoints(endpoints: SyncEndpointConfig[]): void {
@@ -291,7 +367,7 @@ class SyncClient {
   }
 
   private startConnection(ep: SyncEndpointConfig): void {
-    const conn = new EndpointConnection(ep, this.key, this.clientId, {
+    const conn = new EndpointConnection(ep, this.allKeys, this.clientId, {
       onStatus: (status) => {
         const wasReady = this.statusPhases.get(ep.id) === "ready";
         if (status.phase !== "ready") {
@@ -301,12 +377,10 @@ class SyncClient {
         setEndpointStatus(ep.id, status);
 
         if (status.phase === "ready") {
-          // A server is up — cancel pending retries on all other endpoints
           for (const [id, c] of this.connections) {
             if (id !== ep.id) c.cancelRetry();
           }
         } else if (wasReady && this.senders.size === 0) {
-          // Last ready connection dropped — restart retries on all error endpoints
           for (const [, c] of this.connections) {
             if (c.currentPhase === "error" && !c.hasRetryPending) {
               c.scheduleRetry(5000);
@@ -324,7 +398,6 @@ class SyncClient {
       },
       onMessage: (msg) => this.handleMessage(msg),
       onNeedsRetry: () => {
-        // Only retry if no server is currently reachable
         if (this.senders.size === 0) {
           conn.scheduleRetry(5000);
         }
@@ -353,26 +426,60 @@ class SyncClient {
   }
 
   private async doInitialSync(send: (msg: unknown) => void): Promise<void> {
-    const config = await db.sync_config.get("default");
-    const since = config?.last_sync_key === this.key ? (config?.last_sync_at ?? 0) : 0;
+    // Fetch per-key since timestamps
+    const keyStates = await db.key_sync_state.bulkGet(this.allKeys);
+    const sinceByKey = new Map(this.allKeys.map((k, i) => [k, keyStates[i]?.last_sync_at ?? 0]));
+    const minSince = Math.min(...[...sinceByKey.values()]);
 
-    const [boards, lists, items, assets] = await Promise.all([
-      db.boards.where("updated_at").above(since).toArray(),
-      db.lists.where("updated_at").above(since).toArray(),
-      db.items.where("updated_at").above(since).toArray(),
-      db.assets.where("updated_at").above(since).toArray(),
-    ]);
-    for (const e of boards) send({ type: "push_entity", entity_type: "board", data: e });
-    for (const e of lists) send({ type: "push_entity", entity_type: "list", data: e });
-    for (const e of items) send({ type: "push_entity", entity_type: "item", data: e });
-    for (const a of assets) send({ type: "push_entity", entity_type: "asset", data: assetToSync(a) });
+    // Build board→key and list→board maps for routing
+    const boards = await db.boards.where("updated_at").above(minSince).toArray();
+    const allBoards = await db.boards.toArray();
+    const boardKeyMap = new Map<string, string>(
+      allBoards.map((b) => [b.id, b.sync_key || this.defaultKey]),
+    );
 
-    const tombstones = await db.tombstones.where("deleted_at").above(since).toArray();
-    for (const t of tombstones) {
-      send({ type: "push_delete", entity_type: t.entity_type, entity_id: t.entity_id, deleted_at: t.deleted_at });
+    const lists = await db.lists.where("updated_at").above(minSince).toArray();
+    const allLists = await db.lists.toArray();
+    const listBoardId = new Map<string, string>(allLists.map((l) => [l.id, l.board_id]));
+
+    for (const board of boards) {
+      const key = board.sync_key || this.defaultKey;
+      if (board.updated_at > (sinceByKey.get(key) ?? 0)) {
+        send({ type: "push_entity", entity_type: "board", sync_key: key, data: board });
+      }
     }
 
-    send({ type: "pull", since });
+    for (const list of lists) {
+      const key = boardKeyMap.get(list.board_id) ?? this.defaultKey;
+      if (list.updated_at > (sinceByKey.get(key) ?? 0)) {
+        send({ type: "push_entity", entity_type: "list", sync_key: key, data: list });
+      }
+    }
+
+    const items = await db.items.where("updated_at").above(minSince).toArray();
+    for (const item of items) {
+      const boardId = listBoardId.get(item.list_id);
+      const key = boardId ? (boardKeyMap.get(boardId) ?? this.defaultKey) : this.defaultKey;
+      if (item.updated_at > (sinceByKey.get(key) ?? 0)) {
+        send({ type: "push_entity", entity_type: "item", sync_key: key, data: item });
+        this.itemListMap.set(item.id, item.list_id);
+      }
+    }
+
+    const assets = await db.assets.where("updated_at").above(minSince).toArray();
+    for (const a of assets) {
+      send({ type: "push_entity", entity_type: "asset", sync_key: this.defaultKey, data: assetToSync(a) });
+    }
+
+    const tombstones = await db.tombstones.where("deleted_at").above(minSince).toArray();
+    for (const t of tombstones) {
+      const syncKey = t.sync_key ?? this.defaultKey;
+      if (t.deleted_at > (sinceByKey.get(syncKey) ?? 0)) {
+        send({ type: "push_delete", entity_type: t.entity_type, entity_id: t.entity_id, deleted_at: t.deleted_at, sync_key: syncKey });
+      }
+    }
+
+    send({ type: "pull", keys: this.allKeys.map((k) => ({ key: k, since: sinceByKey.get(k) ?? 0 })) });
   }
 
   private handleMessage(msg: any): void {
@@ -393,12 +500,22 @@ class SyncClient {
     await this.mergeEntityBatch("item", msg.items ?? []);
     await this.mergeAssetBatch(msg.assets ?? []);
     await this.applyTombstoneBatch(msg.tombstones ?? []);
-    if (msg.server_time) {
-      await db.sync_config.update("default", { last_sync_at: msg.server_time, last_sync_key: this.key });
+
+    // Update per-key timestamps
+    const now = msg.server_time as number | undefined;
+    if (msg.server_times && typeof msg.server_times === "object") {
+      for (const [key, time] of Object.entries(msg.server_times)) {
+        if (typeof time === "number") {
+          await db.key_sync_state.put({ key, last_sync_at: time });
+        }
+      }
+    } else if (now) {
+      // Backward compat: server sent a single server_time; apply to all keys
+      for (const key of this.allKeys) {
+        await db.key_sync_state.put({ key, last_sync_at: now });
+      }
     }
-    // A snapshot can bring in legacy item blobs from a not-yet-migrated server;
-    // heal them to the current after_id shape. Dynamic import avoids a static
-    // import cycle with operations.ts (which imports this module's syncClient).
+
     void import("../db/operations.js").then((m) => m.healLegacyItems()).catch(console.error);
   }
 
@@ -408,6 +525,14 @@ class SyncClient {
     const existing = await (table as any).bulkGet(incoming.map((e: any) => e.id));
     const toStore = incoming.map((e: any, i: number) => applyIncomingEntity(entityType, e, existing[i])).filter(Boolean);
     if (toStore.length) await (table as any).bulkPut(toStore);
+
+    // Update routing caches from incoming data
+    if (entityType === "list") {
+      for (const list of incoming) this.listBoardMap.set(list.id, list.board_id);
+    }
+    if (entityType === "item") {
+      for (const item of incoming) this.itemListMap.set(item.id, item.list_id);
+    }
   }
 
   private async mergeAssetBatch(incoming: any[]): Promise<void> {
@@ -463,7 +588,11 @@ class SyncClient {
     const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : db.items;
     const existing = await (table as any).get(incoming.id);
     const toStore = applyIncomingEntity(entityType, incoming, existing);
-    if (toStore) await (table as any).put(toStore);
+    if (toStore) {
+      await (table as any).put(toStore);
+      if (entityType === "list") this.listBoardMap.set(incoming.id, incoming.board_id);
+      if (entityType === "item") this.itemListMap.set(incoming.id, incoming.list_id);
+    }
   }
 
   private async applyTombstone(entityType: string, entityId: string, deletedAt: number): Promise<void> {

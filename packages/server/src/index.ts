@@ -93,23 +93,23 @@ const httpServer = config.tls === false
 
 const wss = new WebSocketServer({ server: httpServer });
 
-// sync_key → connected clients
-const clients = new Map<string, Set<WebSocket>>();
+// sync_key → connected clients (a client may appear under multiple keys)
+const keyToClients = new Map<string, Set<WebSocket>>();
 
 const ts = () => new Date().toISOString();
-const keyTag = (k: string) => `[${k.slice(0, 8)}]`;
+const keyTag = (keys: string[]) => `[${keys.map((k) => k.slice(0, 6)).join("+")}]`;
 
 function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
-  const client = clients.get(syncKey);
-  if (!client) return;
+  const clientSet = keyToClients.get(syncKey);
+  if (!clientSet) return;
   const json = JSON.stringify(msg);
-  for (const ws of client) {
+  for (const ws of clientSet) {
     if (ws !== sender && ws.readyState === WebSocket.OPEN) ws.send(json);
   }
 }
 
 wss.on("connection", (ws: WebSocket) => {
-  let syncKey: string | null = null;
+  let syncKeys: string[] = [];
   let clientId: string | null = null;
   let connectedAt = 0;
   const pushCounts: Partial<Record<string, number>> = {};
@@ -124,58 +124,109 @@ wss.on("connection", (ws: WebSocket) => {
     }
 
     if (msg.type === "hello") {
-      const k = typeof msg.key === "string" ? msg.key.trim() : "";
-      if (!k) { ws.send(JSON.stringify({ type: "error", message: "Missing key" })); return; }
-      // Reject clients whose protocol version we don't understand. Clients that
-      // predate versioning send no field → treated as version 0.
+      // Accept `keys` (v3 array) or `key` (v2 string) for backward compatibility
+      let rawKeys: string[];
+      if (Array.isArray(msg.keys)) {
+        rawKeys = msg.keys.filter((k: unknown) => typeof k === "string");
+      } else if (typeof msg.key === "string") {
+        rawKeys = [msg.key];
+      } else {
+        rawKeys = [];
+      }
+      const validKeys = rawKeys.map((k) => k.trim()).filter(Boolean);
+
+      if (validKeys.length === 0) {
+        ws.send(JSON.stringify({ type: "error", message: "Missing key" }));
+        return;
+      }
+
       const clientVersion = typeof msg.protocol_version === "number" ? msg.protocol_version : 0;
       if (clientVersion < MIN_PROTOCOL_VERSION || clientVersion > MAX_PROTOCOL_VERSION) {
         const range = MIN_PROTOCOL_VERSION === MAX_PROTOCOL_VERSION
           ? `${MIN_PROTOCOL_VERSION}`
           : `${MIN_PROTOCOL_VERSION}–${MAX_PROTOCOL_VERSION}`;
         const message = `Unsupported client protocol version ${clientVersion}; server understands ${range}. Please update the client.`;
-        console.log(`[ws] ${ts()} ${keyTag(k)} reject client=${typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?"} protocol=${clientVersion} (server ${range})`);
+        console.log(`[ws] ${ts()} ${keyTag(validKeys)} reject client=${typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?"} protocol=${clientVersion} (server ${range})`);
         ws.send(JSON.stringify({ type: "error", message, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
         ws.close(1008, "Unsupported protocol version");
         return;
       }
-      syncKey = k;
+
+      syncKeys = validKeys;
       clientId = typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?";
       connectedAt = Date.now();
-      if (!clients.has(k)) clients.set(k, new Set());
-      clients.get(k)!.add(ws);
-      console.log(`[ws] ${ts()} ${keyTag(k)} connect client=${clientId} protocol=${clientVersion}`);
+
+      for (const k of syncKeys) {
+        if (!keyToClients.has(k)) keyToClients.set(k, new Set());
+        keyToClients.get(k)!.add(ws);
+      }
+
+      console.log(`[ws] ${ts()} ${keyTag(syncKeys)} connect client=${clientId} protocol=${clientVersion} keys=${syncKeys.length}`);
       ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
       return;
     }
 
-    if (!syncKey) {
+    if (syncKeys.length === 0) {
       ws.send(JSON.stringify({ type: "error", message: "Send hello first" }));
       return;
     }
 
-    const key = syncKey; // narrow to string for use below
-
     if (msg.type === "pull") {
-      const since: number = typeof msg.since === "number" ? msg.since : 0;
-      const boards = getEntitiesSince("board", key, since);
-      const lists = getEntitiesSince("list", key, since);
-      const items = getEntitiesSince("item", key, since);
-      const assets = getEntitiesSince("asset", key, since);
-      const tombstones = getTombstonesSince(key, since);
+      // v3: { keys: [{ key, since }] }  — v2 compat: { since } applied to all keys
+      let keysSince: Array<{ key: string; since: number }>;
+      if (Array.isArray(msg.keys)) {
+        keysSince = msg.keys
+          .filter((k: any) => typeof k.key === "string" && typeof k.since === "number")
+          .map((k: any) => ({ key: k.key as string, since: k.since as number }));
+      } else {
+        const since: number = typeof msg.since === "number" ? msg.since : 0;
+        keysSince = syncKeys.map((k) => ({ key: k, since }));
+      }
+
+      const allBoards: unknown[] = [];
+      const allLists: unknown[] = [];
+      const allItems: unknown[] = [];
+      const allTombstones: unknown[] = [];
+      const serverTimes: Record<string, number> = {};
+      const now = Date.now();
+      let minSince = Infinity;
+
+      for (const { key, since } of keysSince) {
+        allBoards.push(...getEntitiesSince("board", key, since));
+        allLists.push(...getEntitiesSince("list", key, since));
+        allItems.push(...getEntitiesSince("item", key, since));
+        allTombstones.push(...getTombstonesSince(key, since));
+        serverTimes[key] = now;
+        if (since < minSince) minSince = since;
+      }
+
+      const allAssets = getEntitiesSince("asset", "", minSince === Infinity ? 0 : minSince);
+
       const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
       for (const k of Object.keys(pushCounts)) delete pushCounts[k];
-      console.log(`[sync] ${ts()} ${keyTag(key)} client=${clientId} pull since=${since}${pushed ? ` pushed: ${pushed}` : ""} → boards=${boards.length} lists=${lists.length} items=${items.length} assets=${assets.length} tombstones=${tombstones.length}`);
-      ws.send(JSON.stringify({ type: "snapshot", boards, lists, items, assets, tombstones, server_time: Date.now() }));
+      console.log(`[sync] ${ts()} ${keyTag(syncKeys)} client=${clientId} pull keys=${keysSince.length}${pushed ? ` pushed: ${pushed}` : ""} → boards=${allBoards.length} lists=${allLists.length} items=${allItems.length} assets=${allAssets.length} tombstones=${allTombstones.length}`);
+
+      ws.send(JSON.stringify({
+        type: "snapshot",
+        boards: allBoards,
+        lists: allLists,
+        items: allItems,
+        assets: allAssets,
+        tombstones: allTombstones,
+        server_times: serverTimes,
+        server_time: now, // backward compat
+      }));
       return;
     }
 
     if (msg.type === "push_entity") {
       const entityType = msg.entity_type as EntityType;
       const data = msg.data as Record<string, unknown>;
-      if (!data?.id) return;
-      const accepted = upsertEntity(entityType, data, key);
-      if (accepted) broadcast(key, ws, { type: "entity", entity_type: entityType, data });
+      // v3: sync_key on message; v2 compat: use first client key
+      const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : syncKeys[0];
+      if (!data?.id || !syncKey) return;
+      const accepted = upsertEntity(entityType, data, syncKey);
+      if (accepted) broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
       pushCounts[entityType] = (pushCounts[entityType] ?? 0) + 1;
       return;
     }
@@ -184,23 +235,31 @@ wss.on("connection", (ws: WebSocket) => {
       const entityType = msg.entity_type as EntityType;
       const entityId = msg.entity_id as string;
       const deletedAt = msg.deleted_at as number;
-      if (!entityId || !deletedAt) return;
-      if (applyTombstone(entityType, entityId, deletedAt, key)) {
-        broadcast(key, ws, { type: "deleted", entity_type: entityType, entity_id: entityId, deleted_at: deletedAt });
-        console.log(`[sync] ${ts()} ${keyTag(key)} delete ${entityType} id=${entityId}`);
+      // v3: sync_key on message; v2 compat: use first client key
+      const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : syncKeys[0];
+      if (!entityId || !deletedAt || !syncKey) return;
+      if (applyTombstone(entityType, entityId, deletedAt, syncKey)) {
+        broadcast(syncKey, ws, { type: "deleted", entity_type: entityType, entity_id: entityId, deleted_at: deletedAt });
+        console.log(`[sync] ${ts()} ${keyTag([syncKey])} delete ${entityType} id=${entityId}`);
       }
       return;
     }
   });
 
   ws.on("close", () => {
-    if (syncKey) {
-      clients.get(syncKey)?.delete(ws);
+    for (const key of syncKeys) {
+      const set = keyToClients.get(key);
+      if (set) {
+        set.delete(ws);
+        if (set.size === 0) keyToClients.delete(key);
+      }
+    }
+    if (syncKeys.length > 0) {
       const secs = Math.round((Date.now() - connectedAt) / 1000);
-      console.log(`[ws] ${ts()} ${keyTag(syncKey)} disconnect after=${secs}s client=${clientId ?? "?"}`);
+      console.log(`[ws] ${ts()} ${keyTag(syncKeys)} disconnect after=${secs}s client=${clientId ?? "?"}`);
     }
   });
-  ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKey ? keyTag(syncKey) : "[?]"} client=${clientId ?? "?"} error: ${err.message}`));
+  ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKeys.length ? keyTag(syncKeys) : "[?]"} client=${clientId ?? "?"} error: ${err.message}`));
 });
 
 const proto = config.tls === false ? "ws" : "wss";

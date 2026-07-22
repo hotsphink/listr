@@ -6,6 +6,7 @@ import Sidebar from "./components/Sidebar.js";
 import ListView from "./pages/ListView.js";
 import AdminPage from "./pages/AdminPage.js";
 import TestRunner from "./pages/TestRunner.js";
+import ReceivePage from "./pages/ReceivePage.js";
 import { db } from "./db/database.js";
 import { healLegacyItems } from "./db/operations.js";
 import { syncClient } from "./sync/SyncClient.js";
@@ -40,9 +41,22 @@ const Layout: Component<{ children?: any }> = (props) => {
         })),
       );
     });
+    // Keep entity-routing caches current so sync_key can be derived for pushes/deletes
+    const boardSub = liveQuery(() => db.boards.toArray()).subscribe((boards) => {
+      syncClient.updateBoardKeys(boards);
+    });
+    const listSub = liveQuery(() => db.lists.toArray()).subscribe((lists) => {
+      syncClient.updateListBoards(lists);
+    });
+    const sharedKeysSub = liveQuery(() => db.shared_keys.toArray()).subscribe((rows) => {
+      syncClient.updateSharedKeys(rows.map((r) => r.key));
+    });
     onCleanup(() => {
       configSub.unsubscribe();
       epSub.unsubscribe();
+      boardSub.unsubscribe();
+      listSub.unsubscribe();
+      sharedKeysSub.unsubscribe();
     });
   });
 
@@ -91,6 +105,7 @@ const App: Component = () => (
     <Route path="/" component={Home} />
     <Route path="/board/:id" component={ListView} />
     <Route path="/admin" component={AdminPage} />
+    <Route path="/receive/:token" component={ReceivePage} />
     <Route path="/test" component={TestRunner} />
   </HashRouter>
 );

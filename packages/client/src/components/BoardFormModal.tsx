@@ -20,6 +20,7 @@ interface Props {
     format_string: string;
     schema: AttributeDefinition[];
     macros: Record<string, string>;
+    sync_key: string;
   }) => Promise<void> | void;
   initial?: Board;
 }
@@ -30,6 +31,7 @@ const BoardFormModal: Component<Props> = (props) => {
   const [formatStr, setFormatStr] = createSignal("{title}");
   const [macros, setMacros] = createSignal<Record<string, string>>({});
   const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
+  const [boardSyncKey, setBoardSyncKey] = createSignal("");
   const [formatManuallyEdited, setFormatManuallyEdited] = createSignal(false);
   const [nameError, setNameError] = createSignal<string | null>(null);
   const [formatError, setFormatError] = createSignal<string | null>(null);
@@ -65,6 +67,7 @@ const BoardFormModal: Component<Props> = (props) => {
       setFormatStr(props.initial?.format_string ?? "{title}");
       setMacros(props.initial?.macros ?? {});
       setSchema(props.initial?.schema ?? []);
+      setBoardSyncKey(props.initial?.sync_key ?? "");
       setFormatManuallyEdited(!!props.initial);
       setNameError(null);
       setFormatError(null);
@@ -234,6 +237,7 @@ const BoardFormModal: Component<Props> = (props) => {
         format_string: currentFormat,
         schema: schema(),
         macros: currentMacros,
+        sync_key: boardSyncKey().trim(),
       });
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Save failed. Check that your browser allows storage.");
@@ -272,6 +276,17 @@ const BoardFormModal: Component<Props> = (props) => {
               onInput={(e) => setColor(e.currentTarget.value)}
               style="height: 32px; padding: 2px"
             />
+          </div>
+        </div>
+        <div class="form-field">
+          <label>Share Key</label>
+          <input
+            value={boardSyncKey()}
+            onInput={(e) => setBoardSyncKey(e.currentTarget.value)}
+            placeholder="leave empty to use your default key"
+          />
+          <div class="field-hint">
+            Boards with the same share key sync together. Share this key with others to collaborate.
           </div>
         </div>
         <div class="form-field">

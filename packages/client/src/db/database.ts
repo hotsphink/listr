@@ -27,6 +27,18 @@ export interface LocalTombstone {
   entity_type: string;
   entity_id: string;
   deleted_at: number;
+  sync_key?: string; // which namespace this delete belongs to
+}
+
+export interface KeySyncState {
+  key: string;
+  last_sync_at: number;
+}
+
+export interface SharedKey {
+  key: string; // primary key — the sync_key to subscribe to
+  added_at: number;
+  board_name?: string; // display hint from the share QR
 }
 
 export class ListrDB extends Dexie {
@@ -37,6 +49,8 @@ export class ListrDB extends Dexie {
   sync_config!: Table<SyncConfig, string>;
   tombstones!: Table<LocalTombstone, string>;
   sync_endpoints!: Table<SyncEndpoint, string>;
+  key_sync_state!: Table<KeySyncState, string>;
+  shared_keys!: Table<SharedKey, string>;
 
   constructor() {
     super("listr");
@@ -184,6 +198,31 @@ export class ListrDB extends Dexie {
       await tx.table("items").toCollection().modify((item: any) => {
         delete item.position;
       });
+    });
+
+    // Adds key_sync_state table for per-namespace incremental sync timestamps (v3 protocol).
+    this.version(8).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+    });
+
+    // Adds shared_keys table for explicit key subscriptions (board sharing via QR).
+    this.version(9).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
     });
 
     // Renames categories → boards; renames lists.category_id → lists.board_id
