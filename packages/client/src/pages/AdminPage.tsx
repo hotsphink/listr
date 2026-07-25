@@ -38,6 +38,57 @@ function formatBuildTime(iso: string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
+const ForceUpdateButton: Component = () => {
+  const [state, setState] = createSignal<"idle" | "working" | "error">("idle");
+  const [online, setOnline] = createSignal(navigator.onLine);
+
+  const onOnline = () => setOnline(true);
+  const onOffline = () => setOnline(false);
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
+  onCleanup(() => {
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
+  });
+
+  const handleClick = async () => {
+    if (!navigator.onLine) return;
+    setState("working");
+    try {
+      // Probe the server before wiping the cache — if unreachable, bail without
+      // clearing anything so the app stays functional.
+      await fetch(location.href, { method: "HEAD", cache: "no-store" });
+      // Clear all SW caches so the next load fetches fresh assets.
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      // Nudge any waiting SW to activate immediately.
+      const reg = await navigator.serviceWorker?.getRegistration();
+      if (reg) {
+        await reg.update();
+        reg.waiting?.postMessage({ type: "SKIP_WAITING" });
+      }
+      window.location.reload();
+    } catch (e) {
+      console.error("Force update failed:", e);
+      setState("error");
+    }
+  };
+
+  return (
+    <div>
+      <button class="btn btn-primary" disabled={!online() || state() === "working"} onClick={handleClick}>
+        {state() === "working" ? "Updating…" : "Update Now"}
+      </button>
+      <Show when={!online()}>
+        <div class="field-hint" style="margin-top: 4px">Unavailable offline.</div>
+      </Show>
+      <Show when={state() === "error"}>
+        <div class="field-error" style="margin-top: 4px">Update failed — check the console.</div>
+      </Show>
+    </div>
+  );
+};
+
 const AdminPage: Component = () => {
   const navigate = useNavigate();
   const [config, setConfig] = createSignal<SyncConfig | undefined>();
@@ -270,6 +321,11 @@ const AdminPage: Component = () => {
             <label class="field-label">Sync protocol version</label>
             <div class="admin-client-id">{PROTOCOL_VERSION}</div>
             <div class="field-hint">The server must understand this version to connect.</div>
+          </div>
+          <div class="admin-field">
+            <label class="field-label">App update</label>
+            <ForceUpdateButton />
+            <div class="field-hint">Clears the local cache and reloads fresh assets from the server.</div>
           </div>
         </div>
       </div>
