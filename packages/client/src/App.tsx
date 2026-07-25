@@ -13,6 +13,7 @@ import { syncClient } from "./sync/SyncClient.js";
 import { initAssetStore } from "./sync/assetStore.js";
 import { selectionMode } from "./store/selectionMode.js";
 import { sidebarOpen, setSidebarOpen } from "./store/sidebarStore.js";
+import { isDragging } from "./hooks/useSortable.js";
 
 const Layout: Component<{ children?: any }> = (props) => {
   const location = useLocation();
@@ -75,6 +76,9 @@ const Layout: Component<{ children?: any }> = (props) => {
           </button>
         </Show>
         {props.children}
+      </div>
+      <div id="drag-cancel-zone" class="drag-cancel-zone" classList={{ active: isDragging() }}>
+        ✕ Cancel
       </div>
     </div>
   );

@@ -1,8 +1,11 @@
 import Sortable from "sortablejs";
-import { onCleanup } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import { db } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { reorderByAfterId } from "./reorderLogic.js";
+
+export const [isDragging, setIsDragging] = createSignal(false);
+const CANCEL_ZONE_HEIGHT = 100; // px from top of viewport (larger than visual zone for finger margin)
 
 export { reorderByAfterId };
 
@@ -24,6 +27,8 @@ export function useSortable(
   let scrollUnlocked = false;
   let lastSnapTime = 0;
   let scrollRaf: number | null = null;
+  let dragIsTouch = false;
+  let startScrollLeft = 0;
 
   // Firefox desktop leaves TouchEvent undefined when touch events are disabled,
   // so referencing it in `instanceof` throws a ReferenceError. Guard on typeof.
@@ -45,6 +50,7 @@ export function useSortable(
     document.removeEventListener("pointermove", updateDrag);
     document.removeEventListener("touchmove", updateDrag);
     if (scrollEl) scrollEl.style.scrollSnapType = "";
+    document.getElementById("drag-cancel-zone")?.classList.remove("over");
   };
 
   const startEdgeScroll = (initialX: number, initialY: number) => {
@@ -52,6 +58,7 @@ export function useSortable(
     dragX = initialX;
     dragY = initialY;
     dragStartX = initialX;
+    startScrollLeft = scrollEl?.scrollLeft ?? 0;
     scrollUnlocked = false;
     lastSnapTime = 0;
     document.addEventListener("pointermove", updateDrag, { passive: true });
@@ -80,6 +87,9 @@ export function useSortable(
     };
 
     const tick = () => {
+      document.getElementById("drag-cancel-zone")?.classList
+        .toggle("over", dragY < CANCEL_ZONE_HEIGHT);
+
       if (!scrollUnlocked) {
         if (Math.abs(dragX - dragStartX) > UNLOCK_THRESHOLD) scrollUnlocked = true;
       }
@@ -157,8 +167,13 @@ export function useSortable(
     onStart: (evt) => {
       navigator.vibrate?.(50);
       const oe = (evt as any).originalEvent as Event | undefined;
-      const x = isTouchEvent(oe) ? (oe.touches[0]?.clientX ?? 0) : (oe as MouseEvent)?.clientX ?? 0;
-      const y = isTouchEvent(oe) ? (oe.touches[0]?.clientY ?? 0) : (oe as MouseEvent)?.clientY ?? 0;
+      const touch = isTouchEvent(oe);
+      // isTouchEvent may be false on mobile if SortableJS wraps the originalEvent;
+      // fall back to 'ontouchstart' in window as the primary touch-device check.
+      dragIsTouch = touch || 'ontouchstart' in window;
+      const x = touch ? (oe as TouchEvent).touches[0]?.clientX ?? 0 : (oe as MouseEvent)?.clientX ?? 0;
+      const y = touch ? (oe as TouchEvent).touches[0]?.clientY ?? 0 : (oe as MouseEvent)?.clientY ?? 0;
+      setIsDragging(true);
       startEdgeScroll(x, y);
     },
     onMove: (evt, originalEvent) => {
@@ -171,6 +186,8 @@ export function useSortable(
     },
     onEnd: async (evt) => {
       stopEdgeScroll();
+      setIsDragging(false);
+      const cancelled = dragIsTouch && dragY < CANCEL_ZONE_HEIGHT;
 
       const rawOld = evt.oldIndex;
       const rawNew = evt.newIndex;
@@ -185,6 +202,7 @@ export function useSortable(
         } else {
           evt.from.appendChild(itemEl);
         }
+        if (cancelled) { scrollEl?.scrollTo({ left: startScrollLeft, behavior: "instant" }); return; }
         if (!onCrossMove) return;
         const itemId = itemEl.dataset.itemId ?? "";
         if (itemId) await onCrossMove(itemId, evt.to, rawNew);
@@ -205,6 +223,8 @@ export function useSortable(
       } else {
         c.insertBefore(item, c.children[rawOld + 1]);
       }
+
+      if (cancelled) { scrollEl?.scrollTo({ left: startScrollLeft, behavior: "instant" }); return; }
 
       const movedId = (evt.item as HTMLElement).dataset.itemId ?? "";
       if (!movedId) return;

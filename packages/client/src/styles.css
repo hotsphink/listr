@@ -1386,6 +1386,39 @@ tbody tr {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
+/* Drag cancel zone — touch only */
+.drag-cancel-zone {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .drag-cancel-zone.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 62px;
+    background: color-mix(in srgb, var(--danger) 20%, var(--bg-surface));
+    color: var(--text-muted);
+    font-size: 1rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+    z-index: 900;
+    pointer-events: none;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .drag-cancel-zone.active.over {
+    background: color-mix(in srgb, var(--danger) 55%, var(--bg-surface));
+    color: var(--danger);
+    border-bottom-color: var(--danger);
+  }
+}
+
 /* Import modal */
 .import-dropzone {
   border: 2px dashed var(--border);
