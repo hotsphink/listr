@@ -150,6 +150,25 @@ const AdminPage: Component = () => {
     await db.sync_endpoints.update(id, patch);
   };
 
+  const [expandedIds, setExpandedIds] = createSignal(new Set<string>(), { equals: false });
+  const autoExpanded = new Set<string>();
+
+  // Auto-expand the first endpoint that becomes "ready" (connected).
+  // Tracks what's been auto-expanded so user collapses aren't overridden.
+  createEffect(() => {
+    for (const ep of endpoints()) {
+      const ph = (statuses()[ep.id] as EndpointStatus | undefined)?.phase;
+      if (ph === "ready" && !autoExpanded.has(ep.id)) {
+        autoExpanded.add(ep.id);
+        setExpandedIds((prev) => { prev.add(ep.id); return prev; });
+      }
+    }
+  });
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => { prev.has(id) ? prev.delete(id) : prev.add(id); return prev; });
+  };
+
   const statuses = endpointStatuses;
   const clientId = () => config()?.client_id ?? "";
   const connectedServerId = () => {
@@ -221,9 +240,10 @@ const AdminPage: Component = () => {
               const wsUrl = () => `${ep.secure ? "wss" : "ws"}://${ep.host || "…"}:${ep.port}/sync`;
               const httpsUrl = () => `${ep.secure ? "https" : "http"}://${ep.host || "…"}:${ep.port}`;
               const connectedId = () => status()?.serverId ?? ep.last_server_id;
+              const expanded = () => expandedIds().has(ep.id);
               return (
                 <div class="endpoint-card" style={`border-color: ${PHASE_COLORS[phase()]}`}>
-                  <div class="endpoint-header">
+                  <div class="endpoint-header" classList={{ collapsed: !expanded() }}>
                     <input
                       type="checkbox"
                       checked={ep.enabled}
@@ -256,50 +276,57 @@ const AdminPage: Component = () => {
                       />
                       TLS
                     </label>
+                    <button class="btn-icon-danger endpoint-expand-btn" type="button" onClick={() => toggleExpanded(ep.id)} aria-label={expanded() ? "Collapse" : "Expand"}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style={`transform: rotate(${expanded() ? 90 : 0}deg); transition: transform 0.15s; display: block`}>
+                        <polyline points="9 18 15 12 9 6"/>
+                      </svg>
+                    </button>
                     <button class="btn-icon-danger" type="button" onClick={() => deleteEndpoint(ep.id)}>✕</button>
                   </div>
 
-                  <div class="endpoint-urls">
-                    <span class="endpoint-url-chip"><span class="endpoint-url-proto">WS</span>{wsUrl()}</span>
-                    <span class="endpoint-url-chip"><span class="endpoint-url-proto">HTTP</span>{httpsUrl()}</span>
-                  </div>
-
-                  <div class="endpoint-status-row">
-                    <span class="sync-dot" style={`background: ${PHASE_COLORS[phase()] ?? "var(--text-dim)"}`} />
-                    <span class="endpoint-phase-label">{PHASE_LABELS[phase()] ?? phase()}</span>
-                    <Show when={status()?.message}>
-                      <span class="endpoint-status-msg"> — {status()!.message}</span>
-                    </Show>
-                    <Show when={connectedId()}>
-                      <span class="endpoint-server-id"> — server id {shortId(connectedId())}</span>
-                    </Show>
-                  </div>
-                  <Show when={ep.secure && /^[\d.]+$|^[0-9a-f:]+$/i.test(ep.host)}>
-                    <div class="endpoint-hint">TLS certificates are issued for hostnames, not IPs — try disabling TLS for this address.</div>
-                  </Show>
-
-                  <Show when={phase() === "conflict"}>
-                    <div class="endpoint-conflict">
-                      <div class="endpoint-conflict-msg">
-                        Server ID changed from <code>{shortId(status()?.knownId)}</code> to <code>{shortId(status()?.newId)}</code>
-                      </div>
-                      <div class="endpoint-conflict-actions">
-                        <button
-                          class="btn btn-primary btn-sm"
-                          type="button"
-                          onClick={() => updateEndpoint(ep.id, { last_server_id: status()?.newId ?? null })}
-                        >
-                          Accept new server
-                        </button>
-                        <button
-                          class="btn btn-sm"
-                          type="button"
-                          onClick={() => updateEndpoint(ep.id, { enabled: false })}
-                        >
-                          Disable
-                        </button>
-                      </div>
+                  <Show when={expanded()}>
+                    <div class="endpoint-urls">
+                      <span class="endpoint-url-chip"><span class="endpoint-url-proto">WS</span>{wsUrl()}</span>
+                      <span class="endpoint-url-chip"><span class="endpoint-url-proto">HTTP</span>{httpsUrl()}</span>
                     </div>
+
+                    <div class="endpoint-status-row">
+                      <span class="sync-dot" style={`background: ${PHASE_COLORS[phase()] ?? "var(--text-dim)"}`} />
+                      <span class="endpoint-phase-label">{PHASE_LABELS[phase()] ?? phase()}</span>
+                      <Show when={status()?.message}>
+                        <span class="endpoint-status-msg"> — {status()!.message}</span>
+                      </Show>
+                      <Show when={connectedId()}>
+                        <span class="endpoint-server-id"> — server id {shortId(connectedId())}</span>
+                      </Show>
+                    </div>
+                    <Show when={ep.secure && /^[\d.]+$|^[0-9a-f:]+$/i.test(ep.host)}>
+                      <div class="endpoint-hint">TLS certificates are issued for hostnames, not IPs — try disabling TLS for this address.</div>
+                    </Show>
+
+                    <Show when={phase() === "conflict"}>
+                      <div class="endpoint-conflict">
+                        <div class="endpoint-conflict-msg">
+                          Server ID changed from <code>{shortId(status()?.knownId)}</code> to <code>{shortId(status()?.newId)}</code>
+                        </div>
+                        <div class="endpoint-conflict-actions">
+                          <button
+                            class="btn btn-primary btn-sm"
+                            type="button"
+                            onClick={() => updateEndpoint(ep.id, { last_server_id: status()?.newId ?? null })}
+                          >
+                            Accept new server
+                          </button>
+                          <button
+                            class="btn btn-sm"
+                            type="button"
+                            onClick={() => updateEndpoint(ep.id, { enabled: false })}
+                          >
+                            Disable
+                          </button>
+                        </div>
+                      </div>
+                    </Show>
                   </Show>
                 </div>
               );

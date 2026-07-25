@@ -1634,6 +1634,14 @@ tbody tr {
   margin-bottom: 8px;
 }
 
+.endpoint-header.collapsed {
+  margin-bottom: 0;
+}
+
+.endpoint-expand-btn:hover {
+  color: var(--text);
+}
+
 .endpoint-host {
   flex: 1;
   min-width: 0;
