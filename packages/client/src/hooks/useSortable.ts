@@ -164,16 +164,23 @@ export function useSortable(
     dragClass: "sortable-drag",
     filter: ".view-add, .card.add",
     ...sortableOptions,
+    onChoose: (evt) => {
+      dragIsTouch = 'ontouchstart' in window;
+      setIsDragging(true);
+      (evt.item as HTMLElement).classList.add("drag-choosing");
+    },
+    onUnchoose: (evt) => {
+      setIsDragging(false);
+      (evt.item as HTMLElement).classList.remove("drag-choosing");
+    },
     onStart: (evt) => {
+      (evt.item as HTMLElement).classList.remove("drag-choosing");
       navigator.vibrate?.(50);
       const oe = (evt as any).originalEvent as Event | undefined;
       const touch = isTouchEvent(oe);
-      // isTouchEvent may be false on mobile if SortableJS wraps the originalEvent;
-      // fall back to 'ontouchstart' in window as the primary touch-device check.
       dragIsTouch = touch || 'ontouchstart' in window;
       const x = touch ? (oe as TouchEvent).touches[0]?.clientX ?? 0 : (oe as MouseEvent)?.clientX ?? 0;
       const y = touch ? (oe as TouchEvent).touches[0]?.clientY ?? 0 : (oe as MouseEvent)?.clientY ?? 0;
-      setIsDragging(true);
       startEdgeScroll(x, y);
     },
     onMove: (evt, originalEvent) => {
