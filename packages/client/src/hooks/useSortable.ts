@@ -64,11 +64,12 @@ export function useSortable(
     document.addEventListener("pointermove", updateDrag, { passive: true });
     document.addEventListener("touchmove", updateDrag, { passive: true });
 
-    const SENSITIVITY = 80;
+    const SENSITIVITY = 30;
     const UNLOCK_THRESHOLD = 40; // px horizontal movement before edge-scroll activates
     const SNAP_COOLDOWN = 350;   // ms between column snaps
     const VERT_ZONE = 80;        // px from top/bottom edge that triggers vertical scroll
     const VERT_SPEED = 6;        // px per frame
+    const MIN_COL_PENETRATION = 70; // px into adjacent column before triggering scroll
 
     const applyVerticalScroll = (vertEl: HTMLElement) => {
       const vr = vertEl.getBoundingClientRect();
@@ -127,8 +128,13 @@ export function useSortable(
             );
 
             if (overIdx !== -1 && overIdx !== curIdx) {
-              scrollEl.scrollTo({ left: columns[overIdx].offsetLeft, behavior: "smooth" });
-              lastSnapTime = now;
+              const penetration = overIdx < curIdx
+                ? (columns[overIdx].offsetLeft + columns[overIdx].offsetWidth) - dragXInScroll
+                : dragXInScroll - columns[overIdx].offsetLeft;
+              if (penetration >= MIN_COL_PENETRATION) {
+                scrollEl.scrollTo({ left: columns[overIdx].offsetLeft, behavior: "smooth" });
+                lastSnapTime = now;
+              }
             } else if (rect.right - dragX < SENSITIVITY && curIdx < columns.length - 1) {
               scrollEl.scrollTo({ left: columns[curIdx + 1].offsetLeft, behavior: "smooth" });
               lastSnapTime = now;
