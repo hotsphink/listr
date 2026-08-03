@@ -27,6 +27,13 @@ export interface AttributeDefinition {
   position: number;
 }
 
+/** Config for a server-side integration, stored on Board or List (synced). */
+export interface Integration {
+  integration_id: string;           // matches a registered IntegrationModule on the server
+  enabled: boolean;
+  config?: Record<string, unknown>; // non-secret, integration-specific config
+}
+
 export interface Board {
   id: string;
   name: string;
@@ -37,6 +44,7 @@ export interface Board {
   macros?: Record<string, string>;
   /** If set, this board (and its lists/items) syncs under this namespace key instead of the default. */
   sync_key?: string;
+  integrations?: Integration[];
   created_at: number;
   updated_at: number;
   /** Data-shape version this record was authored under. Missing = pre-versioning (treat as 1). */
@@ -52,11 +60,31 @@ export interface List {
   icon: string;
   position: number;
   format_string: string | null;
+  /** null = inherit board's integrations */
+  integrations?: Integration[] | null;
   view_mode: ViewMode;
   created_at: number;
   updated_at: number;
   /** Data-shape version this record was authored under. Missing = pre-versioning (treat as 1). */
   schema_version?: number;
+}
+
+export type IntegrationStatus = "unprocessed" | "complete" | "error" | "ambiguous";
+
+/** Server-side integration result, keyed by "${item_id}:${integration_id}". */
+export interface IntegrationResult {
+  id: string;
+  item_id: string;
+  integration_id: string;
+  sync_key: string;
+  status: IntegrationStatus;
+  /** Shadow copy of attribute values the integration wrote to item.attributes. */
+  attribute_values: Record<string, unknown>;
+  /** Arbitrary integration-internal state (candidates for disambiguation, etc.). */
+  integration_data: Record<string, unknown>;
+  error?: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface Item {

@@ -5,11 +5,14 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince, getServerId } from "./db.js";
+import { db, upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince, getServerId, getIntegrationResultsSince } from "./db.js";
 import type { EntityType } from "./db.js";
 import { config } from "./config.js";
 import { extractFromImage } from "./gemini.js";
 import { MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION } from "./protocol.js";
+import { INTEGRATIONS } from "./integrations/index.js";
+import { IntegrationRunner } from "./integration-runner.js";
+import type { Item } from "@listr/shared";
 
 const PORT = config.port ?? 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
@@ -99,7 +102,7 @@ const keyToClients = new Map<string, Set<WebSocket>>();
 const ts = () => new Date().toISOString();
 const keyTag = (keys: string[]) => `[${keys.map((k) => k.slice(0, 6)).join("+")}]`;
 
-function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
+function broadcast(syncKey: string, sender: WebSocket | null, msg: unknown): void {
   const clientSet = keyToClients.get(syncKey);
   if (!clientSet) return;
   const json = JSON.stringify(msg);
@@ -107,6 +110,9 @@ function broadcast(syncKey: string, sender: WebSocket, msg: unknown): void {
     if (ws !== sender && ws.readyState === WebSocket.OPEN) ws.send(json);
   }
 }
+
+const integrationRunner = new IntegrationRunner(db, INTEGRATIONS, config.integrations ?? {}, broadcast);
+integrationRunner.startPeriodicRefresh();
 
 wss.on("connection", (ws: WebSocket) => {
   let syncKeys: string[] = [];
@@ -187,6 +193,7 @@ wss.on("connection", (ws: WebSocket) => {
       const allLists: unknown[] = [];
       const allItems: unknown[] = [];
       const allTombstones: unknown[] = [];
+      const allIntegrationResults: unknown[] = [];
       const serverTimes: Record<string, number> = {};
       const now = Date.now();
       let minSince = Infinity;
@@ -196,6 +203,7 @@ wss.on("connection", (ws: WebSocket) => {
         allLists.push(...getEntitiesSince("list", key, since));
         allItems.push(...getEntitiesSince("item", key, since));
         allTombstones.push(...getTombstonesSince(key, since));
+        allIntegrationResults.push(...getIntegrationResultsSince(key, since));
         serverTimes[key] = now;
         if (since < minSince) minSince = since;
       }
@@ -204,7 +212,7 @@ wss.on("connection", (ws: WebSocket) => {
 
       const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
       for (const k of Object.keys(pushCounts)) delete pushCounts[k];
-      console.log(`[sync] ${ts()} ${keyTag(syncKeys)} client=${clientId} pull keys=${keysSince.length}${pushed ? ` pushed: ${pushed}` : ""} → boards=${allBoards.length} lists=${allLists.length} items=${allItems.length} assets=${allAssets.length} tombstones=${allTombstones.length}`);
+      console.log(`[sync] ${ts()} ${keyTag(syncKeys)} client=${clientId} pull keys=${keysSince.length}${pushed ? ` pushed: ${pushed}` : ""} → boards=${allBoards.length} lists=${allLists.length} items=${allItems.length} assets=${allAssets.length} tombstones=${allTombstones.length} integration_results=${allIntegrationResults.length}`);
 
       ws.send(JSON.stringify({
         type: "snapshot",
@@ -213,6 +221,7 @@ wss.on("connection", (ws: WebSocket) => {
         items: allItems,
         assets: allAssets,
         tombstones: allTombstones,
+        integration_results: allIntegrationResults,
         server_times: serverTimes,
         server_time: now, // backward compat
       }));
@@ -220,13 +229,24 @@ wss.on("connection", (ws: WebSocket) => {
     }
 
     if (msg.type === "push_entity") {
-      const entityType = msg.entity_type as EntityType;
+      const entityType = msg.entity_type as EntityType | "integration_result";
       const data = msg.data as Record<string, unknown>;
       // v3: sync_key on message; v2 compat: use first client key
       const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : syncKeys[0];
       if (!data?.id || !syncKey) return;
-      const accepted = upsertEntity(entityType, data, syncKey);
-      if (accepted) broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
+      if (entityType === "integration_result") {
+        // Clients may push integration_results (e.g. to reset status); don't feed back to runner
+        const accepted = db.upsertIntegrationResult(data as any);
+        if (accepted) broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
+      } else {
+        const { accepted, previous } = upsertEntity(entityType, data, syncKey);
+        if (accepted) {
+          broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
+          if (entityType === "item") {
+            integrationRunner.onItemUpserted(data as unknown as Item, previous as unknown as Item | null, syncKey);
+          }
+        }
+      }
       pushCounts[entityType] = (pushCounts[entityType] ?? 0) + 1;
       return;
     }
@@ -267,3 +287,10 @@ httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Listr sync server on port ${PORT} (${config.tls === false ? "http" : "https"})`);
   console.log(`${proto.toUpperCase()}: ${proto}://finkripper.heron-moth.ts.net:${PORT}`);
 });
+
+for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  process.on(sig, () => {
+    integrationRunner.stop();
+    process.exit(0);
+  });
+}

@@ -25,14 +25,14 @@ describe("upsertEntity — entity vs entity LWW", () => {
   beforeEach(() => { db = openDb(":memory:"); });
 
   it("inserts a new entity when none exists", () => {
-    const accepted = db.upsertEntity("list", makeList("l1", 100), KEY);
+    const { accepted } = db.upsertEntity("list", makeList("l1", 100), KEY);
     expect(accepted).toBe(true);
     expect(db.getEntitiesSince("list", KEY, 0)).toHaveLength(1);
   });
 
   it("overwrites when incoming is newer", () => {
     db.upsertEntity("list", makeList("l1", 100), KEY);
-    const accepted = db.upsertEntity("list", { ...makeList("l1", 200), name: "Updated" }, KEY);
+    const { accepted } = db.upsertEntity("list", { ...makeList("l1", 200), name: "Updated" }, KEY);
     expect(accepted).toBe(true);
     const [stored] = db.getEntitiesSince("list", KEY, 0) as any[];
     expect(stored.name).toBe("Updated");
@@ -41,7 +41,7 @@ describe("upsertEntity — entity vs entity LWW", () => {
 
   it("rejects incoming when same age", () => {
     db.upsertEntity("list", makeList("l1", 100), KEY);
-    const accepted = db.upsertEntity("list", { ...makeList("l1", 100), name: "Same" }, KEY);
+    const { accepted } = db.upsertEntity("list", { ...makeList("l1", 100), name: "Same" }, KEY);
     expect(accepted).toBe(false);
     const [stored] = db.getEntitiesSince("list", KEY, 0) as any[];
     expect(stored.name).toBe("Test");
@@ -49,17 +49,17 @@ describe("upsertEntity — entity vs entity LWW", () => {
 
   it("rejects incoming when older", () => {
     db.upsertEntity("list", makeList("l1", 200), KEY);
-    const accepted = db.upsertEntity("list", { ...makeList("l1", 100), name: "Old" }, KEY);
+    const { accepted } = db.upsertEntity("list", { ...makeList("l1", 100), name: "Old" }, KEY);
     expect(accepted).toBe(false);
     const [stored] = db.getEntitiesSince("list", KEY, 0) as any[];
     expect(stored.updated_at).toBe(200);
   });
 
   it("works the same for boards and items", () => {
-    expect(db.upsertEntity("board", makeBoard("b1", 100), KEY)).toBe(true);
-    expect(db.upsertEntity("board", makeBoard("b1", 50), KEY)).toBe(false);
-    expect(db.upsertEntity("item", makeItem("i1", 100), KEY)).toBe(true);
-    expect(db.upsertEntity("item", makeItem("i1", 200), KEY)).toBe(true);
+    expect(db.upsertEntity("board", makeBoard("b1", 100), KEY).accepted).toBe(true);
+    expect(db.upsertEntity("board", makeBoard("b1", 50), KEY).accepted).toBe(false);
+    expect(db.upsertEntity("item", makeItem("i1", 100), KEY).accepted).toBe(true);
+    expect(db.upsertEntity("item", makeItem("i1", 200), KEY).accepted).toBe(true);
   });
 });
 
@@ -71,27 +71,27 @@ describe("upsertEntity — item format gate", () => {
 
   it("rejects an item with no schema_version (legacy blob)", () => {
     const legacy = { id: "i1", updated_at: 100, title: "Old", list_id: "l1", position: 0 };
-    expect(db.upsertEntity("item", legacy, KEY)).toBe(false);
+    expect(db.upsertEntity("item", legacy, KEY).accepted).toBe(false);
     expect(db.getEntitiesSince("item", KEY, 0)).toHaveLength(0);
   });
 
   it("rejects an item with an older schema_version", () => {
     const old = { id: "i1", updated_at: 100, title: "Old", list_id: "l1", schema_version: ENTITY_SCHEMA_VERSION - 1 };
-    expect(db.upsertEntity("item", old, KEY)).toBe(false);
+    expect(db.upsertEntity("item", old, KEY).accepted).toBe(false);
   });
 
   it("does not let a legacy re-push overwrite a stored current item", () => {
-    expect(db.upsertEntity("item", makeItem("i1", 100), KEY)).toBe(true);
+    expect(db.upsertEntity("item", makeItem("i1", 100), KEY).accepted).toBe(true);
     const legacyNewer = { id: "i1", updated_at: 999, title: "Regressed", list_id: "l1", position: 0 };
-    expect(db.upsertEntity("item", legacyNewer, KEY)).toBe(false);
+    expect(db.upsertEntity("item", legacyNewer, KEY).accepted).toBe(false);
     const [stored] = db.getEntitiesSince("item", KEY, 0) as any[];
     expect(stored.title).toBe("Test");
     expect(stored.schema_version).toBe(ENTITY_SCHEMA_VERSION);
   });
 
   it("still gates only items — boards/lists are unaffected", () => {
-    expect(db.upsertEntity("board", makeBoard("b1", 100), KEY)).toBe(true);
-    expect(db.upsertEntity("list", makeList("l1", 100), KEY)).toBe(true);
+    expect(db.upsertEntity("board", makeBoard("b1", 100), KEY).accepted).toBe(true);
+    expect(db.upsertEntity("list", makeList("l1", 100), KEY).accepted).toBe(true);
   });
 });
 
@@ -102,27 +102,27 @@ describe("upsertEntity — entity vs tombstone LWW", () => {
   beforeEach(() => { db = openDb(":memory:"); });
 
   it("accepts entity when no tombstone exists", () => {
-    expect(db.upsertEntity("list", makeList("l1", 100), KEY)).toBe(true);
+    expect(db.upsertEntity("list", makeList("l1", 100), KEY).accepted).toBe(true);
     expect(db.getEntitiesSince("list", KEY, 0)).toHaveLength(1);
   });
 
   it("accepts entity when entity is newer than tombstone (entity wins)", () => {
     db.applyTombstone("list", "l1", 100, KEY);   // tombstone deleted_at=100
-    const accepted = db.upsertEntity("list", makeList("l1", 200), KEY);  // entity updated_at=200
+    const { accepted } = db.upsertEntity("list", makeList("l1", 200), KEY);  // entity updated_at=200
     expect(accepted).toBe(true);
     expect(db.getEntitiesSince("list", KEY, 0)).toHaveLength(1);
   });
 
   it("rejects entity when same age as tombstone (tombstone wins)", () => {
     db.applyTombstone("list", "l1", 100, KEY);
-    const accepted = db.upsertEntity("list", makeList("l1", 100), KEY);
+    const { accepted } = db.upsertEntity("list", makeList("l1", 100), KEY);
     expect(accepted).toBe(false);
     expect(db.getEntitiesSince("list", KEY, 0)).toHaveLength(0);
   });
 
   it("rejects entity when tombstone is newer (tombstone wins)", () => {
     db.applyTombstone("list", "l1", 200, KEY);   // tombstone deleted_at=200
-    const accepted = db.upsertEntity("list", makeList("l1", 100), KEY);  // entity updated_at=100
+    const { accepted } = db.upsertEntity("list", makeList("l1", 100), KEY);  // entity updated_at=100
     expect(accepted).toBe(false);
     expect(db.getEntitiesSince("list", KEY, 0)).toHaveLength(0);
   });
@@ -131,7 +131,7 @@ describe("upsertEntity — entity vs tombstone LWW", () => {
     // Entity created at 100, deleted at 200, stale client re-pushes the old version
     db.upsertEntity("item", makeItem("i1", 100), KEY);
     db.applyTombstone("item", "i1", 200, KEY);
-    const accepted = db.upsertEntity("item", makeItem("i1", 100), KEY);  // stale re-push
+    const { accepted } = db.upsertEntity("item", makeItem("i1", 100), KEY);  // stale re-push
     expect(accepted).toBe(false);
     expect(db.getEntitiesSince("item", KEY, 0)).toHaveLength(0);
   });

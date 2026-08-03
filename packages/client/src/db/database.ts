@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
-import type { Asset, Board, Item, List } from "@listr/shared";
+import type { Asset, Board, Item, List, IntegrationResult } from "@listr/shared";
 import { ENTITY_SCHEMA_VERSION, migrateListToAfterId } from "@listr/shared";
 
 export interface SyncConfig {
@@ -46,6 +46,7 @@ export class ListrDB extends Dexie {
   lists!: EntityTable<List, "id">;
   items!: EntityTable<Item, "id">;
   assets!: EntityTable<Asset, "id">;
+  integration_results!: EntityTable<IntegrationResult, "id">;
   sync_config!: Table<SyncConfig, string>;
   tombstones!: Table<LocalTombstone, string>;
   sync_endpoints!: Table<SyncEndpoint, string>;
@@ -223,6 +224,20 @@ export class ListrDB extends Dexie {
       sync_endpoints: "id, position",
       key_sync_state: "key",
       shared_keys: "key",
+    });
+
+    // Adds integration_results table for server-side integration status tracking.
+    this.version(10).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
     });
 
     // Renames categories → boards; renames lists.category_id → lists.board_id

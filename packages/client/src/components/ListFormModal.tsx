@@ -1,11 +1,12 @@
 import { type Component, createSignal, createEffect, For, Show } from "solid-js";
-import type { Board, List } from "@listr/shared";
+import type { Board, Integration, List } from "@listr/shared";
 import Modal from "./Modal.js";
+import IntegrationsEditor from "./IntegrationsEditor.js";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (data: { name: string; board_id: string; format_string: string | null }) => void;
+  onSave: (data: { name: string; board_id: string; format_string: string | null; integrations: Integration[] | null }) => void;
   boards: Board[];
   initial?: List;
   defaultBoardId?: string | null;
@@ -16,6 +17,8 @@ const ListFormModal: Component<Props> = (props) => {
   const [boardId, setBoardId] = createSignal("");
   const [formatOverride, setFormatOverride] = createSignal("");
   const [overrideFormat, setOverrideFormat] = createSignal(false);
+  const [overrideIntegrations, setOverrideIntegrations] = createSignal(false);
+  const [integrations, setIntegrations] = createSignal<Integration[]>([]);
 
   createEffect(() => {
     if (props.open) {
@@ -24,6 +27,9 @@ const ListFormModal: Component<Props> = (props) => {
       const hasOverride = props.initial?.format_string != null;
       setOverrideFormat(hasOverride);
       setFormatOverride(props.initial?.format_string ?? "");
+      const hasIntegrationOverride = props.initial?.integrations != null;
+      setOverrideIntegrations(hasIntegrationOverride);
+      setIntegrations(props.initial?.integrations ?? []);
     }
   });
 
@@ -36,6 +42,7 @@ const ListFormModal: Component<Props> = (props) => {
       name: name().trim(),
       board_id: boardId(),
       format_string: overrideFormat() ? formatOverride() : null,
+      integrations: overrideIntegrations() ? integrations() : null,
     });
   };
 
@@ -95,6 +102,26 @@ const ListFormModal: Component<Props> = (props) => {
             </div>
           )}
         </Show>
+        <div class="form-field">
+          <div class="checkbox-field">
+            <input
+              type="checkbox"
+              checked={overrideIntegrations()}
+              onChange={(e) => setOverrideIntegrations(e.currentTarget.checked)}
+            />
+            <label style="margin-bottom: 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text)">
+              Override board integrations
+            </label>
+          </div>
+          <Show when={overrideIntegrations()}>
+            <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
+          </Show>
+          <Show when={!overrideIntegrations()}>
+            <div style="font-size: 12px; color: var(--text-muted)">
+              Using board integrations
+            </div>
+          </Show>
+        </div>
         <div class="modal-actions">
           <button type="button" class="btn-ghost" onClick={props.onClose}>
             Cancel

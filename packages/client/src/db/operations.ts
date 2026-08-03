@@ -1,6 +1,6 @@
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
-import { ENTITY_SCHEMA_VERSION, isCurrentSchemaVersion, type Board, type List, type Item, type AttributeDefinition, type ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, isCurrentSchemaVersion, type Board, type List, type Item, type AttributeDefinition, type Integration, type ViewMode } from "@listr/shared";
 
 // Boards and lists still use numeric `position` ordering; only items moved to
 // after_id linked-list ordering.
@@ -197,6 +197,7 @@ export async function createBoard(
   formatString: string = "{title}",
   macros?: Record<string, string>,
   syncKey?: string,
+  integrations?: Integration[],
 ): Promise<Board> {
   const maxPos = await db.boards.orderBy("position").last();
   const board: Board = {
@@ -208,6 +209,7 @@ export async function createBoard(
     format_string: formatString,
     macros,
     ...(syncKey ? { sync_key: syncKey } : {}),
+    ...(integrations?.length ? { integrations } : {}),
     created_at: now(),
     updated_at: now(),
     schema_version: ENTITY_SCHEMA_VERSION,
@@ -219,7 +221,7 @@ export async function createBoard(
 
 export async function updateBoard(
   id: string,
-  updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format_string" | "macros" | "sync_key">>,
+  updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format_string" | "macros" | "sync_key" | "integrations">>,
 ): Promise<void> {
   await db.boards.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.boards.get(id);
@@ -295,7 +297,7 @@ export async function createList(
 
 export async function updateList(
   id: string,
-  updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "board_id">>,
+  updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "board_id" | "integrations">>,
 ): Promise<void> {
   await db.lists.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.lists.get(id);

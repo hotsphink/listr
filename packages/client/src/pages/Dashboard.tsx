@@ -2,7 +2,7 @@ import { type Component, For, Show, createSignal, createEffect } from "solid-js"
 import { useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
-import type { Board, List } from "@listr/shared";
+import type { Board, Integration, List } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createList, createBoard, updateBoard } from "../db/operations.js";
 import ListFormModal from "../components/ListFormModal.js";
@@ -48,24 +48,25 @@ const Dashboard: Component = () => {
   const listsForBoard = (boardId: string) =>
     (lists() ?? []).filter((l) => l.board_id === boardId);
 
-  const handleCreateList = async (data: { name: string; board_id: string; format_string: string | null }) => {
+  const handleCreateList = async (data: { name: string; board_id: string; format_string: string | null; integrations: Integration[] | null }) => {
     const list = await createList(data.name, data.board_id);
-    if (data.format_string != null) {
-      await db.lists.update(list.id, { format_string: data.format_string });
-    }
+    const listUpdates: Record<string, unknown> = {};
+    if (data.format_string != null) listUpdates.format_string = data.format_string;
+    if (data.integrations != null) listUpdates.integrations = data.integrations;
+    if (Object.keys(listUpdates).length) await db.lists.update(list.id, listUpdates);
     setShowCreateList(false);
     navigate(`/list/${list.id}`);
   };
 
-  const handleCreateBoard = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
-    await createBoard(data.name, data.color, data.schema, data.format_string, data.macros);
+  const handleCreateBoard = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string>; sync_key: string; integrations: Integration[] }) => {
+    await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, data.sync_key || undefined, data.integrations.length ? data.integrations : undefined);
     setShowCreateBoard(false);
   };
 
-  const handleEditBoard = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string> }) => {
+  const handleEditBoard = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string>; sync_key: string; integrations: Integration[] }) => {
     const board = editingBoard();
     if (!board) return;
-    await updateBoard(board.id, data);
+    await updateBoard(board.id, { ...data, integrations: data.integrations.length ? data.integrations : undefined });
     setEditingBoard(undefined);
   };
 

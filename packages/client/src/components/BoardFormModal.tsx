@@ -1,8 +1,9 @@
 import { type Component, createSignal, createEffect, onCleanup, Show } from "solid-js";
-import type { AttributeDefinition, Board } from "@listr/shared";
+import type { AttributeDefinition, Board, Integration } from "@listr/shared";
 import { validateFormatString, parseAdvancedFormatText, serializeAdvancedFormatText } from "@listr/shared";
 import Modal from "./Modal.js";
 import SchemaEditor from "./SchemaEditor.js";
+import IntegrationsEditor from "./IntegrationsEditor.js";
 import { createAsset } from "../db/assets.js";
 
 function generateFormatString(schema: AttributeDefinition[]): string {
@@ -21,6 +22,7 @@ interface Props {
     schema: AttributeDefinition[];
     macros: Record<string, string>;
     sync_key: string;
+    integrations: Integration[];
   }) => Promise<void> | void;
   initial?: Board;
 }
@@ -32,6 +34,7 @@ const BoardFormModal: Component<Props> = (props) => {
   const [macros, setMacros] = createSignal<Record<string, string>>({});
   const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
   const [boardSyncKey, setBoardSyncKey] = createSignal("");
+  const [integrations, setIntegrations] = createSignal<Integration[]>([]);
   const [formatManuallyEdited, setFormatManuallyEdited] = createSignal(false);
   const [nameError, setNameError] = createSignal<string | null>(null);
   const [formatError, setFormatError] = createSignal<string | null>(null);
@@ -68,6 +71,7 @@ const BoardFormModal: Component<Props> = (props) => {
       setMacros(props.initial?.macros ?? {});
       setSchema(props.initial?.schema ?? []);
       setBoardSyncKey(props.initial?.sync_key ?? "");
+      setIntegrations(props.initial?.integrations ?? []);
       setFormatManuallyEdited(!!props.initial);
       setNameError(null);
       setFormatError(null);
@@ -238,6 +242,7 @@ const BoardFormModal: Component<Props> = (props) => {
         schema: schema(),
         macros: currentMacros,
         sync_key: boardSyncKey().trim(),
+        integrations: integrations(),
       });
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Save failed. Check that your browser allows storage.");
@@ -373,6 +378,10 @@ const BoardFormModal: Component<Props> = (props) => {
         <div class="form-field">
           <label>Attributes</label>
           <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
+        </div>
+        <div class="form-field">
+          <label>Integrations</label>
+          <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
         </div>
         <Show when={saveError()}>
           {(err) => <div class="field-error" style="margin-bottom: 8px">{err()}</div>}

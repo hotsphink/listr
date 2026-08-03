@@ -3,7 +3,7 @@ import { from } from "solid-js";
 import { useParams, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
-import type { AttributeDefinition, Board, Item, List } from "@listr/shared";
+import type { AttributeDefinition, Board, Integration, Item, List, IntegrationStatus } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, deleteItem, updateList, deleteList, createList, resolveChain } from "../db/operations.js";
 import { exportList } from "../db/exportImport.js";
@@ -60,6 +60,8 @@ const ListView: Component = () => {
   const [board, setBoard] = createSignal<Board | undefined>();
   const [allLists, setAllLists] = createSignal<List[]>([]);
   const [itemsByList, setItemsByList] = createSignal<Map<string, Item[]>>(new Map());
+  // integration_result status aggregated per item_id: worst status across all integrations
+  const [integrationStatusByItemId, setIntegrationStatusByItemId] = createSignal<Map<string, IntegrationStatus>>(new Map());
 
   // Item add/edit modal state
   const [addingToList, setAddingToList] = createSignal<string | null>(null); // list id receiving a new item, or null
@@ -145,7 +147,7 @@ const ListView: Component = () => {
 
   createEffect(() => {
     const listIds = allLists().map((l) => l.id);
-    if (!listIds.length) { setItemsByList(new Map()); return; }
+    if (!listIds.length) { setItemsByList(new Map()); setIntegrationStatusByItemId(new Map()); return; }
     const sub = liveQuery(async () => {
       const map = new Map<string, Item[]>();
       await Promise.all(listIds.map(async (id) => {
@@ -154,6 +156,25 @@ const ListView: Component = () => {
       }));
       return map;
     }).subscribe((v) => setItemsByList(v));
+    onCleanup(() => sub.unsubscribe());
+  });
+
+  // Subscribe to integration results for items in this board
+  createEffect(() => {
+    const allItemIds = [...itemsByList().values()].flatMap((items) => items.map((i) => i.id));
+    if (!allItemIds.length) { setIntegrationStatusByItemId(new Map()); return; }
+    const STATUS_PRIORITY: IntegrationStatus[] = ["error", "ambiguous", "unprocessed", "complete"];
+    const sub = liveQuery(async () => {
+      const results = await db.integration_results.where("item_id").anyOf(allItemIds).toArray();
+      const map = new Map<string, IntegrationStatus>();
+      for (const r of results) {
+        const existing = map.get(r.item_id);
+        const existingPriority = existing ? STATUS_PRIORITY.indexOf(existing) : STATUS_PRIORITY.length;
+        const newPriority = STATUS_PRIORITY.indexOf(r.status);
+        if (newPriority < existingPriority) map.set(r.item_id, r.status);
+      }
+      return map;
+    }).subscribe((v) => setIntegrationStatusByItemId(v ?? new Map()));
     onCleanup(() => sub.unsubscribe());
   });
 
@@ -180,6 +201,15 @@ const ListView: Component = () => {
     const urls = assetUrls();
     const fs = list.format_string || effectiveFormatString();
     return renderFormatStringHtml(fs, item, schema(), undefined, board()?.macros, (url) => urls[url] ?? url);
+  };
+
+  const integrationBadge = (itemId: string) => {
+    const status = integrationStatusByItemId().get(itemId);
+    if (!status || status === "complete") return null;
+    if (status === "unprocessed") return <span class="integration-badge integration-badge-pending" title="Integration processing…">↻</span>;
+    if (status === "error") return <span class="integration-badge integration-badge-error" title="Integration error">!</span>;
+    if (status === "ambiguous") return <span class="integration-badge integration-badge-ambiguous" title="Ambiguous result — needs manual resolution">?</span>;
+    return null;
   };
 
   const itemsForList = (listId: string): Item[] => {
@@ -228,10 +258,10 @@ const ListView: Component = () => {
     setEditingList(list);
   };
 
-  const handleEditList = async (data: { name: string; board_id: string; format_string: string | null }) => {
+  const handleEditList = async (data: { name: string; board_id: string; format_string: string | null; integrations: Integration[] | null }) => {
     const list = editingList();
     if (!list) return;
-    await updateList(list.id, data);
+    await updateList(list.id, { ...data, integrations: data.integrations });
     setEditingList(undefined);
   };
 
@@ -654,6 +684,7 @@ const ListView: Component = () => {
                                     <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
                                   </Show>
                                   <FormattedText html={formatItem(item, list)} />
+                                  {integrationBadge(item.id)}
                                 </li>
                               )}
                             </For>
@@ -690,7 +721,7 @@ const ListView: Component = () => {
                                           <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
                                         </Show>
                                       </td>
-                                      <td style="font-weight: 500">{item.title}</td>
+                                      <td style="font-weight: 500">{item.title}{integrationBadge(item.id)}</td>
                                       <For each={schema()}>
                                         {(attr) => (
                                           <td>{formatCellValue(item.attributes[attr.key], attr.type)}</td>
@@ -723,7 +754,7 @@ const ListView: Component = () => {
                                     <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>}>
                                       <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
                                     </Show>
-                                    <div class="card-title"><FormattedText html={formatItem(item, list)} /></div>
+                                    <div class="card-title"><FormattedText html={formatItem(item, list)} />{integrationBadge(item.id)}</div>
                                     <Show when={schema().length > 0}>
                                       <div class="card-attrs">
                                         <For each={schema()}>

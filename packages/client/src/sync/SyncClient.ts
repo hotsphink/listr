@@ -245,7 +245,7 @@ class SyncClient {
   }
 
   async forceFullSync(): Promise<void> {
-    await Promise.all([db.boards.clear(), db.lists.clear(), db.items.clear(), db.assets.clear(), db.tombstones.clear()]);
+    await Promise.all([db.boards.clear(), db.lists.clear(), db.items.clear(), db.assets.clear(), db.tombstones.clear(), db.integration_results.clear()]);
     await db.key_sync_state.clear();
     this.boardSyncKeys.clear();
     this.listBoardMap.clear();
@@ -499,6 +499,7 @@ class SyncClient {
     await this.mergeEntityBatch("list", msg.lists ?? []);
     await this.mergeEntityBatch("item", msg.items ?? []);
     await this.mergeAssetBatch(msg.assets ?? []);
+    await this.mergeIntegrationResultBatch(msg.integration_results ?? []);
     await this.applyTombstoneBatch(msg.tombstones ?? []);
 
     // Update per-key timestamps
@@ -533,6 +534,16 @@ class SyncClient {
     if (entityType === "item") {
       for (const item of incoming) this.itemListMap.set(item.id, item.list_id);
     }
+  }
+
+  private async mergeIntegrationResultBatch(incoming: any[]): Promise<void> {
+    if (!incoming.length) return;
+    const existing = await db.integration_results.bulkGet(incoming.map((e: any) => e.id));
+    const toStore = incoming.filter((e: any, i: number) => {
+      const ex = existing[i];
+      return !ex || (e.updated_at as number) > (ex.updated_at as number);
+    });
+    if (toStore.length) await db.integration_results.bulkPut(toStore);
   }
 
   private async mergeAssetBatch(incoming: any[]): Promise<void> {
@@ -575,6 +586,13 @@ class SyncClient {
   }
 
   private async mergeEntity(entityType: EntityType, incoming: any): Promise<void> {
+    if (entityType === "integration_result") {
+      const existing = await db.integration_results.get(incoming.id);
+      if (!existing || (incoming.updated_at as number) > existing.updated_at) {
+        await db.integration_results.put(incoming);
+      }
+      return;
+    }
     if (entityType === "asset") {
       const existing = await db.assets.get(incoming.id);
       const toStore = applyIncomingEntity(entityType, incoming, existing as any);

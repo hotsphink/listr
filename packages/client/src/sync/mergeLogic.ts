@@ -1,4 +1,4 @@
-export type EntityType = "board" | "list" | "item" | "asset";
+export type EntityType = "board" | "list" | "item" | "asset" | "integration_result";
 
 /**
  * Returns true if a tombstone (deleted_at) should delete the local entity.
