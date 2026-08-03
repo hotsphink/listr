@@ -252,8 +252,9 @@ export function useSortable(
     },
     onMove: (evt, originalEvent) => {
       updateDrag(originalEvent);
-      if (evt.related?.classList.contains("view-add") ||
-          evt.related?.classList.contains("add")) {
+      if (evt.willInsertAfter &&
+          (evt.related?.classList.contains("view-add") ||
+           evt.related?.classList.contains("add"))) {
         return false;
       }
       return true;

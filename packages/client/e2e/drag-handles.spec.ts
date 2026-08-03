@@ -52,6 +52,45 @@ test.describe("drag handles in list view", () => {
     await expect(page.locator(".list-view-item").nth(1)).toContainText("Inception");
   });
 
+  test("dragging an item to the last position lands last, not second-to-last", async ({ page }) => {
+    // Regression: with 3+ items, dragging the first item past the last real item into
+    // the AddRow zone fired onMove with related=.view-add, which used to block the move.
+    // The item would snap back to second-to-last instead of reaching the end.
+    await page.locator(".view-add").last().click();
+    await page.locator(".modal .form-field input").first().fill("The Matrix");
+    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
+    await page.locator(".view-add").last().click();
+    await page.locator(".modal .form-field input").first().fill("Interstellar");
+    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.locator(".list-view-item")).toHaveCount(3);
+
+    const items = page.locator(".list-view-item");
+    await expect(items.nth(0)).toContainText("Inception");
+    await expect(items.nth(1)).toContainText("The Matrix");
+    await expect(items.nth(2)).toContainText("Interstellar");
+
+    // Drag Inception (first) to the end by moving its handle past Interstellar's bottom
+    // edge, into the AddRow zone. This is what triggered the bug.
+    const handle = items.nth(0).locator(".drag-handle");
+    const hb = (await handle.boundingBox())!;
+    const last = items.nth(2);
+    const lb = (await last.boundingBox())!;
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2 + 4, { steps: 3 });
+    await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height + 8, { steps: 12 });
+    await page.mouse.up();
+
+    await expect(items.nth(0)).toContainText("The Matrix");
+    await expect(items.nth(1)).toContainText("Interstellar");
+    await expect(items.nth(2)).toContainText("Inception");
+
+    await page.reload();
+    await expect(page.locator(".list-view-item").nth(0)).toContainText("The Matrix");
+    await expect(page.locator(".list-view-item").nth(1)).toContainText("Interstellar");
+    await expect(page.locator(".list-view-item").nth(2)).toContainText("Inception");
+  });
+
   test("drag handles remain visible after switching to table and back to list", async ({ page }) => {
     // Switch to table view and back to list view within the unified ListView
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
