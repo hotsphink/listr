@@ -1260,6 +1260,11 @@ tbody tr {
   border-color: var(--accent);
 }
 
+.multi-list-column.snap-target .multi-list-column-name {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .multi-list-column-header {
   display: flex;
   align-items: center;
