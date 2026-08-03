@@ -5,8 +5,8 @@ import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
 import type { AttributeDefinition, Board, Integration, Item, List, IntegrationStatus } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createItem, updateItem, deleteItem, updateList, deleteList, createList, resolveChain } from "../db/operations.js";
-import { exportList } from "../db/exportImport.js";
+import { createItem, updateItem, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard } from "../db/operations.js";
+import { exportList, exportBoard } from "../db/exportImport.js";
 import type { NativeExport } from "../db/exportImport.js";
 import ImportModal from "../components/ImportModal.js";
 import type { ImportScope } from "../components/ImportModal.js";
@@ -19,6 +19,7 @@ import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
+import BoardFormModal from "../components/BoardFormModal.js";
 import FormattedText from "../components/FormattedText.js";
 import ContextMenu from "../components/ContextMenu.js";
 import type { MenuItem } from "../components/ContextMenu.js";
@@ -68,6 +69,9 @@ const ListView: Component = () => {
   const [prependToList, setPrependToList] = createSignal(false);             // true = insert before first item
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();    // item open in edit modal
   const [editingList, setEditingList] = createSignal<List | undefined>();    // list open in settings modal
+  const [editingBoard, setEditingBoard] = createSignal<Board | undefined>(); // board open in settings modal
+  const [boardCtxMenu, setBoardCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
+  const [boardImportScope, setBoardImportScope] = createSignal<ImportScope | null>(null);
   const [listCtxMenu, setListCtxMenu] = createSignal<{ x: number; y: number; list: List } | null>(null);
   const [listImportScope, setListImportScope] = createSignal<ImportScope | null>(null);
 
@@ -264,6 +268,24 @@ const ListView: Component = () => {
     await updateList(list.id, { ...data, integrations: data.integrations });
     setEditingList(undefined);
   };
+
+  const handleEditBoard = async (data: { name: string; color: string; format_string: string; schema: AttributeDefinition[]; macros: Record<string, string>; sync_key: string; integrations: Integration[] }) => {
+    const b = editingBoard();
+    if (!b) return;
+    await updateBoard(b.id, data);
+    setEditingBoard(undefined);
+  };
+
+  const boardCtxMenuItems = createMemo((): MenuItem[] => {
+    const b = board();
+    if (!b) return [];
+    return [
+      { label: "Edit", action: () => { setBoardCtxMenu(null); setEditingBoard(b); } },
+      { label: "Import", action: () => { setBoardCtxMenu(null); setBoardImportScope({ type: "board", id: b.id, name: b.name, schema: b.schema, format_string: b.format_string, macros: b.macros ?? {} }); } },
+      { label: "Export", action: async () => { setBoardCtxMenu(null); const data = await exportBoard(b.id); triggerDownload(data, `listr-board-${b.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
+      { label: "Delete", danger: true, action: async () => { setBoardCtxMenu(null); if (!confirm(`Delete "${b.name}" and all its lists and items?`)) return; await deleteBoard(b.id); } },
+    ];
+  });
 
   const handleEditFromBar = () => {
     if (selectedItemIds().size === 1) {
@@ -538,7 +560,7 @@ const ListView: Component = () => {
             <Show when={selectionMode()} fallback={
               <>
                 <div class="page-header">
-                  <div class="page-title">
+                  <div class="page-title" onContextMenu={(e) => { e.preventDefault(); setBoardCtxMenu({ x: e.clientX, y: e.clientY }); }}>
                     <h1>{headerTitle()}</h1>
                     <span class="item-count">{totalItemCount()}</span>
                   </div>
@@ -797,6 +819,19 @@ const ListView: Component = () => {
               </div>
             </div>
 
+            <Show when={boardCtxMenu() !== null}>
+              {(_) => {
+                const pos = () => boardCtxMenu()!;
+                return (
+                  <ContextMenu x={pos().x} y={pos().y} items={boardCtxMenuItems()} onClose={() => setBoardCtxMenu(null)} />
+                );
+              }}
+            </Show>
+
+            <Show when={boardImportScope()}>
+              {(scope) => <ImportModal open={true} onClose={() => setBoardImportScope(null)} scope={scope()} />}
+            </Show>
+
             <Show when={listCtxMenu() !== null}>
               {(_) => {
                 const pos = () => listCtxMenu()!;
@@ -854,6 +889,20 @@ const ListView: Component = () => {
               onSave={handleEditList}
               boards={allBoards() ?? []}
               initial={editingList()}
+            />
+
+            <BoardFormModal
+              open={editingBoard() !== undefined}
+              onClose={() => setEditingBoard(undefined)}
+              onSave={handleEditBoard}
+              initial={editingBoard()}
+            />
+
+            <BoardFormModal
+              open={editingBoard() !== undefined}
+              onClose={() => setEditingBoard(undefined)}
+              onSave={handleEditBoard}
+              initial={editingBoard()}
             />
 
             <MoveToListModal
