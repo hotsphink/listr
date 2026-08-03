@@ -1,6 +1,40 @@
 import { test, expect } from "@playwright/test";
 import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 
+test.describe("sidebar board chevron", () => {
+  test.beforeEach(async ({ page }) => {
+    await clearDatabase(page);
+    await createBoard(page, "Movies");
+    await createListInBoard(page, "Watchlist", "Movies");
+    // createListInBoard expands the board, so lists are visible after setup.
+    await expect(page.locator(".page-header h1")).toHaveText("Movies");
+  });
+
+  test("clicking chevron collapses and re-expands the board without navigating", async ({ page }) => {
+    const boardSection = page.locator(".sidebar-board").filter({
+      has: page.locator(".sidebar-board-header", { hasText: "Movies" }),
+    });
+    const chevron = boardSection.locator(".sidebar-board-chevron");
+    const listItem = boardSection.locator(".sidebar-item", { hasText: "Watchlist" });
+
+    // Regression: clicking the chevron used to act like clicking the board name
+    // (navigating) because sidebar-board-name's hit area overlapped the chevron
+    // due to the negative margin on .sidebar-board-chevron.
+
+    const wrapper = boardSection.locator(".sidebar-board-lists-wrapper");
+    await expect(wrapper).toHaveClass(/expanded/);
+
+    await chevron.click();
+    await expect(wrapper).not.toHaveClass(/expanded/);
+    // Must still be on the board page, not navigated away.
+    await expect(page.locator(".page-header h1")).toHaveText("Movies");
+
+    await chevron.click();
+    await expect(wrapper).toHaveClass(/expanded/);
+    await expect(page.locator(".page-header h1")).toHaveText("Movies");
+  });
+});
+
 test.describe("sidebar context menu", () => {
   test.beforeEach(async ({ page }) => {
     await clearDatabase(page);

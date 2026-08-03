@@ -203,6 +203,8 @@ body {
   cursor: s-resize;
   padding: 4px;
   margin: -4px;
+  position: relative;
+  z-index: 1;
 }
 
 .sidebar-board-name {
