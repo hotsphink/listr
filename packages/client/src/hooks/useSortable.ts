@@ -71,6 +71,24 @@ export function useSortable(
     const VERT_SPEED = 6;        // px per frame
     const MIN_COL_PENETRATION = 70; // px into adjacent column before triggering scroll
 
+    // Cache at drag start — columns, their offsets, scrollable children, and the
+    // outer container's viewport rect don't change while a drag is in progress.
+    // Reading these per-frame forces repeated layout recalcs (getBoundingClientRect,
+    // getComputedStyle, offsetLeft) that cause jank on mobile.
+    const cancelZoneEl = document.getElementById("drag-cancel-zone");
+    const columns = scrollEl ? (Array.from(scrollEl.children) as HTMLElement[]) : [];
+    const colOffsets = columns.map((col) => ({ left: col.offsetLeft, width: col.offsetWidth }));
+    const vertEls = columns.map(
+      (col) =>
+        Array.from(col.children).find((c) => {
+          const oy = getComputedStyle(c).overflowY;
+          return oy === "auto" || oy === "scroll" || oy === "overlay";
+        }) as HTMLElement | undefined,
+    );
+    const scrollElRect = scrollEl?.getBoundingClientRect();
+    const scrollElLeft = scrollElRect?.left ?? 0;
+    const scrollElRight = scrollElRect?.right ?? 0;
+
     const applyVerticalScroll = (vertEl: HTMLElement) => {
       const vr = vertEl.getBoundingClientRect();
       const fromTop = dragY - vr.top;
@@ -88,58 +106,60 @@ export function useSortable(
     };
 
     const tick = () => {
-      document.getElementById("drag-cancel-zone")?.classList
-        .toggle("over", dragY < CANCEL_ZONE_HEIGHT);
+      // Read scrollLeft once; all column positions are in scroll-space (offsetLeft),
+      // so converting to viewport coords is a single subtraction rather than a
+      // getBoundingClientRect call per column.
+      const scrollLeft = scrollEl?.scrollLeft ?? 0;
+
+      cancelZoneEl?.classList.toggle("over", dragY < CANCEL_ZONE_HEIGHT);
 
       if (!scrollUnlocked) {
         if (Math.abs(dragX - dragStartX) > UNLOCK_THRESHOLD) scrollUnlocked = true;
       }
 
       if (scrollEl) {
-        // Multi-column layout: find the scrollable items container inside the
-        // column currently under the drag position (handles cross-list drags).
-        const columns = Array.from(scrollEl.children) as HTMLElement[];
-        const hoveredCol = columns.find((col) => {
-          const r = col.getBoundingClientRect();
-          return dragX >= r.left && dragX < r.right;
+        // Batch reads: find hovered column using cached offsetLeft/width, converting
+        // to viewport coords via scrollLeft (no per-column getBoundingClientRect).
+        const hoveredIdx = colOffsets.findIndex(({ left, width }) => {
+          const viewLeft = left - scrollLeft + scrollElLeft;
+          return dragX >= viewLeft && dragX < viewLeft + width;
         });
-        if (hoveredCol) {
-          const vertEl = Array.from(hoveredCol.children).find((c) => {
-            const oy = getComputedStyle(c).overflowY;
-            return oy === "auto" || oy === "scroll" || oy === "overlay";
-          }) as HTMLElement | undefined;
+        if (hoveredIdx !== -1) {
+          const vertEl = vertEls[hoveredIdx];
           if (vertEl) applyVerticalScroll(vertEl);
         }
 
         if (scrollUnlocked) {
-          const rect = scrollEl.getBoundingClientRect();
           const now = Date.now();
           if (now - lastSnapTime > SNAP_COOLDOWN) {
-            const curIdx = columns.reduce(
-              (best, col, i) => (col.offsetLeft <= scrollEl.scrollLeft + 1 ? i : best), 0
+            const curIdx = colOffsets.reduce(
+              (best, { left }, i) => (left <= scrollLeft + 1 ? i : best),
+              0,
             );
 
             // Map drag position from viewport coords into scroll-space, then find which
             // column it falls over. If it's a different column than the current snap
             // position, scroll there — this handles partially-visible adjacent columns.
-            const dragXInScroll = dragX - rect.left + scrollEl.scrollLeft;
-            const overIdx = columns.findIndex((col) =>
-              dragXInScroll >= col.offsetLeft && dragXInScroll < col.offsetLeft + col.offsetWidth
+            const dragXInScroll = dragX - scrollElLeft + scrollLeft;
+            const overIdx = colOffsets.findIndex(
+              ({ left, width }) => dragXInScroll >= left && dragXInScroll < left + width,
             );
 
             if (overIdx !== -1 && overIdx !== curIdx) {
-              const penetration = overIdx < curIdx
-                ? (columns[overIdx].offsetLeft + columns[overIdx].offsetWidth) - dragXInScroll
-                : dragXInScroll - columns[overIdx].offsetLeft;
+              const { left: overLeft, width: overWidth } = colOffsets[overIdx];
+              const penetration =
+                overIdx < curIdx
+                  ? overLeft + overWidth - dragXInScroll
+                  : dragXInScroll - overLeft;
               if (penetration >= MIN_COL_PENETRATION) {
-                scrollEl.scrollTo({ left: columns[overIdx].offsetLeft, behavior: "smooth" });
+                scrollEl.scrollTo({ left: colOffsets[overIdx].left, behavior: "smooth" });
                 lastSnapTime = now;
               }
-            } else if (rect.right - dragX < SENSITIVITY && curIdx < columns.length - 1) {
-              scrollEl.scrollTo({ left: columns[curIdx + 1].offsetLeft, behavior: "smooth" });
+            } else if (scrollElRight - dragX < SENSITIVITY && curIdx < columns.length - 1) {
+              scrollEl.scrollTo({ left: colOffsets[curIdx + 1].left, behavior: "smooth" });
               lastSnapTime = now;
-            } else if (dragX - rect.left < SENSITIVITY && curIdx > 0) {
-              scrollEl.scrollTo({ left: columns[curIdx - 1].offsetLeft, behavior: "smooth" });
+            } else if (dragX - scrollElLeft < SENSITIVITY && curIdx > 0) {
+              scrollEl.scrollTo({ left: colOffsets[curIdx - 1].left, behavior: "smooth" });
               lastSnapTime = now;
             }
           }
