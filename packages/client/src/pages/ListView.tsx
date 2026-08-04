@@ -703,7 +703,7 @@ const ListView: Component = () => {
                                   onContextMenu={(e) => handleItemContextMenu(e, item)}
                                 >
                                   <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                    <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
+                                    <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} style="pointer-events: none" />
                                   </Show>
                                   <FormattedText html={formatItem(item, list)} />
                                   {integrationBadge(item.id)}
@@ -740,7 +740,7 @@ const ListView: Component = () => {
                                     >
                                       <td class="drag-handle-cell">
                                         <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                          <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
+                                          <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} style="pointer-events: none" />
                                         </Show>
                                       </td>
                                       <td style="font-weight: 500">{item.title}{integrationBadge(item.id)}</td>
@@ -774,7 +774,7 @@ const ListView: Component = () => {
                                     onContextMenu={(e) => handleItemContextMenu(e, item)}
                                   >
                                     <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>}>
-                                      <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item.id)} onClick={(e) => e.preventDefault()} />
+                                      <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item.id)} style="pointer-events: none" />
                                     </Show>
                                     <div class="card-title"><FormattedText html={formatItem(item, list)} />{integrationBadge(item.id)}</div>
                                     <Show when={schema().length > 0}>
