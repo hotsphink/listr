@@ -24,6 +24,7 @@ import FormattedText from "../components/FormattedText.js";
 import ContextMenu from "../components/ContextMenu.js";
 import type { MenuItem } from "../components/ContextMenu.js";
 import MoveToListModal from "../components/MoveToListModal.js";
+import BoardShareModal from "../components/BoardShareModal.js";
 
 const VIEW_MODES: { mode: "list" | "table" | "card"; label: string }[] = [
   { mode: "list", label: "List" },
@@ -71,6 +72,7 @@ const ListView: Component = () => {
   const [editingList, setEditingList] = createSignal<List | undefined>();    // list open in settings modal
   const [editingBoard, setEditingBoard] = createSignal<Board | undefined>(); // board open in settings modal
   const [boardCtxMenu, setBoardCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
+  const [sharingBoard, setSharingBoard] = createSignal<Board | undefined>();
   const [boardImportScope, setBoardImportScope] = createSignal<ImportScope | null>(null);
   const [listCtxMenu, setListCtxMenu] = createSignal<{ x: number; y: number; list: List } | null>(null);
   const [listImportScope, setListImportScope] = createSignal<ImportScope | null>(null);
@@ -281,6 +283,7 @@ const ListView: Component = () => {
     if (!b) return [];
     return [
       { label: "Edit", action: () => { setBoardCtxMenu(null); setEditingBoard(b); } },
+      { label: "Share", action: () => { setBoardCtxMenu(null); setSharingBoard(b); } },
       { label: "Import", action: () => { setBoardCtxMenu(null); setBoardImportScope({ type: "board", id: b.id, name: b.name, schema: b.schema, format_string: b.format_string, macros: b.macros ?? {} }); } },
       { label: "Export", action: async () => { setBoardCtxMenu(null); const data = await exportBoard(b.id); triggerDownload(data, `listr-board-${b.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
       { label: "Delete", danger: true, action: async () => { setBoardCtxMenu(null); if (!confirm(`Delete "${b.name}" and all its lists and items?`)) return; await deleteBoard(b.id); } },
@@ -832,6 +835,12 @@ const ListView: Component = () => {
             <Show when={boardImportScope()}>
               {(scope) => <ImportModal open={true} onClose={() => setBoardImportScope(null)} scope={scope()} />}
             </Show>
+
+            <BoardShareModal
+              open={sharingBoard() !== undefined}
+              onClose={() => setSharingBoard(undefined)}
+              board={sharingBoard()}
+            />
 
             <Show when={listCtxMenu() !== null}>
               {(_) => {
