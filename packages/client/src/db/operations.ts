@@ -103,6 +103,66 @@ export function reorderByAfterId(
   return updates;
 }
 
+/**
+ * Compute the displaced-successor patch when inserting a new item after
+ * `predecessorId` (null = insert at the very top). Returns null when the
+ * insertion point is the tail or the list is empty — nothing to re-link.
+ */
+export function computeChainInsert(
+  items: { id: string; after_id?: string | null }[],
+  predecessorId: string | null,
+  newItemId: string,
+): { id: string; after_id: string } | null {
+  const displaced = items.find((i) => (i.after_id ?? null) === predecessorId);
+  return displaced ? { id: displaced.id, after_id: newItemId } : null;
+}
+
+/**
+ * Compute the successor patches needed to keep the chain intact when an item
+ * is deleted. Each item currently pointing at `deletedId` is re-linked to
+ * `deletedPredecessorId`. Normally one item; may be more in case of a fork.
+ */
+export function computeChainDelete(
+  items: { id: string; after_id?: string | null }[],
+  deletedId: string,
+  deletedPredecessorId: string | null,
+): { id: string; after_id: string | null }[] {
+  return items
+    .filter((i) => (i.after_id ?? null) === deletedId && i.id !== deletedId)
+    .map((i) => ({ id: i.id, after_id: deletedPredecessorId }));
+}
+
+/**
+ * Compute the chain repairs required when dragging an item from one list to
+ * another. Returns patches for the source successor (which skips over the
+ * moved item) and the target successor (which now follows the moved item).
+ * Either may be null when the moved item is the tail or the insertion point
+ * is the tail.
+ */
+export function computeCrossListMove(
+  sourceItems: { id: string; after_id?: string | null }[],
+  targetItems: { id: string; after_id?: string | null }[],
+  movedId: string,
+  movedPredecessorId: string | null,
+  targetPredecessorId: string | null,
+): {
+  sourceSuccessorUpdate: { id: string; after_id: string | null } | null;
+  targetSuccessorUpdate: { id: string; after_id: string } | null;
+} {
+  const sourceSuccessor =
+    sourceItems.find((i) => (i.after_id ?? null) === movedId && i.id !== movedId) ?? null;
+  const targetSuccessor =
+    targetItems.find((i) => (i.after_id ?? null) === targetPredecessorId) ?? null;
+  return {
+    sourceSuccessorUpdate: sourceSuccessor
+      ? { id: sourceSuccessor.id, after_id: movedPredecessorId }
+      : null,
+    targetSuccessorUpdate: targetSuccessor
+      ? { id: targetSuccessor.id, after_id: movedId }
+      : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Legacy healing (position → after_id) for data that bypassed the Dexie upgrade
 // ---------------------------------------------------------------------------
@@ -416,7 +476,24 @@ export async function updateItemAttribute(
 }
 
 export async function deleteItem(id: string): Promise<void> {
-  await db.items.delete(id);
+  const item = await db.items.get(id);
+  if (!item) return;
+
+  const timestamp = now();
+  // Re-link any successors to skip over the deleted item so the chain stays intact.
+  const successors = await db.items.where("after_id").equals(id).toArray();
+
+  await db.transaction("rw", db.items, async () => {
+    for (const s of successors) {
+      await db.items.update(s.id, { after_id: item.after_id ?? null, updated_at: timestamp });
+    }
+    await db.items.delete(id);
+  });
+
+  for (const s of successors) {
+    const updated = await db.items.get(s.id);
+    if (updated) syncClient.pushEntity("item", updated);
+  }
   syncClient.pushDelete("item", id);
 }
 

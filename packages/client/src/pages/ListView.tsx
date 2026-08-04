@@ -5,7 +5,7 @@ import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
 import type { AttributeDefinition, Board, Integration, Item, List, IntegrationStatus } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createItem, updateItem, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard } from "../db/operations.js";
+import { createItem, updateItem, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
 import { exportList, exportBoard } from "../db/exportImport.js";
 import type { NativeExport } from "../db/exportImport.js";
 import ImportModal from "../components/ImportModal.js";
@@ -522,24 +522,25 @@ const ListView: Component = () => {
     // Splice fix-ups: the target item that followed the insertion point now
     // follows the moved item; the source item that followed the moved item skips
     // over it (inherits the moved item's old predecessor).
-    const targetSuccessor = toItems.find((i) => (i.after_id ?? null) === predecessorId);
     const rawSource = await db.items.where("list_id").equals(sourceItem.list_id).toArray();
-    const sourceSuccessor = rawSource.find((i) => (i.after_id ?? null) === itemId && i.id !== itemId);
+    const { sourceSuccessorUpdate, targetSuccessorUpdate } = computeCrossListMove(
+      rawSource, toItems, itemId, sourceItem.after_id ?? null, predecessorId,
+    );
 
     await db.transaction("rw", db.items, async () => {
       await db.items.update(itemId, { list_id: toListId, after_id: predecessorId, updated_at: timestamp });
-      if (sourceSuccessor) {
-        await db.items.update(sourceSuccessor.id, { after_id: sourceItem.after_id ?? null, updated_at: timestamp });
+      if (sourceSuccessorUpdate) {
+        await db.items.update(sourceSuccessorUpdate.id, { after_id: sourceSuccessorUpdate.after_id, updated_at: timestamp });
       }
-      if (targetSuccessor) {
-        await db.items.update(targetSuccessor.id, { after_id: itemId, updated_at: timestamp });
+      if (targetSuccessorUpdate) {
+        await db.items.update(targetSuccessorUpdate.id, { after_id: targetSuccessorUpdate.after_id, updated_at: timestamp });
       }
     });
 
     syncClient.pushEntity("item", { ...sourceItem, list_id: toListId, after_id: predecessorId, updated_at: timestamp });
-    for (const s of [sourceSuccessor, targetSuccessor]) {
-      if (!s) continue;
-      const fresh = await db.items.get(s.id);
+    for (const update of [sourceSuccessorUpdate, targetSuccessorUpdate]) {
+      if (!update) continue;
+      const fresh = await db.items.get(update.id);
       if (fresh) syncClient.pushEntity("item", fresh);
     }
   };
