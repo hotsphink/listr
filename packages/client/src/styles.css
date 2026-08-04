@@ -227,6 +227,15 @@ body {
   opacity: 0.7;
 }
 
+.board-header-shared-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  opacity: 0.7;
+  align-self: center;
+}
+
 .sidebar-board-count {
   margin-left: auto;
   font-size: 11px;

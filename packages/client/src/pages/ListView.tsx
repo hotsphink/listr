@@ -25,6 +25,7 @@ import ContextMenu from "../components/ContextMenu.js";
 import type { MenuItem } from "../components/ContextMenu.js";
 import MoveToListModal from "../components/MoveToListModal.js";
 import BoardShareModal from "../components/BoardShareModal.js";
+import ShareIcon from "../components/ShareIcon.js";
 
 const VIEW_MODES: { mode: "list" | "table" | "card"; label: string }[] = [
   { mode: "list", label: "List" },
@@ -566,6 +567,9 @@ const ListView: Component = () => {
                 <div class="page-header">
                   <div class="page-title" onContextMenu={(e) => { e.preventDefault(); setBoardCtxMenu({ x: e.clientX, y: e.clientY }); }}>
                     <h1>{headerTitle()}</h1>
+                    <Show when={board()?.sync_key}>
+                      <ShareIcon class="board-header-shared-icon" />
+                    </Show>
                     <span class="item-count">{totalItemCount()}</span>
                   </div>
                   <div class="header-actions">

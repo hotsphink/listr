@@ -10,6 +10,7 @@ import BoardFormModal from "./BoardFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
 import BoardShareModal from "./BoardShareModal.js";
 import ScanShareModal from "./ScanShareModal.js";
+import ShareIcon from "./ShareIcon.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
 import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
@@ -274,10 +275,7 @@ const Sidebar: Component<Props> = (props) => {
                       <span class="sidebar-board-name" onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }} onDblClick={() => setEditingBoard(board)}>
                         {board.name}
                         <Show when={board.sync_key}>
-                          <svg class="sidebar-board-shared-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-label="Shared board">
-                            <circle cx="12" cy="4" r="1.5"/><circle cx="4" cy="8" r="1.5"/><circle cx="12" cy="12" r="1.5"/>
-                            <line x1="5.4" y1="7.2" x2="10.6" y2="4.8"/><line x1="5.4" y1="8.8" x2="10.6" y2="11.2"/>
-                          </svg>
+                          <ShareIcon class="sidebar-board-shared-icon" />
                         </Show>
                       </span>
                       <span class="sidebar-board-count">{listsForBoard(board.id).length}</span>
