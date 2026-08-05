@@ -264,6 +264,10 @@ function formatValue(
   }
 
   if (attrType === "duration" && typeof value === "number") return formatDuration(value);
+  if (attrType === "todo" && typeof value === "string") {
+    const icons: Record<string, string> = { default: "☐", done: "☑", cancelled: "⊟", skipped: "( )" };
+    return icons[value] ?? value;
+  }
   if (typeof value === "number") return String(value);
   if (value instanceof Date) return value.toLocaleDateString();
   if (typeof value === "boolean") return value ? "yes" : "no";
@@ -279,6 +283,7 @@ function getValue(item: Item, key: string, schemaMap?: Map<string, AttributeDefi
   if (v === undefined && schemaMap) {
     const def = schemaMap.get(key);
     if (def?.type === "boolean") return false;
+    if (def?.type === "todo") return "default";
   }
   return v;
 }

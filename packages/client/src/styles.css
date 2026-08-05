@@ -1089,6 +1089,33 @@ tbody tr {
 }
 
 
+/* ── Todo attribute ──────────────────────────────────────────────────── */
+.todo-control {
+  flex-shrink: 0;
+  margin: -8px -8px -8px auto;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.todo-control svg { width: 16px; height: 16px; }
+@media (hover: hover) {
+  .todo-control:hover { color: var(--text); }
+}
+.todo-control.todo-cancelled { color: var(--text-dim); }
+.todo-control.todo-skipped { color: var(--text-dim); opacity: 0.7; }
+
+.list-view-item.todo-done .formatted-text { text-decoration: line-through; text-decoration-thickness: 3px; }
+.list-view-item.todo-cancelled .formatted-text { text-decoration: line-through; color: var(--text-dim); font-style: italic; }
+.list-view-item.todo-skipped .formatted-text { color: var(--text-dim); }
+.list-view-item.todo-skipped .formatted-text::before { content: "("; }
+.list-view-item.todo-skipped .formatted-text::after { content: ")"; }
+
 @media (min-width: 769px) {
   .view-switcher-select {
     display: none;

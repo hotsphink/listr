@@ -7,7 +7,10 @@ export type AttributeType =
   | "enum"
   | "tags"
   | "url"
-  | "duration";
+  | "duration"
+  | "todo";
+
+export type TodoState = "default" | "done" | "cancelled" | "skipped";
 
 export interface AutoBehavior {
   trigger: "on_create" | "on_update" | "on_demand" | "periodic";

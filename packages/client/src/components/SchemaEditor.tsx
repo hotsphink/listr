@@ -7,6 +7,7 @@ const ATTRIBUTE_TYPES: { value: AttributeType; label: string }[] = [
   { value: "date", label: "Date" },
   { value: "datetime", label: "Date & Time" },
   { value: "boolean", label: "Yes/No" },
+  { value: "todo", label: "Todo" },
   { value: "enum", label: "Select" },
   { value: "tags", label: "Tags" },
   { value: "url", label: "URL" },
@@ -182,6 +183,18 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
           value={props.value != null ? String(props.value) : ""}
           onChange={(e) => props.onChange(e.currentTarget.value || undefined)}
         />
+      </Match>
+      <Match when={props.type === "todo"}>
+        <select
+          title="Default state for new items"
+          value={props.value != null ? String(props.value) : "default"}
+          onChange={(e) => props.onChange(e.currentTarget.value === "default" ? undefined : e.currentTarget.value)}
+        >
+          <option value="default">Todo</option>
+          <option value="done">Done</option>
+          <option value="cancelled">Cancel</option>
+          <option value="skipped">Skip</option>
+        </select>
       </Match>
       <Match when={props.type === "duration"}>
         <input

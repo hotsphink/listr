@@ -37,6 +37,9 @@ const AttributeEditor: Component<Props> = (props) => {
       <Match when={props.definition.type === "duration"}>
         <DurationInput value={props.value} onChange={props.onChange} />
       </Match>
+      <Match when={props.definition.type === "todo"}>
+        <TodoInput value={props.value} onChange={props.onChange} />
+      </Match>
     </Switch>
   );
 };
@@ -178,5 +181,17 @@ const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void 
     </div>
   );
 };
+
+const TodoInput: Component<{ value: unknown; onChange: (v: unknown) => void }> = (props) => (
+  <select
+    value={typeof props.value === "string" ? props.value : "default"}
+    onChange={(e) => props.onChange(e.currentTarget.value === "default" ? undefined : e.currentTarget.value)}
+  >
+    <option value="default">Todo</option>
+    <option value="done">Done</option>
+    <option value="cancelled">Cancel</option>
+    <option value="skipped">Skip</option>
+  </select>
+);
 
 export default AttributeEditor;

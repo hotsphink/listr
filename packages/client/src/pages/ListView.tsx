@@ -3,9 +3,9 @@ import { from } from "solid-js";
 import { useParams, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { renderFormatStringHtml } from "@listr/shared";
-import type { AttributeDefinition, Board, Integration, Item, List, IntegrationStatus } from "@listr/shared";
+import type { AttributeDefinition, Board, Integration, Item, List, IntegrationStatus, TodoState } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createItem, updateItem, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
+import { createItem, updateItem, updateItemAttribute, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
 import { exportList, exportBoard } from "../db/exportImport.js";
 import type { NativeExport } from "../db/exportImport.js";
 import ImportModal from "../components/ImportModal.js";
@@ -43,7 +43,38 @@ const formatCellValue = (value: unknown, type: string): string => {
     return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
   }
   if (type === "tags" && Array.isArray(value)) return value.join(", ");
+  if (type === "todo") {
+    const labels: Record<string, string> = { default: "To do", done: "Done", cancelled: "Cancel", skipped: "Skip" };
+    return labels[String(value)] ?? String(value);
+  }
   return String(value);
+};
+
+const TodoIcon = ({ state }: { state: TodoState }) => {
+  if (state === "done") return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" stroke-width="1.5"/>
+      <path d="M5 8.5L7 10.5L11 5.5" stroke-width="2"/>
+    </svg>
+  );
+  if (state === "cancelled") return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" stroke-width="1.5"/>
+      <line x1="5" y1="8" x2="11" y2="8" stroke-width="2"/>
+    </svg>
+  );
+  if (state === "skipped") return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round">
+      <path d="M6 3C3.5 5 3.5 11 6 13" stroke-width="1.5"/>
+      <path d="M10 3C12.5 5 12.5 11 10 13" stroke-width="1.5"/>
+    </svg>
+  );
+  // default: empty checkbox
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" stroke-width="1.5"/>
+    </svg>
+  );
 };
 
 function triggerDownload(data: NativeExport, filename: string) {
@@ -82,6 +113,7 @@ const ListView: Component = () => {
   const [selectedItemIds, setSelectedItemIds] = createSignal<Set<string>>(new Set());
   const [anchorItemId, setAnchorItemId] = createSignal<string | null>(null); // shift-click range anchor
   const [itemCtxMenu, setItemCtxMenu] = createSignal<{ x: number; y: number; item: Item } | null>(null);
+  const [todoCtxMenu, setTodoCtxMenu] = createSignal<{ x: number; y: number; item: Item; attrKey: string } | null>(null);
   const [showMultiEdit, setShowMultiEdit] = createSignal(false);             // multi-edit modal open
   const [showMoveToList, setShowMoveToList] = createSignal(false);           // move-to-list picker open
 
@@ -99,6 +131,7 @@ const ListView: Component = () => {
   let lastTapListTime = 0;
   let lastContextMenuTime = 0;              // suppresses click fired after a long-press contextmenu
   let touchSelectTimer: ReturnType<typeof setTimeout> | null = null; // pending delayed selection
+  let todoLongPressTimer: ReturnType<typeof setTimeout> | null = null;
   let touchStartX = 0;
   let touchStartY = 0;
 
@@ -209,6 +242,33 @@ const ListView: Component = () => {
     const fs = list.format_string || effectiveFormatString();
     return renderFormatStringHtml(fs, item, schema(), undefined, board()?.macros, (url) => urls[url] ?? url);
   };
+
+  const todoAttr = createMemo(() => schema().find((a) => a.type === "todo"));
+
+  const getTodoState = (item: Item): TodoState => {
+    const attr = todoAttr();
+    if (!attr) return "default";
+    const v = item.attributes[attr.key];
+    return (typeof v === "string" ? v : "default") as TodoState;
+  };
+
+  const todoCtxMenuItems = createMemo((): MenuItem[] => {
+    const ctx = todoCtxMenu();
+    if (!ctx) return [];
+    const states: Array<{ state: TodoState; label: string }> = [
+      { state: "default", label: "Todo" },
+      { state: "done", label: "Done" },
+      { state: "cancelled", label: "Cancel" },
+      { state: "skipped", label: "Skip" },
+    ];
+    return states.map(({ state, label }) => ({
+      label,
+      action: async () => {
+        setTodoCtxMenu(null);
+        await updateItemAttribute(ctx.item.id, ctx.attrKey, state === "default" ? undefined : state);
+      },
+    }));
+  });
 
   const integrationBadge = (itemId: string) => {
     const status = integrationStatusByItemId().get(itemId);
@@ -703,7 +763,12 @@ const ListView: Component = () => {
                                 <li
                                   class="list-view-item"
                                   data-item-id={item.id}
-                                  classList={{ selected: selectedItemIds().has(item.id) }}
+                                  classList={{
+                                    selected: selectedItemIds().has(item.id),
+                                    "todo-done": todoAttr() !== undefined && getTodoState(item) === "done",
+                                    "todo-cancelled": todoAttr() !== undefined && getTodoState(item) === "cancelled",
+                                    "todo-skipped": todoAttr() !== undefined && getTodoState(item) === "skipped",
+                                  }}
                                   onTouchStart={(e) => handleItemTouchStart(e, item)}
                                   onTouchMove={handleItemTouchMove}
                                   onClick={(e) => handleItemClick(e, item, items())}
@@ -715,6 +780,48 @@ const ListView: Component = () => {
                                   </Show>
                                   <FormattedText html={formatItem(item, list)} />
                                   {integrationBadge(item.id)}
+                                  <Show when={todoAttr()}>
+                                    {(attr) => (
+                                      <div
+                                        class={`todo-control todo-${getTodoState(item)}`}
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          const cur = getTodoState(item);
+                                          await updateItemAttribute(item.id, attr().key, cur === "default" ? "done" : undefined);
+                                        }}
+                                        onContextMenu={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          setTodoCtxMenu({ x: e.clientX, y: e.clientY, item, attrKey: attr().key });
+                                        }}
+                                        onTouchStart={(e) => {
+                                          e.stopPropagation();
+                                          todoLongPressTimer = setTimeout(() => {
+                                            todoLongPressTimer = null;
+                                            setTodoCtxMenu({ x: e.touches[0].clientX, y: e.touches[0].clientY, item, attrKey: attr().key });
+                                          }, 500);
+                                        }}
+                                        onTouchEnd={async (e) => {
+                                          if (todoLongPressTimer !== null) {
+                                            clearTimeout(todoLongPressTimer);
+                                            todoLongPressTimer = null;
+                                            e.preventDefault();
+                                            const cur = getTodoState(item);
+                                            await updateItemAttribute(item.id, attr().key, cur === "default" ? "done" : undefined);
+                                          }
+                                        }}
+                                        onTouchMove={() => {
+                                          if (todoLongPressTimer !== null) {
+                                            clearTimeout(todoLongPressTimer);
+                                            todoLongPressTimer = null;
+                                          }
+                                        }}
+                                        aria-label={`Todo: ${getTodoState(item)}`}
+                                      >
+                                        <TodoIcon state={getTodoState(item)} />
+                                      </div>
+                                    )}
+                                  </Show>
                                 </li>
                               )}
                             </For>
@@ -868,6 +975,20 @@ const ListView: Component = () => {
                     y={pos().y}
                     items={itemCtxMenuItems()}
                     onClose={() => setItemCtxMenu(null)}
+                  />
+                );
+              }}
+            </Show>
+
+            <Show when={todoCtxMenu() !== null}>
+              {(_) => {
+                const pos = () => todoCtxMenu()!;
+                return (
+                  <ContextMenu
+                    x={pos().x}
+                    y={pos().y}
+                    items={todoCtxMenuItems()}
+                    onClose={() => setTodoCtxMenu(null)}
                   />
                 );
               }}
