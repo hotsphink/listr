@@ -1,3 +1,4 @@
+/* Dark theme (default) */
 :root {
   --bg: #0f0f0f;
   --bg-surface: #1a1a1a;
@@ -20,6 +21,99 @@
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
   color-scheme: dark;
+}
+
+/* Light theme values */
+:root,
+html[data-theme="light"] {
+  --light-bg: #f0f0f0;
+  --light-bg-surface: #ffffff;
+  --light-bg-hover: #e8e8e8;
+  --light-bg-active: #e0e0e0;
+  --light-bg-input: #f8f8f8;
+  --light-border: #d0d0d0;
+  --light-border-focus: #888;
+  --light-text: #1a1a1a;
+  --light-text-muted: #666;
+  --light-text-dim: #aaa;
+  --light-accent: #2563eb;
+  --light-accent-hover: #1d4ed8;
+  --light-accent-dim: #dbeafe;
+  --light-danger: #dc2626;
+  --light-danger-hover: #b91c1c;
+  --light-success: #16a34a;
+  --light-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* System light preference (no explicit override) */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: var(--light-bg);
+    --bg-surface: var(--light-bg-surface);
+    --bg-hover: var(--light-bg-hover);
+    --bg-active: var(--light-bg-active);
+    --bg-input: var(--light-bg-input);
+    --border: var(--light-border);
+    --border-focus: var(--light-border-focus);
+    --text: var(--light-text);
+    --text-muted: var(--light-text-muted);
+    --text-dim: var(--light-text-dim);
+    --accent: var(--light-accent);
+    --accent-hover: var(--light-accent-hover);
+    --accent-dim: var(--light-accent-dim);
+    --danger: var(--light-danger);
+    --danger-hover: var(--light-danger-hover);
+    --success: var(--light-success);
+    --shadow: var(--light-shadow);
+
+    color-scheme: light;
+  }
+}
+
+/* High contrast dark theme */
+html[data-theme="high-contrast"] {
+  --bg: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-hover: #1c1c1c;
+  --bg-active: #242424;
+  --bg-input: #111111;
+  --border: #ffffff;
+  --border-focus: #ffd700;
+  --text: #ffffff;
+  --text-muted: #c0c0c0;
+  --text-dim: #888888;
+  --accent: #ffd700;
+  --accent-hover: #ffe740;
+  --accent-dim: #332b00;
+  --danger: #ff6b6b;
+  --danger-hover: #ff8080;
+  --success: #69ff47;
+  --shadow: none;
+
+  color-scheme: dark;
+}
+
+/* Explicit light override */
+html[data-theme="light"] {
+  --bg: var(--light-bg);
+  --bg-surface: var(--light-bg-surface);
+  --bg-hover: var(--light-bg-hover);
+  --bg-active: var(--light-bg-active);
+  --bg-input: var(--light-bg-input);
+  --border: var(--light-border);
+  --border-focus: var(--light-border-focus);
+  --text: var(--light-text);
+  --text-muted: var(--light-text-muted);
+  --text-dim: var(--light-text-dim);
+  --accent: var(--light-accent);
+  --accent-hover: var(--light-accent-hover);
+  --accent-dim: var(--light-accent-dim);
+  --danger: var(--light-danger);
+  --danger-hover: var(--light-danger-hover);
+  --success: var(--light-success);
+  --shadow: var(--light-shadow);
+
+  color-scheme: light;
 }
 
 * {
@@ -1238,6 +1332,10 @@ tbody tr {
   padding: 8px 0 16px;
 }
 
+.config-section-divided {
+  border-top: 1px solid var(--border);
+}
+
 .config-section-label {
   font-size: 11px;
   font-weight: 600;
@@ -1471,7 +1569,7 @@ tbody tr {
   align-items: center;
   gap: 8px;
   padding: 16px 24px;
-  background: var(--accent-dim);
+  background: var(--bg-surface);
   border-bottom: 1px solid var(--accent);
   flex-shrink: 0;
 }

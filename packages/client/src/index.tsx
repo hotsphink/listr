@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import App from "./App.js";
 import "./styles.css";
+import "./store/theme.js";
 
 if ("serviceWorker" in navigator) {
   if (import.meta.env.PROD) {

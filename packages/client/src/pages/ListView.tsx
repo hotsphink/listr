@@ -14,6 +14,7 @@ import { syncClient } from "../sync/SyncClient.js";
 import { assetUrls } from "../sync/assetStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
 import { appViewMode, setAppViewMode } from "../store/viewMode.js";
+import { themePref, setThemePref, type ThemePreference } from "../store/theme.js";
 import { selectionMode, setSelectionMode } from "../store/selectionMode.js";
 import { useSortable } from "../hooks/useSortable.js";
 import ItemFormModal from "../components/ItemFormModal.js";
@@ -31,6 +32,13 @@ const VIEW_MODES: { mode: "list" | "table" | "card"; label: string }[] = [
   { mode: "list", label: "List" },
   { mode: "table", label: "Table" },
   { mode: "card", label: "Cards" },
+];
+
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: "system", label: "System default" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "high-contrast", label: "High contrast dark" },
 ];
 
 const formatCellValue = (value: unknown, type: string): string => {
@@ -1064,6 +1072,23 @@ const ListView: Component = () => {
                         >
                           <span class="config-option-label">{vm.label}</span>
                           <Show when={appViewMode() === vm.mode}>
+                            <span class="config-option-check">✓</span>
+                          </Show>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                  <div class="config-section config-section-divided">
+                    <div class="config-section-label">Appearance</div>
+                    <For each={THEME_OPTIONS}>
+                      {(opt) => (
+                        <button
+                          class="config-option"
+                          classList={{ active: themePref() === opt.value }}
+                          onClick={() => setThemePref(opt.value)}
+                        >
+                          <span class="config-option-label">{opt.label}</span>
+                          <Show when={themePref() === opt.value}>
                             <span class="config-option-check">✓</span>
                           </Show>
                         </button>
