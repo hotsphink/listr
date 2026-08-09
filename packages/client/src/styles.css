@@ -812,7 +812,7 @@ tbody tr {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: 300;
 }
 
 .modal {
@@ -2063,6 +2063,31 @@ tbody tr {
   }
   .board-form > h2   { padding: 0 16px 4px; }
   .board-form > form { padding: 0 16px 24px; }
+
+  /* Import modal: full-screen page on mobile */
+  .import-modal-overlay {
+    background: none;
+    padding-top: 0;
+    align-items: flex-start;
+  }
+  .import-modal {
+    position: fixed;
+    inset: 0;
+    max-height: 100vh;
+    border-radius: 0;
+    overflow-y: auto;
+    padding: 0;
+  }
+  .import-modal > h2 { display: none; }
+  .import-modal-body { padding: 0 16px 24px; }
+  .modal-page-title {
+    flex: 1;
+    text-align: center;
+    font-size: 16px;
+    font-weight: 600;
+    padding-right: 40px; /* balance back button */
+  }
+
   .modal-page-header {
     display: flex;
     align-items: center;

@@ -1,4 +1,5 @@
 import { type Component, type JSX, Show, onMount, onCleanup } from "solid-js";
+import { Portal } from "solid-js/web";
 
 interface Props {
   open: boolean;
@@ -19,13 +20,15 @@ const Modal: Component<Props> = (props) => {
 
   return (
     <Show when={props.open}>
-      <div
-        class={props.class ? `modal-overlay ${props.class}-overlay` : "modal-overlay"}
-        ref={overlayRef}
-        onClick={(e) => { if (e.target === overlayRef) props.onClose(); }}
-      >
-        <div class={props.class ? `modal ${props.class}` : "modal"}>{props.children}</div>
-      </div>
+      <Portal>
+        <div
+          class={props.class ? `modal-overlay ${props.class}-overlay` : "modal-overlay"}
+          ref={overlayRef}
+          onClick={(e) => { if (e.target === overlayRef) props.onClose(); }}
+        >
+          <div class={props.class ? `modal ${props.class}` : "modal"}>{props.children}</div>
+        </div>
+      </Portal>
     </Show>
   );
 };

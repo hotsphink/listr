@@ -383,8 +383,13 @@ const ImportModal: Component<Props> = (props) => {
       : "globally";
 
   return (
-    <Modal open={props.open} onClose={handleClose}>
+    <Modal open={props.open} onClose={handleClose} class="import-modal">
+      <div class="modal-page-header">
+        <button class="modal-page-back" type="button" onClick={handleClose} aria-label="Back">←</button>
+        <span class="modal-page-title">Import</span>
+      </div>
       <h2>Import</h2>
+      <div class="import-modal-body">
 
       <Show when={phase() === "idle" || phase() === "extracting"}>
         <p class="field-hint" style="margin-bottom: 12px">
@@ -546,6 +551,8 @@ const ImportModal: Component<Props> = (props) => {
           <button class="btn-primary" onClick={handleClose}>Done</button>
         </div>
       </Show>
+
+      </div>
     </Modal>
   );
 };
