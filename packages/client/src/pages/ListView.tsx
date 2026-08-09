@@ -120,6 +120,7 @@ const ListView: Component = () => {
   // Filter
   const [filterQuery, setFilterQuery] = createSignal("");
   const [filterOpen, setFilterOpen] = createSignal(false); // mobile: filter bar expanded
+  const [configOpen, setConfigOpen] = createSignal(false); // mobile: config sheet open
 
   let multiListViewEl: HTMLElement | undefined;
 
@@ -664,16 +665,14 @@ const ListView: Component = () => {
                         )}
                       </For>
                     </div>
-                    <select
-                      class="view-switcher-select"
-                      value={appViewMode()}
-                      onChange={(e) => setAppViewMode(e.currentTarget.value as "list" | "table" | "card")}
-                      aria-label="View mode"
+                    <button
+                      class="config-btn"
+                      classList={{ active: configOpen() }}
+                      onClick={() => setConfigOpen(true)}
+                      aria-label="Display settings"
                     >
-                      <For each={VIEW_MODES}>
-                        {(vm) => <option value={vm.mode}>{vm.label}</option>}
-                      </For>
-                    </select>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM9.05 3a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0V3h9.05zM4.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM2.05 8a2.5 2.5 0 0 1 4.9 0H16v1H6.95a2.5 2.5 0 0 1-4.9 0H0V8h2.05zm9.45 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm-2.45 1a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0v-1h9.05z"/></svg>
+                    </button>
                   </div>
                 </div>
 
@@ -1046,6 +1045,34 @@ const ListView: Component = () => {
               onSelect={handleMoveToList}
               currentBoardId={board()?.id}
             />
+
+            <Show when={configOpen()}>
+              <div class="config-overlay" onClick={() => setConfigOpen(false)}>
+                <div class="config-sheet" onClick={(e) => e.stopPropagation()}>
+                  <div class="config-sheet-header">
+                    <span class="config-sheet-title">Display</span>
+                    <button class="config-sheet-close" onClick={() => setConfigOpen(false)} aria-label="Close">✕</button>
+                  </div>
+                  <div class="config-section">
+                    <div class="config-section-label">View</div>
+                    <For each={VIEW_MODES}>
+                      {(vm) => (
+                        <button
+                          class="config-option"
+                          classList={{ active: appViewMode() === vm.mode }}
+                          onClick={() => { setAppViewMode(vm.mode); setConfigOpen(false); }}
+                        >
+                          <span class="config-option-label">{vm.label}</span>
+                          <Show when={appViewMode() === vm.mode}>
+                            <span class="config-option-check">✓</span>
+                          </Show>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </div>
+            </Show>
           </>
         )}
       </Show>
