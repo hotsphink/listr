@@ -218,15 +218,29 @@ async function performImport(preview: PreviewBoard[], scope: ImportScope): Promi
   return total;
 }
 
-function fileToBase64(file: File): Promise<string> {
+function resizeAndEncodeImage(file: File): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.split(",")[1]);
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const origW = img.naturalWidth;
+      const origH = img.naturalHeight;
+      console.log(`Image original dimensions: ${origW}x${origH}`);
+      const MAX = 3072;
+      const scale = Math.max(origW, origH) > MAX ? MAX / Math.max(origW, origH) : 1;
+      const newW = Math.round(origW * scale);
+      const newH = Math.round(origH * scale);
+      console.log(`Image send dimensions: ${newW}x${newH}`);
+      const canvas = document.createElement("canvas");
+      canvas.width = newW;
+      canvas.height = newH;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, newW, newH);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      resolve({ base64: dataUrl.split(",")[1], mimeType: "image/jpeg" });
     };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    img.onerror = reject;
+    img.src = url;
   });
 }
 
@@ -317,8 +331,8 @@ const ImportModal: Component<Props> = (props) => {
     setError(null);
     setPhase("extracting");
     try {
-      const base64 = await fileToBase64(file);
-      const { boards: extracted, raw } = await fetchExtraction(base64, file.type, props.scope);
+      const { base64, mimeType } = await resizeAndEncodeImage(file);
+      const { boards: extracted, raw } = await fetchExtraction(base64, mimeType, props.scope);
       setRawJson(raw);
       const prev = await buildPreview(extracted, props.scope);
       setPreview(prev);
