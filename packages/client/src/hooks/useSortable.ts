@@ -3,6 +3,7 @@ import { createSignal, onCleanup } from "solid-js";
 import { db } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { reorderByAfterId } from "./reorderLogic.js";
+import { DUMMY_ITEM_ID } from "../components/InlineAddItem.js";
 
 export const [isDragging, setIsDragging] = createSignal(false);
 const CANCEL_ZONE_HEIGHT = 100; // px from top of viewport (larger than visual zone for finger margin)
@@ -13,12 +14,14 @@ export function useSortable(
   el: HTMLElement,
   getItems: () => { id: string; after_id: string | null }[],
   options?: Partial<Sortable.Options> & {
-    onCrossMove?: (itemId: string, toEl: HTMLElement, rawNewIndex: number) => Promise<void>;
+    onCrossMove?: (itemId: string, toEl: HTMLElement, predecessorId: string | null) => Promise<void>;
     onOptimisticReorder?: (updates: { id: string; after_id: string | null }[]) => void;
+    onDummyReorder?: (newAfterId: string | null) => void;
+    getDummyAfterId?: () => string | null;
     scrollEl?: HTMLElement;
   },
 ) {
-  const { onCrossMove, onOptimisticReorder, scrollEl, ...sortableOptions } = options ?? {};
+  const { onCrossMove, onOptimisticReorder, onDummyReorder, getDummyAfterId, scrollEl, ...sortableOptions } = options ?? {};
 
   // Edge-scroll state
   let dragX = 0;
@@ -226,7 +229,6 @@ export function useSortable(
     ghostClass: "sortable-ghost",
     chosenClass: "sortable-chosen",
     dragClass: "sortable-drag",
-    filter: ".view-add, .card.add",
     revertOnSpill: true,
     ...sortableOptions,
     onChoose: (evt) => {
@@ -252,6 +254,10 @@ export function useSortable(
     },
     onMove: (evt, originalEvent) => {
       updateDrag(originalEvent);
+      // Prevent the inline-add dummy from being dragged to another list.
+      if (evt.from !== evt.to && (evt.dragged as HTMLElement).dataset.itemId === DUMMY_ITEM_ID) {
+        return false;
+      }
       if (evt.willInsertAfter &&
           (evt.related?.classList.contains("view-add") ||
            evt.related?.classList.contains("add"))) {
@@ -295,6 +301,12 @@ export function useSortable(
       // Cross-list drag
       if (evt.from !== evt.to) {
         const itemEl = evt.item as HTMLElement;
+
+        // Read predecessor in the target container before the DOM revert.
+        // The dropped item is at rawNew, so rawNew - 1 is the predecessor.
+        const predEl = rawNew > 0 ? evt.to.children[rawNew - 1] as HTMLElement : null;
+        const predecessorId = predEl?.dataset.itemId ?? null;
+
         if (evt.to.contains(itemEl)) evt.to.removeChild(itemEl);
         if (rawOld < evt.from.children.length) {
           evt.from.insertBefore(itemEl, evt.from.children[rawOld]);
@@ -304,7 +316,7 @@ export function useSortable(
         if (cancelled) { scrollEl?.scrollTo({ left: startScrollLeft, behavior: "instant" }); return; }
         if (!onCrossMove) return;
         const itemId = itemEl.dataset.itemId ?? "";
-        if (itemId) await onCrossMove(itemId, evt.to, rawNew);
+        if (itemId) await onCrossMove(itemId, evt.to, predecessorId);
         return;
       }
 
@@ -313,7 +325,7 @@ export function useSortable(
       // Read the predecessor from the DOM *before* reverting.
       const container = evt.from;
       const predecessorEl = rawNew > 0 ? container.children[rawNew - 1] as HTMLElement : null;
-      const newAfterId = predecessorEl?.dataset.itemId ?? null;
+      const rawNewAfterId = predecessorEl?.dataset.itemId ?? null;
 
       // Revert the DOM move — SolidJS re-renders from reactive state.
       const { item, from: c } = evt;
@@ -327,6 +339,18 @@ export function useSortable(
 
       const movedId = (evt.item as HTMLElement).dataset.itemId ?? "";
       if (!movedId) return;
+
+      // Dummy was dragged within this list — update its position without a DB write.
+      if (movedId === DUMMY_ITEM_ID) {
+        // Predecessor can't be the dummy itself, so rawNewAfterId is a real item ID or null.
+        onDummyReorder?.(rawNewAfterId);
+        return;
+      }
+
+      // A real item was dropped after the dummy — resolve to the dummy's real predecessor.
+      const newAfterId = rawNewAfterId === DUMMY_ITEM_ID
+        ? (getDummyAfterId?.() ?? null)
+        : rawNewAfterId;
 
       const currentItems = getItems();
       const updates = reorderByAfterId(currentItems, movedId, newAfterId);

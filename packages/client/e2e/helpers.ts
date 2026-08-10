@@ -1,6 +1,36 @@
 import type { Page, Locator } from "@playwright/test";
 import { expect } from "@playwright/test";
 
+/**
+ * Add an item with only a title using the inline-add input in list view.
+ * Types the title and presses Enter; waits for the real item to appear.
+ */
+export async function addItemToList(page: Page, title: string) {
+  const input = page.locator(".inline-add-input").last();
+  await input.fill(title);
+  await input.press("Enter");
+  await expect(page.locator(".list-view-item:not(.inline-add-item)", { hasText: title })).toBeVisible();
+}
+
+/**
+ * Add an item via the expand (⤢) button, which opens the full ItemFormModal.
+ * Optionally fill attribute fields via the callback before clicking Add.
+ * Waits for the modal to close before returning.
+ */
+export async function addItemViaModal(
+  page: Page,
+  title: string,
+  fillAttrs?: (modal: Locator) => Promise<void>,
+) {
+  await page.locator(".inline-add-btn").last().click();
+  const modal = page.locator(".modal");
+  await modal.waitFor({ state: "visible" });
+  await modal.locator(".form-field input").first().fill(title);
+  if (fillAttrs) await fillAttrs(modal);
+  await modal.getByRole("button", { name: "Add", exact: true }).click();
+  await modal.waitFor({ state: "hidden" });
+}
+
 export async function clearDatabase(page: Page) {
   await page.goto("/");
   await page.evaluate(() => {

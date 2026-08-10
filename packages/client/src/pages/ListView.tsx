@@ -17,6 +17,7 @@ import { appViewMode, setAppViewMode } from "../store/viewMode.js";
 import { themePref, setThemePref, type ThemePreference } from "../store/theme.js";
 import { selectionMode, setSelectionMode } from "../store/selectionMode.js";
 import { useSortable } from "../hooks/useSortable.js";
+import InlineAddItem, { DUMMY_ITEM_ID } from "../components/InlineAddItem.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
 import ListFormModal from "../components/ListFormModal.js";
@@ -27,6 +28,11 @@ import type { MenuItem } from "../components/ContextMenu.js";
 import MoveToListModal from "../components/MoveToListModal.js";
 import BoardShareModal from "../components/BoardShareModal.js";
 import ShareIcon from "../components/ShareIcon.js";
+
+// Stable sentinel object for the inline-add dummy row. Using a single reference
+// lets SolidJS <For> reuse the DOM node when the dummy changes position.
+type DummyShim = { id: typeof DUMMY_ITEM_ID; after_id: string | null; created_at: 0 };
+const DUMMY_SHIM: DummyShim = { id: DUMMY_ITEM_ID, after_id: null, created_at: 0 };
 
 const VIEW_MODES: { mode: "list" | "table" | "card"; label: string }[] = [
   { mode: "list", label: "List" },
@@ -107,7 +113,26 @@ const ListView: Component = () => {
 
   // Item add/edit modal state
   const [addingToList, setAddingToList] = createSignal<string | null>(null); // list id receiving a new item, or null
-  const [prependToList, setPrependToList] = createSignal(false);             // true = insert before first item
+  const [addingInitialTitle, setAddingInitialTitle] = createSignal("");      // pre-fill title when expanding from inline add
+
+  // Inline add dummy positions: listId → after_id (absent = default to tail)
+  const [dummyAfterIds, setDummyAfterIds] = createSignal<Map<string, string | null>>(new Map());
+
+  const setDummyAfterId = (listId: string, afterId: string | null) =>
+    setDummyAfterIds((prev) => new Map(prev).set(listId, afterId));
+
+  // Reset to tail: remove the explicit position so resolvedDummyAfterId falls back to the tail.
+  const resetDummyAfterId = (listId: string) =>
+    setDummyAfterIds((prev) => { const next = new Map(prev); next.delete(listId); return next; });
+
+  // Returns the dummy's current after_id for a list; defaults to the tail item's id if unset.
+  const resolvedDummyAfterId = (listId: string): string | null => {
+    const map = dummyAfterIds();
+    if (map.has(listId)) return map.get(listId)!;
+    const items = itemsByList().get(listId) ?? [];
+    return items.length > 0 ? items[items.length - 1].id : null;
+  };
+
   const [editingItem, setEditingItem] = createSignal<Item | undefined>();    // item open in edit modal
   const [editingList, setEditingList] = createSignal<List | undefined>();    // list open in settings modal
   const [editingBoard, setEditingBoard] = createSignal<Board | undefined>(); // board open in settings modal
@@ -176,6 +201,7 @@ const ListView: Component = () => {
     setFilterQuery("");
     setFilterOpen(false);
     setEditingList(undefined);
+    setDummyAfterIds(new Map());
 
     const sub1 = liveQuery(() => db.boards.get(boardId)).subscribe((v) => setBoard(v));
     const sub2 = liveQuery(() =>
@@ -304,13 +330,11 @@ const ListView: Component = () => {
   const handleAddItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
     const listId = addingToList();
     if (!listId) return;
-    if (prependToList()) {
-      await createItem(listId, data.title, data.attributes, null); // insert at top
-    } else {
-      await createItem(listId, data.title, data.attributes); // append to end
-    }
+    const afterId = resolvedDummyAfterId(listId);
+    const newItem = await createItem(listId, data.title, data.attributes, afterId);
+    resetDummyAfterId(listId);
     setAddingToList(null);
-    setPrependToList(false);
+    setAddingInitialTitle("");
   };
 
   const handleEditItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
@@ -576,9 +600,8 @@ const ListView: Component = () => {
     setItemCtxMenu({ x: e.clientX, y: e.clientY, item });
   };
 
-  const handleCrossListMove = async (itemId: string, toEl: HTMLElement, rawNewIndex: number) => {
+  const handleCrossListMove = async (itemId: string, toEl: HTMLElement, rawPredecessorId: string | null) => {
     const toListId = toEl.dataset.listId;
-    const offset = parseInt(toEl.dataset.indexOffset ?? "0");
     if (!toListId || !itemId) return;
 
     const sourceItem = [...itemsByList().values()].flatMap((its) => its).find((i) => i.id === itemId);
@@ -586,11 +609,12 @@ const ListView: Component = () => {
 
     const timestamp = Date.now();
 
-    // Predecessor in the target chain, from the drop index (offset skips any
-    // non-item DOM children rendered before the list's items).
     const toItems = itemsByList().get(toListId) ?? []; // chain order
-    const targetIndex = rawNewIndex - offset;
-    const predecessorId = targetIndex > 0 ? (toItems[targetIndex - 1]?.id ?? null) : null;
+
+    // Resolve dummy predecessor: use the dummy's real after_id instead.
+    const predecessorId = rawPredecessorId === DUMMY_ITEM_ID
+      ? resolvedDummyAfterId(toListId)
+      : rawPredecessorId;
 
     // Splice fix-ups: the target item that followed the insertion point now
     // follows the moved item; the source item that followed the moved item skips
@@ -721,8 +745,36 @@ const ListView: Component = () => {
             <div class="multi-list-view" classList={{ "multi-list-vertical": appViewMode() !== "list" }} ref={(el) => { multiListViewEl = el; }}>
               <For each={visibleLists()}>
                 {(list) => {
-                  const items = () => itemsForList(list.id);
+                  const items = createMemo(() => itemsForList(list.id));
                   const allItemsForList = () => itemsByList().get(list.id) ?? [];
+
+                  // Display list for list-view: real items (filtered) with the dummy spliced in.
+                  const displayItems = createMemo((): (Item | DummyShim)[] => {
+                    const allForList = itemsByList().get(list.id) ?? [];
+                    const dummyAfterId = resolvedDummyAfterId(list.id);
+
+                    const insertIdx = dummyAfterId === null
+                      ? 0
+                      : (() => {
+                          const idx = allForList.findIndex(i => i.id === dummyAfterId);
+                          return idx === -1 ? allForList.length : idx + 1;
+                        })();
+
+                    const withDummy = (allForList as (Item | DummyShim)[]).toSpliced(insertIdx, 0, DUMMY_SHIM);
+
+                    const q = filterQuery().toLowerCase().trim();
+                    if (!q) return withDummy;
+                    return withDummy.filter((item) => {
+                      if (item.id === DUMMY_ITEM_ID) return true;
+                      const it = item as Item;
+                      if (it.title.toLowerCase().includes(q)) return true;
+                      for (const val of Object.values(it.attributes)) {
+                        if (val != null && String(val).toLowerCase().includes(q)) return true;
+                      }
+                      return false;
+                    });
+                  });
+
                   const applyOptimisticReorder = (updates: { id: string; after_id: string | null }[]) => {
                     const updatesMap = new Map(updates.map(u => [u.id, u.after_id]));
                     const newMap = new Map(itemsByList());
@@ -758,81 +810,112 @@ const ListView: Component = () => {
                           class="multi-list-add-btn"
                           type="button"
                           aria-label="Add item"
-                          onClick={(e) => { e.stopPropagation(); setPrependToList(true); setAddingToList(list.id); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDummyAfterId(list.id, null); // move inline-add dummy to top
+                          }}
                         >+</button>
                       </div>
 
                       <Switch>
                         <Match when={appViewMode() === "list"}>
-                          <ul class="list-view multi-list-items" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, onOptimisticReorder: applyOptimisticReorder, scrollEl: multiListViewEl })}>
-                            <For each={items()}>
-                              {(item) => (
-                                <li
-                                  class="list-view-item"
-                                  data-item-id={item.id}
-                                  classList={{
-                                    selected: selectedItemIds().has(item.id),
-                                    "todo-done": todoAttr() !== undefined && getTodoState(item) === "done",
-                                    "todo-cancelled": todoAttr() !== undefined && getTodoState(item) === "cancelled",
-                                    "todo-skipped": todoAttr() !== undefined && getTodoState(item) === "skipped",
-                                  }}
-                                  onTouchStart={(e) => handleItemTouchStart(e, item)}
-                                  onTouchMove={handleItemTouchMove}
-                                  onClick={(e) => handleItemClick(e, item, items())}
-                                  onDblClick={() => setEditingItem(item)}
-                                  onContextMenu={(e) => handleItemContextMenu(e, item)}
-                                >
-                                  <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                    <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} style="pointer-events: none" />
-                                  </Show>
-                                  <FormattedText html={formatItem(item, list)} />
-                                  {integrationBadge(item.id)}
-                                  <Show when={todoAttr()}>
-                                    {(attr) => (
-                                      <div
-                                        class={`todo-control todo-${getTodoState(item)}`}
-                                        onClick={async (e) => {
-                                          e.stopPropagation();
-                                          const cur = getTodoState(item);
-                                          await updateItemAttribute(item.id, attr().key, cur === "default" ? "done" : undefined);
-                                        }}
-                                        onContextMenu={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setTodoCtxMenu({ x: e.clientX, y: e.clientY, item, attrKey: attr().key });
-                                        }}
-                                        onTouchStart={(e) => {
-                                          e.stopPropagation();
-                                          todoLongPressTimer = setTimeout(() => {
-                                            todoLongPressTimer = null;
-                                            setTodoCtxMenu({ x: e.touches[0].clientX, y: e.touches[0].clientY, item, attrKey: attr().key });
-                                          }, 500);
-                                        }}
-                                        onTouchEnd={async (e) => {
-                                          if (todoLongPressTimer !== null) {
-                                            clearTimeout(todoLongPressTimer);
-                                            todoLongPressTimer = null;
+                          <ul
+                            class="list-view multi-list-items"
+                            data-list-id={list.id}
+                            ref={(el) => useSortable(el, allItemsForList, {
+                              group: params.id,
+                              onCrossMove: handleCrossListMove,
+                              onOptimisticReorder: applyOptimisticReorder,
+                              onDummyReorder: (newAfterId) => setDummyAfterId(list.id, newAfterId),
+                              getDummyAfterId: () => resolvedDummyAfterId(list.id),
+                              scrollEl: multiListViewEl,
+                            })}
+                          >
+                            <For each={displayItems()}>
+                              {(item) => {
+                                if (item.id === DUMMY_ITEM_ID) {
+                                  return (
+                                    <InlineAddItem
+                                      onAdd={async (title) => {
+                                        const afterId = resolvedDummyAfterId(list.id);
+                                        const newItem = await createItem(list.id, title, {}, afterId);
+                                        resetDummyAfterId(list.id);
+                                      }}
+                                      onExpand={(title) => {
+                                        setAddingInitialTitle(title);
+                                        setAddingToList(list.id);
+                                      }}
+                                    />
+                                  );
+                                }
+                                const realItem = item as Item;
+                                return (
+                                  <li
+                                    class="list-view-item"
+                                    data-item-id={realItem.id}
+                                    classList={{
+                                      selected: selectedItemIds().has(realItem.id),
+                                      "todo-done": todoAttr() !== undefined && getTodoState(realItem) === "done",
+                                      "todo-cancelled": todoAttr() !== undefined && getTodoState(realItem) === "cancelled",
+                                      "todo-skipped": todoAttr() !== undefined && getTodoState(realItem) === "skipped",
+                                    }}
+                                    onTouchStart={(e) => handleItemTouchStart(e, realItem)}
+                                    onTouchMove={handleItemTouchMove}
+                                    onClick={(e) => handleItemClick(e, realItem, items())}
+                                    onDblClick={() => setEditingItem(realItem)}
+                                    onContextMenu={(e) => handleItemContextMenu(e, realItem)}
+                                  >
+                                    <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
+                                      <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(realItem.id)} style="pointer-events: none" />
+                                    </Show>
+                                    <FormattedText html={formatItem(realItem, list)} />
+                                    {integrationBadge(realItem.id)}
+                                    <Show when={todoAttr()}>
+                                      {(attr) => (
+                                        <div
+                                          class={`todo-control todo-${getTodoState(realItem)}`}
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const cur = getTodoState(realItem);
+                                            await updateItemAttribute(realItem.id, attr().key, cur === "default" ? "done" : undefined);
+                                          }}
+                                          onContextMenu={(e) => {
                                             e.preventDefault();
-                                            const cur = getTodoState(item);
-                                            await updateItemAttribute(item.id, attr().key, cur === "default" ? "done" : undefined);
-                                          }
-                                        }}
-                                        onTouchMove={() => {
-                                          if (todoLongPressTimer !== null) {
-                                            clearTimeout(todoLongPressTimer);
-                                            todoLongPressTimer = null;
-                                          }
-                                        }}
-                                        aria-label={`Todo: ${getTodoState(item)}`}
-                                      >
-                                        <TodoIcon state={getTodoState(item)} />
-                                      </div>
-                                    )}
-                                  </Show>
-                                </li>
-                              )}
+                                            e.stopPropagation();
+                                            setTodoCtxMenu({ x: e.clientX, y: e.clientY, item: realItem, attrKey: attr().key });
+                                          }}
+                                          onTouchStart={(e) => {
+                                            e.stopPropagation();
+                                            todoLongPressTimer = setTimeout(() => {
+                                              todoLongPressTimer = null;
+                                              setTodoCtxMenu({ x: e.touches[0].clientX, y: e.touches[0].clientY, item: realItem, attrKey: attr().key });
+                                            }, 500);
+                                          }}
+                                          onTouchEnd={async (e) => {
+                                            if (todoLongPressTimer !== null) {
+                                              clearTimeout(todoLongPressTimer);
+                                              todoLongPressTimer = null;
+                                              e.preventDefault();
+                                              const cur = getTodoState(realItem);
+                                              await updateItemAttribute(realItem.id, attr().key, cur === "default" ? "done" : undefined);
+                                            }
+                                          }}
+                                          onTouchMove={() => {
+                                            if (todoLongPressTimer !== null) {
+                                              clearTimeout(todoLongPressTimer);
+                                              todoLongPressTimer = null;
+                                            }
+                                          }}
+                                          aria-label={`Todo: ${getTodoState(realItem)}`}
+                                        >
+                                          <TodoIcon state={getTodoState(realItem)} />
+                                        </div>
+                                      )}
+                                    </Show>
+                                  </li>
+                                );
+                              }}
                             </For>
-                            <li class="view-add" onClick={() => setAddingToList(list.id)}>+ Add Item</li>
                           </ul>
                         </Match>
 
@@ -848,86 +931,137 @@ const ListView: Component = () => {
                                   </For>
                                 </tr>
                               </thead>
-                              <tbody data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, onOptimisticReorder: applyOptimisticReorder, scrollEl: multiListViewEl })}>
-                                <For each={items()}>
-                                  {(item) => (
-                                    <tr
-                                      data-item-id={item.id}
-                                      classList={{ selected: selectedItemIds().has(item.id) }}
-                                      onTouchStart={(e) => handleItemTouchStart(e, item)}
-                                  onTouchMove={handleItemTouchMove}
-                                      onClick={(e) => handleItemClick(e, item, items())}
-                                      onDblClick={() => setEditingItem(item)}
-                                      onContextMenu={(e) => handleItemContextMenu(e, item)}
-                                    >
-                                      <td class="drag-handle-cell">
-                                        <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                          <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item.id)} style="pointer-events: none" />
-                                        </Show>
-                                      </td>
-                                      <td style="font-weight: 500">{item.title}{integrationBadge(item.id)}</td>
-                                      <For each={schema()}>
-                                        {(attr) => (
-                                          <td>{formatCellValue(item.attributes[attr.key], attr.type)}</td>
-                                        )}
-                                      </For>
-                                    </tr>
-                                  )}
+                              <tbody data-list-id={list.id} ref={(el) => useSortable(el, allItemsForList, {
+                                group: params.id,
+                                onCrossMove: handleCrossListMove,
+                                onOptimisticReorder: applyOptimisticReorder,
+                                onDummyReorder: (newAfterId) => setDummyAfterId(list.id, newAfterId),
+                                getDummyAfterId: () => resolvedDummyAfterId(list.id),
+                                scrollEl: multiListViewEl,
+                              })}>
+                                <For each={displayItems()}>
+                                  {(item) => {
+                                    if (item.id === DUMMY_ITEM_ID) {
+                                      return (
+                                        <InlineAddItem
+                                          variant="table"
+                                          colspan={schema().length + 1}
+                                          onAdd={async (title) => {
+                                            const afterId = resolvedDummyAfterId(list.id);
+                                            const newItem = await createItem(list.id, title, {}, afterId);
+                                            resetDummyAfterId(list.id);
+                                          }}
+                                          onExpand={(title) => {
+                                            setAddingInitialTitle(title);
+                                            setAddingToList(list.id);
+                                          }}
+                                        />
+                                      );
+                                    }
+                                    const item_ = item as Item;
+                                    return (
+                                      <tr
+                                        data-item-id={item_.id}
+                                        classList={{ selected: selectedItemIds().has(item_.id) }}
+                                        onTouchStart={(e) => handleItemTouchStart(e, item_)}
+                                        onTouchMove={handleItemTouchMove}
+                                        onClick={(e) => handleItemClick(e, item_, items())}
+                                        onDblClick={() => setEditingItem(item_)}
+                                        onContextMenu={(e) => handleItemContextMenu(e, item_)}
+                                      >
+                                        <td class="drag-handle-cell">
+                                          <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
+                                            <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item_.id)} style="pointer-events: none" />
+                                          </Show>
+                                        </td>
+                                        <td style="font-weight: 500">{item_.title}{integrationBadge(item_.id)}</td>
+                                        <For each={schema()}>
+                                          {(attr) => (
+                                            <td>{formatCellValue(item_.attributes[attr.key], attr.type)}</td>
+                                          )}
+                                        </For>
+                                      </tr>
+                                    );
+                                  }}
                                 </For>
                               </tbody>
                             </table>
-                            <div class="view-add" onClick={() => setAddingToList(list.id)}>+ Add Item</div>
                           </div>
                         </Match>
 
                         <Match when={appViewMode() === "card"}>
                           <div class="card-container">
-                            <div class="card-grid" data-list-id={list.id} data-index-offset="0" ref={(el) => useSortable(el, allItemsForList, { group: params.id, onCrossMove: handleCrossListMove, onOptimisticReorder: applyOptimisticReorder, scrollEl: multiListViewEl })}>
-                              <For each={items()}>
-                                {(item) => (
-                                  <div
-                                    class="card item"
-                                    data-item-id={item.id}
-                                    classList={{ selected: selectedItemIds().has(item.id) }}
-                                    onTouchStart={(e) => handleItemTouchStart(e, item)}
-                                  onTouchMove={handleItemTouchMove}
-                                    onClick={(e) => handleItemClick(e, item, items())}
-                                    onDblClick={() => setEditingItem(item)}
-                                    onContextMenu={(e) => handleItemContextMenu(e, item)}
-                                  >
-                                    <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>}>
-                                      <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item.id)} style="pointer-events: none" />
-                                    </Show>
-                                    <div class="card-title"><FormattedText html={formatItem(item, list)} />{integrationBadge(item.id)}</div>
-                                    <Show when={schema().length > 0}>
-                                      <div class="card-attrs">
-                                        <For each={schema()}>
-                                          {(attr) => {
-                                            const val = item.attributes[attr.key];
-                                            if (val == null || val === "") return null;
-                                            return (
-                                              <div class="card-attr">
-                                                <span class="card-attr-label">{attr.label || attr.key}</span>
-                                                <Show
-                                                  when={attr.type === "tags" && Array.isArray(val)}
-                                                  fallback={<span>{formatCellValue(val, attr.type)}</span>}
-                                                >
-                                                  <span>
-                                                    <For each={val as string[]}>
-                                                      {(t) => <span class="tag">{t}</span>}
-                                                    </For>
-                                                  </span>
-                                                </Show>
-                                              </div>
-                                            );
-                                          }}
-                                        </For>
-                                      </div>
-                                    </Show>
-                                  </div>
-                                )}
+                            <div class="card-grid" data-list-id={list.id} ref={(el) => useSortable(el, allItemsForList, {
+                              group: params.id,
+                              onCrossMove: handleCrossListMove,
+                              onOptimisticReorder: applyOptimisticReorder,
+                              onDummyReorder: (newAfterId) => setDummyAfterId(list.id, newAfterId),
+                              getDummyAfterId: () => resolvedDummyAfterId(list.id),
+                              scrollEl: multiListViewEl,
+                            })}>
+                              <For each={displayItems()}>
+                                {(item) => {
+                                  if (item.id === DUMMY_ITEM_ID) {
+                                    return (
+                                      <InlineAddItem
+                                        variant="card"
+                                        onAdd={async (title) => {
+                                          const afterId = resolvedDummyAfterId(list.id);
+                                          const newItem = await createItem(list.id, title, {}, afterId);
+                                          resetDummyAfterId(list.id);
+                                        }}
+                                        onExpand={(title) => {
+                                          setAddingInitialTitle(title);
+                                          setAddingToList(list.id);
+                                        }}
+                                      />
+                                    );
+                                  }
+                                  const item_ = item as Item;
+                                  return (
+                                    <div
+                                      class="card item"
+                                      data-item-id={item_.id}
+                                      classList={{ selected: selectedItemIds().has(item_.id) }}
+                                      onTouchStart={(e) => handleItemTouchStart(e, item_)}
+                                      onTouchMove={handleItemTouchMove}
+                                      onClick={(e) => handleItemClick(e, item_, items())}
+                                      onDblClick={() => setEditingItem(item_)}
+                                      onContextMenu={(e) => handleItemContextMenu(e, item_)}
+                                    >
+                                      <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>}>
+                                        <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item_.id)} style="pointer-events: none" />
+                                      </Show>
+                                      <div class="card-title"><FormattedText html={formatItem(item_, list)} />{integrationBadge(item_.id)}</div>
+                                      <Show when={schema().length > 0}>
+                                        <div class="card-attrs">
+                                          <For each={schema()}>
+                                            {(attr) => {
+                                              const val = item_.attributes[attr.key];
+                                              if (val == null || val === "") return null;
+                                              return (
+                                                <div class="card-attr">
+                                                  <span class="card-attr-label">{attr.label || attr.key}</span>
+                                                  <Show
+                                                    when={attr.type === "tags" && Array.isArray(val)}
+                                                    fallback={<span>{formatCellValue(val, attr.type)}</span>}
+                                                  >
+                                                    <span>
+                                                      <For each={val as string[]}>
+                                                        {(t) => <span class="tag">{t}</span>}
+                                                      </For>
+                                                    </span>
+                                                  </Show>
+                                                </div>
+                                              );
+                                            }}
+                                          </For>
+                                        </div>
+                                      </Show>
+                                    </div>
+                                  );
+                                }}
                               </For>
-                              <div class="card add" onClick={() => setAddingToList(list.id)}>+ Add Item</div>
                             </div>
                           </div>
                         </Match>
@@ -1003,9 +1137,10 @@ const ListView: Component = () => {
 
             <ItemFormModal
               open={addingToList() !== null}
-              onClose={() => { setAddingToList(null); setPrependToList(false); }}
+              onClose={() => { setAddingToList(null); setAddingInitialTitle(""); }}
               onSave={handleAddItem}
               schema={schema()}
+              initialTitle={addingInitialTitle()}
             />
 
             <MultiItemFormModal

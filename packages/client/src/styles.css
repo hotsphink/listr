@@ -704,22 +704,6 @@ tbody tr {
   cursor: pointer;
 }
 
-.multi-list-items .view-add {
-  padding-left: 32px;
-}
-
-.view-add {
-  padding: 10px 12px;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--text-muted);
-  transition: background 0.15s, color 0.15s;
-}
-
-.view-add:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
 
 /* Dashboard */
 .dashboard {
@@ -781,17 +765,14 @@ tbody tr {
   user-select: none;
 }
 
-.card.add {
+/* inline-add as card */
+.card.inline-add-item {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
+  gap: 4px;
+  cursor: default;
+  padding: 8px 16px;
   border-style: dashed;
-  min-height: 60px;
-}
-
-.card.add:hover {
-  color: var(--text);
 }
 
 .card-name {
@@ -1224,6 +1205,67 @@ tbody tr {
 .list-view-item.todo-skipped .formatted-text { color: var(--text-dim); }
 .list-view-item.todo-skipped .formatted-text::before { content: "("; }
 .list-view-item.todo-skipped .formatted-text::after { content: ")"; }
+
+/* ── Inline add item ─────────────────────────────────────────────────── */
+.inline-add-item {
+  cursor: default;
+  gap: 4px;
+}
+
+/* table-row variant: the input cell acts as a flex row */
+tr.inline-add-item td:last-child {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inline-add-input {
+  flex: 1 1 0;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  padding: 0;
+}
+
+.inline-add-input::placeholder {
+  color: var(--text-muted);
+}
+
+.inline-add-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: color 0.15s, background 0.15s;
+}
+
+.inline-add-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (hover: hover) {
+  .inline-add-btn:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+
+  .inline-add-cancel:hover {
+    color: var(--text-danger, #e55);
+  }
+}
 
 @media (min-width: 769px) {
   .config-btn {

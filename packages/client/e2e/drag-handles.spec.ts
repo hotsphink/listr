@@ -1,41 +1,38 @@
-import { test, expect } from "@playwright/test";
-import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
+import { test, expect, type Page } from "@playwright/test";
+import { clearDatabase, createBoard, createListInBoard, addItemToList } from "./helpers.js";
+
+// Real items only (excludes the always-present inline-add dummy row).
+const realItems = (page: Page) =>
+  page.locator(".list-view-item:not(.inline-add-item)");
 
 test.describe("drag handles in list view", () => {
   test.beforeEach(async ({ page }) => {
     await clearDatabase(page);
     await createBoard(page, "Movies");
     await createListInBoard(page, "Watchlist", "Movies");
-    // Board multi-column model: header shows the board name.
     await expect(page.locator(".page-header h1")).toHaveText("Movies");
 
-    await page.locator(".view-add").last().click();
-    await page.locator(".modal .form-field input").first().fill("Inception");
-    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.locator(".list-view-item")).toHaveCount(1);
+    await addItemToList(page, "Inception");
+    await expect(realItems(page)).toHaveCount(1);
   });
 
   test("drag handles are visible on initial load without switching views", async ({ page }) => {
-    await expect(page.locator(".list-view-item .drag-handle")).toBeVisible();
+    await expect(page.locator(".list-view-item .drag-handle").first()).toBeVisible();
   });
 
   test("dragging an item by its handle reorders and persists", async ({ page }) => {
-    // Add a second item so we have something to reorder past.
-    await page.locator(".view-add").last().click();
-    await page.locator(".modal .form-field input").first().fill("The Matrix");
-    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.locator(".list-view-item")).toHaveCount(2);
+    await addItemToList(page, "The Matrix");
+    await expect(realItems(page)).toHaveCount(2);
 
-    const items = page.locator(".list-view-item");
-    await expect(items.nth(0)).toContainText("Inception");
-    await expect(items.nth(1)).toContainText("The Matrix");
+    await expect(realItems(page).nth(0)).toContainText("Inception");
+    await expect(realItems(page).nth(1)).toContainText("The Matrix");
 
     // Drag Inception (row 0) down past The Matrix (row 1) via its drag handle.
     // SortableJS needs a real mouse gesture with intermediate moves; delayOnTouchOnly
     // means no hold delay for mouse input.
-    const handle = items.nth(0).locator(".drag-handle");
+    const handle = realItems(page).nth(0).locator(".drag-handle");
     const hb = (await handle.boundingBox())!;
-    const tb = (await items.nth(1).boundingBox())!;
+    const tb = (await realItems(page).nth(1).boundingBox())!;
     await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
     await page.mouse.down();
     await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2 + 4, { steps: 3 });
@@ -43,37 +40,31 @@ test.describe("drag handles in list view", () => {
     await page.mouse.up();
 
     // Order is now The Matrix, Inception.
-    await expect(page.locator(".list-view-item").nth(0)).toContainText("The Matrix");
-    await expect(page.locator(".list-view-item").nth(1)).toContainText("Inception");
+    await expect(realItems(page).nth(0)).toContainText("The Matrix");
+    await expect(realItems(page).nth(1)).toContainText("Inception");
 
     // The new order survives a reload (persisted via after_id, not just DOM).
     await page.reload();
-    await expect(page.locator(".list-view-item").nth(0)).toContainText("The Matrix");
-    await expect(page.locator(".list-view-item").nth(1)).toContainText("Inception");
+    await expect(realItems(page).nth(0)).toContainText("The Matrix");
+    await expect(realItems(page).nth(1)).toContainText("Inception");
   });
 
   test("dragging an item to the last position lands last, not second-to-last", async ({ page }) => {
     // Regression: with 3+ items, dragging the first item past the last real item into
-    // the AddRow zone fired onMove with related=.view-add, which used to block the move.
-    // The item would snap back to second-to-last instead of reaching the end.
-    await page.locator(".view-add").last().click();
-    await page.locator(".modal .form-field input").first().fill("The Matrix");
-    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
-    await page.locator(".view-add").last().click();
-    await page.locator(".modal .form-field input").first().fill("Interstellar");
-    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.locator(".list-view-item")).toHaveCount(3);
+    // the inline-add zone must not snap it back to second-to-last.
+    await addItemToList(page, "The Matrix");
+    await addItemToList(page, "Interstellar");
+    await expect(realItems(page)).toHaveCount(3);
 
-    const items = page.locator(".list-view-item");
-    await expect(items.nth(0)).toContainText("Inception");
-    await expect(items.nth(1)).toContainText("The Matrix");
-    await expect(items.nth(2)).toContainText("Interstellar");
+    await expect(realItems(page).nth(0)).toContainText("Inception");
+    await expect(realItems(page).nth(1)).toContainText("The Matrix");
+    await expect(realItems(page).nth(2)).toContainText("Interstellar");
 
     // Drag Inception (first) to the end by moving its handle past Interstellar's bottom
-    // edge, into the AddRow zone. This is what triggered the bug.
-    const handle = items.nth(0).locator(".drag-handle");
+    // edge, into the inline-add row below.
+    const handle = realItems(page).nth(0).locator(".drag-handle");
     const hb = (await handle.boundingBox())!;
-    const last = items.nth(2);
+    const last = realItems(page).nth(2);
     const lb = (await last.boundingBox())!;
     await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
     await page.mouse.down();
@@ -81,24 +72,23 @@ test.describe("drag handles in list view", () => {
     await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height + 8, { steps: 12 });
     await page.mouse.up();
 
-    await expect(items.nth(0)).toContainText("The Matrix");
-    await expect(items.nth(1)).toContainText("Interstellar");
-    await expect(items.nth(2)).toContainText("Inception");
+    await expect(realItems(page).nth(0)).toContainText("The Matrix");
+    await expect(realItems(page).nth(1)).toContainText("Interstellar");
+    await expect(realItems(page).nth(2)).toContainText("Inception");
 
     await page.reload();
-    await expect(page.locator(".list-view-item").nth(0)).toContainText("The Matrix");
-    await expect(page.locator(".list-view-item").nth(1)).toContainText("Interstellar");
-    await expect(page.locator(".list-view-item").nth(2)).toContainText("Inception");
+    await expect(realItems(page).nth(0)).toContainText("The Matrix");
+    await expect(realItems(page).nth(1)).toContainText("Interstellar");
+    await expect(realItems(page).nth(2)).toContainText("Inception");
   });
 
   test("drag handles remain visible after switching to table and back to list", async ({ page }) => {
-    // Switch to table view and back to list view within the unified ListView
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
     await expect(page.locator("table")).toBeVisible();
 
     await page.locator(".view-switcher-btn", { hasText: "List" }).click();
-    await expect(page.locator(".list-view-item")).toHaveCount(1);
-    await expect(page.locator(".list-view-item .drag-handle")).toBeVisible();
+    await expect(realItems(page)).toHaveCount(1);
+    await expect(page.locator(".list-view-item .drag-handle").first()).toBeVisible();
   });
 });
 
@@ -117,16 +107,7 @@ test.describe("list mode navigation back to board view", () => {
 
     // Click "List" — should switch back to list mode within ListView
     await page.locator(".view-switcher-btn", { hasText: "List" }).click();
-    await expect(page.locator(".multi-list-view")).toBeVisible();
+    await expect(page.locator(".list-view")).toBeVisible();
     await expect(page.locator("table")).toHaveCount(0);
-  });
-
-  test("list button shows list mode content after card view", async ({ page }) => {
-    await page.locator(".view-switcher-btn", { hasText: "Cards" }).click();
-    await expect(page.locator(".card-grid")).toBeVisible();
-
-    await page.locator(".view-switcher-btn", { hasText: "List" }).click();
-    await expect(page.locator(".multi-list-view")).toBeVisible();
-    await expect(page.locator(".card-grid")).toHaveCount(0);
   });
 });

@@ -10,6 +10,7 @@ interface Props {
   onDelete?: () => void;
   schema: AttributeDefinition[];
   initial?: Item;
+  initialTitle?: string;
 }
 
 const ItemFormModal: Component<Props> = (props) => {
@@ -18,7 +19,7 @@ const ItemFormModal: Component<Props> = (props) => {
 
   createEffect(() => {
     if (props.open) {
-      setTitle(props.initial?.title ?? "");
+      setTitle(props.initial?.title ?? props.initialTitle ?? "");
       setAttributes(props.initial?.attributes ? { ...props.initial.attributes } : {});
     }
   });

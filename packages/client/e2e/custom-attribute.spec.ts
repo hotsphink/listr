@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
+import { clearDatabase, createBoard, createListInBoard, addItemViaModal } from "./helpers.js";
 
 test.describe("custom attributes", () => {
   test.beforeEach(async ({ page }) => {
@@ -7,36 +7,37 @@ test.describe("custom attributes", () => {
   });
 
   test("create a list with a custom attribute, add an item, and verify display", async ({ page }) => {
-    // Create a board with attributes
     await createBoard(page, "Movies", [
       { key: "rating", label: "Rating", type: "number" },
       { key: "genre", label: "Genre" },
     ]);
 
-    // Create a list in that board
     await createListInBoard(page, "My Movies", "Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Movies");
 
     // Switch to table view to see attribute columns
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
 
-    // Add an item via the table's add row
-    await page.locator(".view-add").last().click();
-    await expect(page.locator(".modal h2")).toHaveText("New Item");
+    // Open the inline-add expand button to get the full New Item modal
+    await page.locator(".inline-add-btn").last().click();
+    const modal = page.locator(".modal");
+    await modal.waitFor({ state: "visible" });
+    await expect(modal.locator("h2")).toHaveText("New Item");
 
-    const labels = page.locator(".modal .form-field label");
+    // Verify the modal exposes all expected fields in order
+    const labels = modal.locator(".form-field label");
     await expect(labels.nth(0)).toHaveText("Title");
     await expect(labels.nth(1)).toHaveText("Rating");
     await expect(labels.nth(2)).toHaveText("Genre");
 
-    await page.locator(".modal .form-field input").first().fill("Inception");
-    await page.locator(".modal .form-field").nth(1).locator("input").fill("4");
-    await page.locator(".modal .form-field").nth(2).locator("input").fill("sci-fi");
+    await modal.locator(".form-field input").first().fill("Inception");
+    await modal.locator(".form-field").nth(1).locator("input").fill("4");
+    await modal.locator(".form-field").nth(2).locator("input").fill("sci-fi");
+    await modal.getByRole("button", { name: "Add", exact: true }).click();
+    await modal.waitFor({ state: "hidden" });
 
-    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
-
-    await expect(page.locator("tbody tr")).toHaveCount(1);
-    const firstRow = page.locator("tbody tr").first();
+    await expect(page.locator("tbody tr:not(.inline-add-item)")).toHaveCount(1);
+    const firstRow = page.locator("tbody tr:not(.inline-add-item)").first();
     await expect(firstRow.locator("td").nth(1)).toContainText("Inception");
     await expect(firstRow.locator("td").nth(2)).toContainText("4");
     await expect(firstRow.locator("td").nth(3)).toContainText("sci-fi");
@@ -55,12 +56,11 @@ test.describe("custom attributes", () => {
 
     await page.locator(".view-switcher-btn", { hasText: "Table" }).click();
 
-    await page.locator(".view-add").last().click();
-    await page.locator(".modal .form-field input").first().fill("Blade Runner");
-    await page.locator(".modal .form-field").nth(1).locator("input").fill("Ridley Scott");
-    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
+    await addItemViaModal(page, "Blade Runner", async (modal) => {
+      await modal.locator(".form-field").nth(1).locator("input").fill("Ridley Scott");
+    });
 
-    const row = page.locator("tbody tr").first();
+    const row = page.locator("tbody tr:not(.inline-add-item)").first();
     await expect(row.locator("td").nth(1)).toContainText("Blade Runner");
     await expect(row.locator("td").nth(2)).toContainText("Ridley Scott");
 
@@ -77,13 +77,12 @@ test.describe("custom attributes", () => {
     await createListInBoard(page, "Watchlist", "Rated Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Rated Movies");
 
-    // Default is list view — add an item
-    await page.locator(".view-add").last().click();
-    await page.locator(".modal .form-field input").first().fill("Alien");
-    await page.locator(".modal .form-field").nth(1).locator("input").fill("1979");
-    await page.locator(".modal").getByRole("button", { name: "Add", exact: true }).click();
+    // Default is list view — add an item via the inline-add expand button.
+    await addItemViaModal(page, "Alien", async (modal) => {
+      await modal.locator(".form-field").nth(1).locator("input").fill("1979");
+    });
 
     // List view should show the formatted string from the board
-    await expect(page.locator(".list-view-item").first()).toContainText("Alien (1979)");
+    await expect(page.locator(".list-view-item:not(.inline-add-item)").first()).toContainText("Alien (1979)");
   });
 });
