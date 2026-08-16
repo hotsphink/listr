@@ -64,7 +64,9 @@ function parseSimpleYaml(content: string): Record<string, unknown> {
 export function loadConfig(): Config {
   let raw: Record<string, unknown> = {};
   try {
-    raw = parseSimpleYaml(readFileSync(join(homedir(), ".config", "listr", "config.yaml"), "utf8"));
+    const variant = process.env.LISTR_VARIANT ?? "prod";
+    const path = process.env.LISTR_CONFIG_PATH ?? join(homedir(), ".config", "listr", variant + ".yaml");
+    raw = parseSimpleYaml(readFileSync(path, "utf8"));
   } catch {
     // no config file — use defaults
   }

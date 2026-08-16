@@ -5,6 +5,8 @@
     "dev": "pnpm --filter @listr/client dev",
     "build": "pnpm --filter @listr/client build",
     "preview": "pnpm build && pnpm --filter @listr/client preview",
+    "dev-server": "pnpm --filter @listr/server dev",
+    "prod-server": "pnpm --filter @listr/server prod",
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter @listr/client test:e2e",
     "deploy": "pnpm build && cp -r packages/client/dist/. ../listr-pages/ && cp README.md ../listr-pages/",

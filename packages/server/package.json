@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
+    "dev": "env LISTR_VARIANT=dev tsx watch src/index.ts",
+    "prod": "tsx src/index.ts",
     "test": "vitest run"
   },
   "dependencies": {
