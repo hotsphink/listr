@@ -29,6 +29,22 @@ export default defineConfig(({ mode }) => {
           }
         },
       },
+      // Swap in the dev favicon/app icon/manifest so the `pnpm dev` tab and
+      // installed PWA are visually distinct from a production instance.
+      {
+        name: "dev-icons",
+        apply: "serve" as const,
+        transformIndexHtml(html: string) {
+          return html
+            .replace(/favicon\.png/g, "favicon-dev.png")
+            .replace(/icons\/icon-192x192\.png/g, "favicon-dev.png")
+            .replace(/icons\/icon-512x512\.png/g, "favicon-dev.png")
+            .replace(/icons\/icon-180x180\.png/g, "favicon-dev.png")
+            .replace("manifest.json", "manifest-dev.json")
+            .replace("Listr Listenator", "Listr Listenator (Dev)")
+            .replace("<title>Listr</title>", "<title>Listr (Dev)</title>");
+        },
+      },
     ],
     server: {
       port: 3000,
