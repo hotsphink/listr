@@ -244,6 +244,11 @@ const AdminPage: Component = () => {
               return (
                 <div class="endpoint-card" style={`border-color: ${PHASE_COLORS[phase()]}`}>
                   <div class="endpoint-header" classList={{ collapsed: !expanded() }}>
+                    <button class="btn-icon-danger endpoint-expand-btn" type="button" onClick={() => toggleExpanded(ep.id)} aria-label={expanded() ? "Collapse" : "Expand"}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style={`transform: rotate(${expanded() ? 90 : 0}deg); transition: transform 0.15s; display: block`}>
+                        <polyline points="9 18 15 12 9 6"/>
+                      </svg>
+                    </button>
                     <input
                       type="checkbox"
                       checked={ep.enabled}
@@ -276,13 +281,11 @@ const AdminPage: Component = () => {
                       />
                       TLS
                     </label>
-                    <button class="btn-icon-danger endpoint-expand-btn" type="button" onClick={() => toggleExpanded(ep.id)} aria-label={expanded() ? "Collapse" : "Expand"}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style={`transform: rotate(${expanded() ? 90 : 0}deg); transition: transform 0.15s; display: block`}>
-                        <polyline points="9 18 15 12 9 6"/>
-                      </svg>
-                    </button>
                     <button class="btn-icon-danger" type="button" onClick={() => deleteEndpoint(ep.id)}>✕</button>
                   </div>
+                  <Show when={!expanded()}>
+                    <div class="endpoint-collapsed-ellipsis" aria-hidden="true">. . .</div>
+                  </Show>
 
                   <Show when={expanded()}>
                     <div class="endpoint-urls">
@@ -340,19 +343,12 @@ const AdminPage: Component = () => {
         <div class="admin-section">
           <h2>About</h2>
           <div class="admin-field">
-            <label class="field-label">Client build</label>
-            <div class="admin-client-id">{formatBuildTime(__BUILD_TIME__)}</div>
-            <div class="field-hint">When this running client was built.</div>
-          </div>
-          <div class="admin-field">
-            <label class="field-label">Sync protocol version</label>
-            <div class="admin-client-id">{PROTOCOL_VERSION}</div>
-            <div class="field-hint">The server must understand this version to connect.</div>
-          </div>
-          <div class="admin-field">
-            <label class="field-label">App update</label>
-            <ForceUpdateButton />
-            <div class="field-hint">Clears the local cache and reloads fresh assets from the server.</div>
+            <div class="admin-field-label-row">
+              <label class="field-label">Client build</label>
+              <ForceUpdateButton />
+            </div>
+            <div class="admin-client-id">{formatBuildTime(__BUILD_TIME__)} · protocol v{PROTOCOL_VERSION}</div>
+            <div class="field-hint">Build timestamp and sync protocol version of this client.<br/>Update Now clears local cache and reloads from the server!</div>
           </div>
         </div>
       </div>

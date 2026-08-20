@@ -1905,6 +1905,13 @@ tr.inline-add-item td:last-child {
   margin-bottom: 16px;
 }
 
+.admin-field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
 .admin-input-row {
   display: flex;
   gap: 8px;
@@ -1950,6 +1957,13 @@ tr.inline-add-item td:last-child {
 
 .endpoint-expand-btn:hover {
   color: var(--text);
+}
+
+.endpoint-collapsed-ellipsis {
+  color: var(--text-dim);
+  font-size: 23px;
+  line-height: 1;
+  text-align: center;
 }
 
 .endpoint-host {
