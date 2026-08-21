@@ -42,7 +42,9 @@ async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<
 
 const ALLOWED_ORIGINS = new Set([
   "https://hotsphink.github.io",
+  "https://listr.aapx.org",
   "https://listr-sync.aapx.org",
+  "https://listr-dev.aapx.org",
   "https://finkripper.heron-moth.ts.net",
   "https://finkripper.heron-moth.ts.net:10000",
   "https://finkripper.heron-moth.ts.net:8443",

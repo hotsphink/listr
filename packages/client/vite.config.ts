@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
     : undefined;
 
   return {
-    base: mode === "production" ? "/listr/" : "/",
+    base: "/",
     plugins: [
       solidPlugin(),
       // Stamp dist/sw.js with the build time so the browser detects a new
