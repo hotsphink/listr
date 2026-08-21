@@ -27,6 +27,21 @@ const PHASE_COLORS: Record<string, string> = {
   conflict: "var(--danger)",
 };
 
+// A connection that's ready but lost the race for its server_id to another
+// endpoint (see SyncClient.claimOrDefer) — connected, but standing by rather
+// than actively pushing/pulling.
+const STANDBY_COLOR = "#d4b106";
+
+function statusColor(status: EndpointStatus | undefined, phase: string): string {
+  if (phase === "ready" && status?.primary === false) return STANDBY_COLOR;
+  return PHASE_COLORS[phase] ?? "var(--text-dim)";
+}
+
+function statusLabel(status: EndpointStatus | undefined, phase: string): string {
+  if (phase === "ready" && status?.primary === false) return "Standby (same server)";
+  return PHASE_LABELS[phase] ?? phase;
+}
+
 function shortId(uuid: string | null | undefined): string {
   return uuid ? uuid.replace(/-/g, "").slice(0, 8) : "";
 }
@@ -131,8 +146,9 @@ const AdminPage: Component = () => {
   };
 
   const addEndpoint = async () => {
+    const id = crypto.randomUUID();
     await db.sync_endpoints.add({
-      id: crypto.randomUUID(),
+      id,
       host: "",
       port: 443,
       enabled: true,
@@ -140,6 +156,7 @@ const AdminPage: Component = () => {
       last_server_id: null,
       position: Date.now(),
     });
+    setExpandedIds((prev) => { prev.add(id); return prev; });
   };
 
   const deleteEndpoint = async (id: string) => {
@@ -242,17 +259,18 @@ const AdminPage: Component = () => {
               const connectedId = () => status()?.serverId ?? ep.last_server_id;
               const expanded = () => expandedIds().has(ep.id);
               return (
-                <div class="endpoint-card" style={`border-color: ${PHASE_COLORS[phase()]}`}>
+                <div class="endpoint-card" style={`border-color: ${statusColor(status(), phase())}`}>
                   <div class="endpoint-header" classList={{ collapsed: !expanded() }}>
                     <button class="btn-icon-danger endpoint-expand-btn" type="button" onClick={() => toggleExpanded(ep.id)} aria-label={expanded() ? "Collapse" : "Expand"}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style={`transform: rotate(${expanded() ? 90 : 0}deg); transition: transform 0.15s; display: block`}>
                         <polyline points="9 18 15 12 9 6"/>
                       </svg>
                     </button>
+                    <span class="sync-dot" style={`background: ${statusColor(status(), phase())}`} title={statusLabel(status(), phase())} />
                     <input
                       type="checkbox"
                       checked={ep.enabled}
-                      style={`accent-color: ${PHASE_COLORS[phase()]}`}
+                      style={`accent-color: ${statusColor(status(), phase())}`}
                       onChange={(e) => updateEndpoint(ep.id, { enabled: e.currentTarget.checked })}
                     />
                     <input
@@ -294,8 +312,8 @@ const AdminPage: Component = () => {
                     </div>
 
                     <div class="endpoint-status-row">
-                      <span class="sync-dot" style={`background: ${PHASE_COLORS[phase()] ?? "var(--text-dim)"}`} />
-                      <span class="endpoint-phase-label">{PHASE_LABELS[phase()] ?? phase()}</span>
+                      <span class="sync-dot" style={`background: ${statusColor(status(), phase())}`} />
+                      <span class="endpoint-phase-label">{statusLabel(status(), phase())}</span>
                       <Show when={status()?.message}>
                         <span class="endpoint-status-msg"> — {status()!.message}</span>
                       </Show>

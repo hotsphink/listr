@@ -8,6 +8,10 @@ export interface EndpointStatus {
   knownId?: string;
   newId?: string;
   message?: string;
+  /** Only meaningful when phase is "ready". False means another endpoint is
+   * already connected to the same server_id and is handling push/pull —
+   * this connection is a hot standby, not actively used. */
+  primary?: boolean;
 }
 
 export const [endpointStatuses, setEndpointStatuses] = createSignal<Record<string, EndpointStatus>>({});

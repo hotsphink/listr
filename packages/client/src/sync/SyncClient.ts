@@ -196,7 +196,13 @@ class EndpointConnection {
 
 class SyncClient {
   private connections = new Map<string, EndpointConnection>();
+  // Only the primary endpoint per distinct server_id — used for outgoing push.
   private senders = new Map<string, (msg: unknown) => void>();
+  // Every ready connection regardless of primary/standby role, so a standby
+  // can be promoted to primary without reconnecting when the primary drops.
+  private allSenders = new Map<string, (msg: unknown) => void>();
+  private readyServerId = new Map<string, string>(); // endpoint id -> server_id, while ready
+  private primaryForServerId = new Map<string, string>(); // server_id -> primary endpoint id
   private statusPhases = new Map<string, EndpointPhase>();
   private currentEndpoints: SyncEndpointConfig[] = [];
   private defaultKey = "";
@@ -317,6 +323,9 @@ class SyncClient {
       for (const conn of this.connections.values()) conn.stop();
       this.connections.clear();
       this.senders.clear();
+      this.allSenders.clear();
+      this.readyServerId.clear();
+      this.primaryForServerId.clear();
       this.statusPhases.clear();
       this.applyEndpoints(this.currentEndpoints);
     }
@@ -330,6 +339,8 @@ class SyncClient {
         conn.stop();
         this.connections.delete(id);
         this.senders.delete(id);
+        this.allSenders.delete(id);
+        this.releasePrimaryIfHeld(id);
         this.statusPhases.delete(id);
         removeEndpointStatus(id);
       }
@@ -341,6 +352,8 @@ class SyncClient {
           this.connections.get(ep.id)!.stop();
           this.connections.delete(ep.id);
           this.senders.delete(ep.id);
+          this.allSenders.delete(ep.id);
+          this.releasePrimaryIfHeld(ep.id);
         }
         this.statusPhases.set(ep.id, "disabled");
         setEndpointStatus(ep.id, { phase: "disabled" });
@@ -357,6 +370,8 @@ class SyncClient {
         }
         conn.stop();
         this.senders.delete(ep.id);
+        this.allSenders.delete(ep.id);
+        this.releasePrimaryIfHeld(ep.id);
         this.connections.delete(ep.id);
       }
 
@@ -372,6 +387,8 @@ class SyncClient {
         const wasReady = this.statusPhases.get(ep.id) === "ready";
         if (status.phase !== "ready") {
           this.senders.delete(ep.id);
+          this.allSenders.delete(ep.id);
+          this.releasePrimaryIfHeld(ep.id);
         }
         this.statusPhases.set(ep.id, status.phase);
         setEndpointStatus(ep.id, status);
@@ -391,9 +408,9 @@ class SyncClient {
         this.refreshAggregateStatus();
       },
       onReady: (send, serverId) => {
-        this.senders.set(ep.id, send);
+        this.allSenders.set(ep.id, send);
         db.sync_endpoints.update(ep.id, { last_server_id: serverId }).catch(console.error);
-        this.doInitialSync(send).catch(console.error);
+        this.claimOrDefer(ep.id, serverId, send);
         this.refreshAggregateStatus();
       },
       onMessage: (msg) => this.handleMessage(msg),
@@ -406,6 +423,47 @@ class SyncClient {
     });
     this.connections.set(ep.id, conn);
     conn.start();
+  }
+
+  // Two connections landing on the same server_id are almost always the same
+  // physical server reached by two different routes (e.g. tailnet + public
+  // proxy). Only one of them — whichever finishes its handshake first, which
+  // in practice tracks the lower-latency path — pushes/pulls; the other stays
+  // connected as a hot standby so it can take over instantly if the primary
+  // drops, without duplicating outgoing traffic to the same server meanwhile.
+  private claimOrDefer(epId: string, serverId: string, send: (msg: unknown) => void): void {
+    this.readyServerId.set(epId, serverId);
+    const currentPrimary = this.primaryForServerId.get(serverId);
+    const isPrimary = !currentPrimary || currentPrimary === epId || !this.connections.has(currentPrimary);
+    if (isPrimary) {
+      this.primaryForServerId.set(serverId, epId);
+      this.senders.set(epId, send);
+      setEndpointStatus(epId, { phase: "ready", serverId, primary: true });
+      this.doInitialSync(send).catch(console.error);
+    } else {
+      this.senders.delete(epId);
+      setEndpointStatus(epId, { phase: "ready", serverId, primary: false });
+    }
+  }
+
+  // If the endpoint going away was the primary for its server_id, promote a
+  // standby connection already sitting on the same server_id, if any.
+  private releasePrimaryIfHeld(epId: string): void {
+    const serverId = this.readyServerId.get(epId);
+    this.readyServerId.delete(epId);
+    if (!serverId || this.primaryForServerId.get(serverId) !== epId) return;
+    this.primaryForServerId.delete(serverId);
+
+    for (const [otherId, otherServerId] of this.readyServerId) {
+      if (otherServerId !== serverId) continue;
+      const send = this.allSenders.get(otherId);
+      if (!send) continue;
+      this.primaryForServerId.set(serverId, otherId);
+      this.senders.set(otherId, send);
+      setEndpointStatus(otherId, { phase: "ready", serverId, primary: true });
+      this.doInitialSync(send).catch(console.error);
+      break;
+    }
   }
 
   private refreshAggregateStatus(): void {
