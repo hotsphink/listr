@@ -2,12 +2,30 @@ import { ENTITY_SCHEMA_VERSION, type AttributeDefinition, type Item, type List, 
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { deleteBoard, deleteList, deleteItem, resolveChain } from "./operations.js";
+import { assetToSync, assetFromSync, registerAsset } from "../sync/assetStore.js";
+import { shouldDeleteOnTombstone } from "../sync/mergeLogic.js";
 
 export interface NativeExport {
-  listr_export: "1";
+  listr_export: "1" | "2";
   exported_at: number;
   boards: ExportedBoard[];
+  /** v2+: flat tombstones for boards/lists/items deleted since the source's last export.
+   *  Not nested under boards/lists — a deleted list/item's parent may itself be gone or
+   *  unrelated, and local tombstones carry no parent linkage to reconstruct that. */
+  tombstones?: ExportedTombstone[];
+  /** v2+: asset blobs (images/files) referenced by this export. */
+  assets?: ExportedAsset[];
 }
+
+type EntityKind = "board" | "list" | "item";
+
+interface ExportedTombstone {
+  entity_type: EntityKind;
+  entity_id: string;
+  deleted_at: number;
+}
+
+type ExportedAsset = ReturnType<typeof assetToSync>;
 
 interface ExportedBoard {
   id: string;
@@ -18,6 +36,8 @@ interface ExportedBoard {
   schema: AttributeDefinition[];
   format_string: string;
   macros?: Record<string, string>;
+  /** Custom sync namespace this board uses instead of the default (see Board.sync_key). */
+  sync_key?: string;
   lists: ExportedList[];
 }
 
@@ -43,15 +63,59 @@ export interface ImportStats {
   boards: { created: number; updated: number; deleted: number };
   lists: { created: number; updated: number; deleted: number };
   items: { created: number; updated: number; deleted: number };
+  assets: { created: number; skipped: number };
+}
+
+function emptyStats(): ImportStats {
+  return {
+    boards: { created: 0, updated: 0, deleted: 0 },
+    lists: { created: 0, updated: 0, deleted: 0 },
+    items: { created: 0, updated: 0, deleted: 0 },
+    assets: { created: 0, skipped: 0 },
+  };
 }
 
 export function isNativeExport(obj: unknown): obj is NativeExport {
   return (
     typeof obj === "object" &&
     obj !== null &&
-    (obj as any).listr_export === "1" &&
+    ((obj as any).listr_export === "1" || (obj as any).listr_export === "2") &&
     Array.isArray((obj as any).boards)
   );
+}
+
+// Matches macro/format-string/attribute references like hash://1a2b3c....png
+// produced by BoardFormModal's "Insert image asset" action.
+const ASSET_HASH_RE = /hash:\/\/([0-9a-f]{20})\.[a-z0-9]+/gi;
+
+/** Pure helper: finds asset IDs referenced from a board's/list's format strings, a
+ *  board's macros, and items' string-valued attributes — used to scope asset export
+ *  to a single board/list without dumping every asset in the local DB. */
+export function extractReferencedAssetIds(
+  board: { format_string?: string | null; macros?: Record<string, string> },
+  lists: { format_string?: string | null }[],
+  items: { attributes: Record<string, unknown> }[],
+): Set<string> {
+  const ids = new Set<string>();
+  const scan = (s: string | null | undefined) => {
+    if (!s) return;
+    for (const m of s.matchAll(ASSET_HASH_RE)) ids.add(m[1]);
+  };
+  scan(board.format_string);
+  for (const v of Object.values(board.macros ?? {})) scan(v);
+  for (const l of lists) scan(l.format_string);
+  for (const i of items) {
+    for (const v of Object.values(i.attributes)) {
+      if (typeof v === "string") scan(v);
+    }
+  }
+  return ids;
+}
+
+async function exportAssetsByIds(ids: Set<string>): Promise<ExportedAsset[]> {
+  if (ids.size === 0) return [];
+  const found = await db.assets.bulkGet([...ids]);
+  return found.filter((a): a is NonNullable<typeof a> => !!a).map(assetToSync);
 }
 
 function buildListEntry(list: List, items: Item[]) {
@@ -71,10 +135,12 @@ function buildListEntry(list: List, items: Item[]) {
 }
 
 export async function exportAllData(): Promise<NativeExport> {
-  const [allBoards, lists, allItems] = await Promise.all([
+  const [allBoards, lists, allItems, tombstoneRows, allAssets] = await Promise.all([
     db.boards.orderBy("position").toArray(),
     db.lists.orderBy("position").toArray(),
     db.items.toArray(),
+    db.tombstones.toArray(),
+    db.assets.toArray(),
   ]);
 
   const itemsByList = new Map<string, Item[]>();
@@ -90,8 +156,13 @@ export async function exportAllData(): Promise<NativeExport> {
     else listsByBoard.set(list.board_id, [list]);
   }
 
+  const tombstones: ExportedTombstone[] = tombstoneRows
+    .filter((t): t is typeof t & { entity_type: EntityKind } =>
+      t.entity_type === "board" || t.entity_type === "list" || t.entity_type === "item")
+    .map((t) => ({ entity_type: t.entity_type, entity_id: t.entity_id, deleted_at: t.deleted_at }));
+
   return {
-    listr_export: "1",
+    listr_export: "2",
     exported_at: Date.now(),
     boards: allBoards.map((board) => ({
       id: board.id,
@@ -101,10 +172,13 @@ export async function exportAllData(): Promise<NativeExport> {
       schema: board.schema,
       format_string: board.format_string,
       macros: board.macros,
+      sync_key: board.sync_key,
       lists: (listsByBoard.get(board.id) ?? []).map((list) =>
         buildListEntry(list, itemsByList.get(list.id) ?? [])
       ),
     })),
+    tombstones,
+    assets: allAssets.map(assetToSync),
   };
 }
 
@@ -118,14 +192,17 @@ export async function exportBoard(boardId: string): Promise<NativeExport> {
     const raw = allItems.filter((i) => i.list_id === list.id);
     itemsByList.set(list.id, resolveChain(raw));
   }
+  const assets = await exportAssetsByIds(extractReferencedAssetIds(board, lists, allItems));
   return {
-    listr_export: "1",
+    listr_export: "2",
     exported_at: Date.now(),
     boards: [{
       id: board.id, name: board.name, color: board.color, position: board.position,
       schema: board.schema, format_string: board.format_string, macros: board.macros,
+      sync_key: board.sync_key,
       lists: lists.map((list) => buildListEntry(list, itemsByList.get(list.id) ?? [])),
     }],
+    assets,
   };
 }
 
@@ -135,15 +212,68 @@ export async function exportList(listId: string): Promise<NativeExport> {
   const board = await db.boards.get(list.board_id);
   if (!board) throw new Error(`Board ${list.board_id} not found`);
   const rawItems = await db.items.where("list_id").equals(listId).toArray();
+  const items = resolveChain(rawItems);
+  const assets = await exportAssetsByIds(extractReferencedAssetIds(board, [list], items));
   return {
-    listr_export: "1",
+    listr_export: "2",
     exported_at: Date.now(),
     boards: [{
       id: board.id, name: board.name, color: board.color, position: board.position,
       schema: board.schema, format_string: board.format_string, macros: board.macros,
-      lists: [buildListEntry(list, resolveChain(rawItems))],
+      sync_key: board.sync_key,
+      lists: [buildListEntry(list, items)],
     }],
+    assets,
   };
+}
+
+interface TombstoneAction extends ExportedTombstone {
+  existedLocally: boolean;
+  shouldDelete: boolean;
+}
+
+/** For each flat tombstone entry, checks the local entity (if any) and decides —
+ *  via the same LWW rule live sync uses — whether the deletion actually wins. An
+ *  independently-newer local edit survives an older imported deletion. */
+async function resolveTombstoneActions(tombstones: ExportedTombstone[]): Promise<TombstoneAction[]> {
+  const byType: Record<EntityKind, ExportedTombstone[]> = { board: [], list: [], item: [] };
+  for (const t of tombstones) byType[t.entity_type].push(t);
+
+  const [boards, lists, items] = await Promise.all([
+    db.boards.bulkGet(byType.board.map((t) => t.entity_id)),
+    db.lists.bulkGet(byType.list.map((t) => t.entity_id)),
+    db.items.bulkGet(byType.item.map((t) => t.entity_id)),
+  ]);
+
+  const actions: TombstoneAction[] = [];
+  byType.board.forEach((t, i) => {
+    actions.push({ ...t, existedLocally: !!boards[i], shouldDelete: shouldDeleteOnTombstone(boards[i], t.deleted_at) });
+  });
+  byType.list.forEach((t, i) => {
+    actions.push({ ...t, existedLocally: !!lists[i], shouldDelete: shouldDeleteOnTombstone(lists[i], t.deleted_at) });
+  });
+  byType.item.forEach((t, i) => {
+    actions.push({ ...t, existedLocally: !!items[i], shouldDelete: shouldDeleteOnTombstone(items[i], t.deleted_at) });
+  });
+  return actions;
+}
+
+async function applyTombstoneActions(actions: TombstoneAction[], stats: ImportStats): Promise<void> {
+  for (const a of actions) {
+    if (!a.shouldDelete) continue; // local entity is independently newer — keep it
+    if (a.existedLocally) {
+      if (a.entity_type === "board") await db.boards.delete(a.entity_id);
+      else if (a.entity_type === "list") await db.lists.delete(a.entity_id);
+      else await db.items.delete(a.entity_id);
+      if (a.entity_type === "board") stats.boards.deleted++;
+      else if (a.entity_type === "list") stats.lists.deleted++;
+      else stats.items.deleted++;
+    }
+    // Preserve the original deleted_at (not now()) so LWW ordering against
+    // independent edits stays correct, and push so the connected target server
+    // (which may never have seen this entity) learns of the deletion too.
+    syncClient.pushDelete(a.entity_type, a.entity_id, a.deleted_at);
+  }
 }
 
 export async function previewNativeImport(doc: NativeExport): Promise<ImportStats> {
@@ -157,11 +287,15 @@ export async function previewNativeImport(doc: NativeExport): Promise<ImportStat
   const listSet = new Set(listKeys);
   const itemSet = new Set(itemKeys);
 
-  const stats: ImportStats = {
-    boards: { created: 0, updated: 0, deleted: 0 },
-    lists: { created: 0, updated: 0, deleted: 0 },
-    items: { created: 0, updated: 0, deleted: 0 },
-  };
+  const stats = emptyStats();
+
+  const tombstoneActions = await resolveTombstoneActions(doc.tombstones ?? []);
+  for (const a of tombstoneActions) {
+    if (!a.existedLocally || !a.shouldDelete) continue;
+    if (a.entity_type === "board") stats.boards.deleted++;
+    else if (a.entity_type === "list") stats.lists.deleted++;
+    else stats.items.deleted++;
+  }
 
   for (const board of doc.boards) {
     if (board.deleted) {
@@ -190,10 +324,23 @@ export async function previewNativeImport(doc: NativeExport): Promise<ImportStat
     }
   }
 
+  for (const asset of doc.assets ?? []) {
+    const exists = await db.assets.get(asset.id as string);
+    if (exists) stats.assets.skipped++;
+    else stats.assets.created++;
+  }
+
   return stats;
 }
 
 export async function applyNativeImport(doc: NativeExport): Promise<ImportStats> {
+  const stats = emptyStats();
+
+  // Apply deletions first — the regular upsert loop below re-reads boardSet/
+  // listSet/itemSet afterward, so it sees post-deletion state.
+  const tombstoneActions = await resolveTombstoneActions(doc.tombstones ?? []);
+  await applyTombstoneActions(tombstoneActions, stats);
+
   const [boardKeys, listKeys, itemKeys] = await Promise.all([
     db.boards.toCollection().primaryKeys() as Promise<string[]>,
     db.lists.toCollection().primaryKeys() as Promise<string[]>,
@@ -203,12 +350,6 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
   const boardSet = new Set(boardKeys);
   const listSet = new Set(listKeys);
   const itemSet = new Set(itemKeys);
-
-  const stats: ImportStats = {
-    boards: { created: 0, updated: 0, deleted: 0 },
-    lists: { created: 0, updated: 0, deleted: 0 },
-    items: { created: 0, updated: 0, deleted: 0 },
-  };
 
   const timestamp = Date.now();
   const touchedBoardIds: string[] = [];
@@ -234,7 +375,9 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         schema: board.schema,
         format_string: board.format_string,
         macros: board.macros,
+        sync_key: board.sync_key,
         updated_at: timestamp,
+        schema_version: ENTITY_SCHEMA_VERSION,
       });
       stats.boards.updated++;
     } else {
@@ -246,6 +389,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         schema: board.schema,
         format_string: board.format_string,
         macros: board.macros,
+        sync_key: board.sync_key,
         created_at: timestamp,
         updated_at: timestamp,
         schema_version: ENTITY_SCHEMA_VERSION,
@@ -270,6 +414,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
           format_string: list.format_string,
           view_mode: list.view_mode,
           updated_at: timestamp,
+          schema_version: ENTITY_SCHEMA_VERSION,
         });
         stats.lists.updated++;
       } else {
@@ -306,6 +451,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
             title: item.title,
             attributes: item.attributes,
             updated_at: timestamp,
+            schema_version: ENTITY_SCHEMA_VERSION,
           });
           stats.items.updated++;
         } else {
@@ -355,6 +501,21 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         }
       }
     }
+  }
+
+  // Assets: content-addressed, so a hit is a no-op locally, but always push —
+  // the target server may not have it yet even if this client's cache does.
+  for (const encoded of doc.assets ?? []) {
+    const asset = assetFromSync(encoded);
+    const exists = await db.assets.get(asset.id);
+    if (!exists) {
+      await db.assets.put(asset);
+      await registerAsset(asset);
+      stats.assets.created++;
+    } else {
+      stats.assets.skipped++;
+    }
+    syncClient.pushEntity("asset", assetToSync(asset));
   }
 
   // Push all touched and repositioned entities to sync.

@@ -257,6 +257,9 @@ function statsLabel(stats: ImportStats): string {
   fmt(stats.boards, "boards");
   fmt(stats.lists, "lists");
   fmt(stats.items, "items");
+  if (stats.assets.created + stats.assets.skipped > 0) {
+    parts.push(`assets: ${stats.assets.created} added, ${stats.assets.skipped} already present`);
+  }
   return parts.length ? parts.join(" · ") : "nothing to change";
 }
 
@@ -451,6 +454,9 @@ const ImportModal: Component<Props> = (props) => {
                   <tr><td>Boards</td><td>{s().boards.updated}</td><td>{s().boards.created}</td><td>{s().boards.deleted}</td></tr>
                   <tr><td>Lists</td><td>{s().lists.updated}</td><td>{s().lists.created}</td><td>{s().lists.deleted}</td></tr>
                   <tr><td>Items</td><td>{s().items.updated}</td><td>{s().items.created}</td><td>{s().items.deleted}</td></tr>
+                  <Show when={s().assets.created + s().assets.skipped > 0}>
+                    <tr><td>Assets</td><td>{s().assets.skipped} present</td><td>{s().assets.created}</td><td>—</td></tr>
+                  </Show>
                 </tbody>
               </table>
             )}

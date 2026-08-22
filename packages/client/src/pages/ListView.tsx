@@ -7,7 +7,7 @@ import type { AttributeDefinition, Board, Integration, Item, List, IntegrationSt
 import { db } from "../db/database.js";
 import { createItem, updateItem, updateItemAttribute, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
 import { exportList, exportBoard } from "../db/exportImport.js";
-import type { NativeExport } from "../db/exportImport.js";
+import { triggerDownload } from "../utils/download.js";
 import ImportModal from "../components/ImportModal.js";
 import type { ImportScope } from "../components/ImportModal.js";
 import { syncClient } from "../sync/SyncClient.js";
@@ -91,14 +91,6 @@ const TodoIcon = ({ state }: { state: TodoState }) => {
   );
 };
 
-function triggerDownload(data: NativeExport, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
-}
 
 const ListView: Component = () => {
   const params = useParams();

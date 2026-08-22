@@ -14,19 +14,7 @@ import ShareIcon from "./ShareIcon.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
 import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
-import type { NativeExport } from "../db/exportImport.js";
-
-function triggerDownload(data: NativeExport, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
+import { triggerDownload } from "../utils/download.js";
 
 interface Props {
   open?: boolean;

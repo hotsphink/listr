@@ -8,6 +8,9 @@ import { syncStatus } from "../sync/syncStore.js";
 import { endpointStatuses } from "../store/endpointStatuses.js";
 import type { EndpointStatus } from "../store/endpointStatuses.js";
 import { setSidebarOpen } from "../store/sidebarStore.js";
+import { exportAllData } from "../db/exportImport.js";
+import { triggerDownload } from "../utils/download.js";
+import ImportModal from "../components/ImportModal.js";
 
 const PHASE_LABELS: Record<string, string> = {
   disabled: "Disabled",
@@ -110,6 +113,7 @@ const AdminPage: Component = () => {
   const [endpoints, setEndpoints] = createSignal<SyncEndpoint[]>([]);
   const [syncKey, setSyncKey] = createSignal("");
   const [keyDirty, setKeyDirty] = createSignal(false);
+  const [showImport, setShowImport] = createSignal(false);
 
   createEffect(() => {
     const sub = liveQuery(() => db.sync_config.get("default")).subscribe((cfg) => {
@@ -359,6 +363,34 @@ const AdminPage: Component = () => {
         </div>
 
         <div class="admin-section">
+          <h2>Backup &amp; restore</h2>
+          <div class="admin-field">
+            <div class="field-hint">
+              Moving data between two servers (e.g. dev and prod)? Export All here while
+              connected to the source server, then Import that file while connected to the
+              target. Existing data on the target is never wiped — matching IDs are updated,
+              new IDs are added, and deletions recorded since the export are replayed.
+            </div>
+          </div>
+          <div class="admin-input-row">
+            <button
+              class="btn"
+              type="button"
+              onClick={async () => {
+                const data = await exportAllData();
+                const date = new Date().toISOString().slice(0, 10);
+                triggerDownload(data, `listr-${date}.json`);
+              }}
+            >
+              Export All
+            </button>
+            <button class="btn" type="button" onClick={() => setShowImport(true)}>
+              Import…
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <h2>About</h2>
           <div class="admin-field">
             <div class="admin-field-label-row">
@@ -370,6 +402,7 @@ const AdminPage: Component = () => {
           </div>
         </div>
       </div>
+      <ImportModal open={showImport()} onClose={() => setShowImport(false)} scope={{ type: "global" }} />
     </div>
   );
 };

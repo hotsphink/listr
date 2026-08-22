@@ -273,9 +273,9 @@ class SyncClient {
     for (const send of this.senders.values()) send(msg);
   }
 
-  pushDelete(entityType: EntityType, entityId: string): void {
+  pushDelete(entityType: EntityType, entityId: string, deletedAt?: number): void {
     const syncKey = this.effectiveKeyForEntityId(entityType, entityId);
-    const deleted_at = Date.now();
+    const deleted_at = deletedAt ?? Date.now();
     db.tombstones
       .put({ id: `${entityType}:${entityId}`, entity_type: entityType, entity_id: entityId, deleted_at, sync_key: syncKey })
       .catch(console.error);
