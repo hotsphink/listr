@@ -16,7 +16,7 @@ import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.j
 import { appViewMode, setAppViewMode } from "../store/viewMode.js";
 import { themePref, setThemePref, type ThemePreference } from "../store/theme.js";
 import { selectionMode, setSelectionMode } from "../store/selectionMode.js";
-import { useSortable } from "../hooks/useSortable.js";
+import { useSortable, isDragging } from "../hooks/useSortable.js";
 import InlineAddItem, { DUMMY_ITEM_ID } from "../components/InlineAddItem.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
@@ -160,6 +160,55 @@ const ListView: Component = () => {
   let todoLongPressTimer: ReturnType<typeof setTimeout> | null = null;
   let touchStartX = 0;
   let touchStartY = 0;
+
+  // Background drag-to-scroll (desktop): mousedown on empty board background pans horizontally.
+  let bgScrollDragging = false;
+  let bgScrollStartX = 0;
+  let bgScrollStartLeft = 0;
+
+  const handleBoardBackgroundMove = (e: MouseEvent) => {
+    if (!bgScrollDragging || !multiListViewEl) return;
+    multiListViewEl.scrollLeft = bgScrollStartLeft - (e.clientX - bgScrollStartX);
+  };
+
+  const handleBoardBackgroundUp = () => {
+    if (!bgScrollDragging || !multiListViewEl) return;
+    bgScrollDragging = false;
+    multiListViewEl.classList.remove("bg-scroll-dragging");
+    window.removeEventListener("mousemove", handleBoardBackgroundMove);
+    window.removeEventListener("mouseup", handleBoardBackgroundUp);
+
+    // Settle into the nearest snap column now that the drag is done (mirrors useSortable's
+    // edge-scroll-end behavior: scrollSnapType stays "none" until the animation completes).
+    const el = multiListViewEl;
+    const sl = el.scrollLeft;
+    const cols = Array.from(el.children) as HTMLElement[];
+    const nearestLeft = cols.reduce(
+      (best, col) => Math.abs(col.offsetLeft - sl) < Math.abs(best - sl) ? col.offsetLeft : best,
+      cols[0]?.offsetLeft ?? sl,
+    );
+    if (cols.length > 0 && Math.abs(nearestLeft - sl) > 1) {
+      el.addEventListener("scrollend", () => { el.style.scrollSnapType = ""; }, { once: true });
+      el.scrollTo({ left: nearestLeft, behavior: "smooth" });
+    } else {
+      el.style.scrollSnapType = "";
+    }
+  };
+
+  const handleBoardBackgroundDown = (e: MouseEvent) => {
+    // Only plain left-click drags on the board background itself (not a list/column/button
+    // inside it), only in horizontal (list) view mode, and never while an item is being dragged.
+    if (e.button !== 0 || isTouch || isDragging()) return;
+    if (e.target !== multiListViewEl || appViewMode() !== "list" || !multiListViewEl) return;
+    e.preventDefault(); // avoid text-selection while dragging over column contents
+    bgScrollDragging = true;
+    bgScrollStartX = e.clientX;
+    bgScrollStartLeft = multiListViewEl.scrollLeft;
+    multiListViewEl.style.scrollSnapType = "none";
+    multiListViewEl.classList.add("bg-scroll-dragging");
+    window.addEventListener("mousemove", handleBoardBackgroundMove);
+    window.addEventListener("mouseup", handleBoardBackgroundUp);
+  };
 
   const allBoards = from(liveQuery(() => db.boards.orderBy("position").toArray()));
 
@@ -734,7 +783,12 @@ const ListView: Component = () => {
               </div>
             </Show>
 
-            <div class="multi-list-view" classList={{ "multi-list-vertical": appViewMode() !== "list" }} ref={(el) => { multiListViewEl = el; }}>
+            <div
+              class="multi-list-view"
+              classList={{ "multi-list-vertical": appViewMode() !== "list" }}
+              ref={(el) => { multiListViewEl = el; }}
+              onMouseDown={handleBoardBackgroundDown}
+            >
               <For each={visibleLists()}>
                 {(list) => {
                   const items = createMemo(() => itemsForList(list.id));
