@@ -91,18 +91,22 @@ const ReceivePage: Component = () => {
                 </div>
               </Show>
             }>
-              <h2>Board share</h2>
+              <h2>{p().bid ? "Board share" : "Board group share"}</h2>
               <Show when={p().bn}>
                 <div class="receive-board-name">"{p().bn}"</div>
               </Show>
-              <p>Subscribe to this board and sync its data to your device?</p>
+              <p>
+                {p().bid
+                  ? "Subscribe to this board and sync its data to your device?"
+                  : "Subscribe to this board group and sync it to your device? Boards added to or removed from the group later will stay in sync too."}
+              </p>
               <Show when={saveError()}>
                 <div class="field-error">{saveError()}</div>
               </Show>
               <div class="receive-actions">
                 <button class="btn-ghost" type="button" onClick={() => navigate("/")}>Cancel</button>
                 <button class="btn-primary" type="button" disabled={saving()} onClick={accept}>
-                  {saving() ? "Adding…" : "Add Board"}
+                  {saving() ? "Adding…" : p().bid ? "Add Board" : "Add Group"}
                 </button>
               </div>
             </Show>

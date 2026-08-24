@@ -1,8 +1,14 @@
 export interface SharePayload {
   v: 1;
   sk: string;  // sync_key
-  bid: string; // board id
-  bn: string;  // board name (display hint)
+  bid: string; // board id (empty for a whole-group share, not tied to one board)
+  bn: string;  // board or group name (display hint)
+}
+
+/** Generate a fresh random sync key, suitable for a new individual share or board group. */
+export function generateShareKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Encode a share payload as a URL-safe base64 token. */

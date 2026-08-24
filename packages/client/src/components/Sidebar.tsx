@@ -1,10 +1,10 @@
-import { type Component, For, Show, createSignal, createEffect } from "solid-js";
+import { type Component, For, Show, createSignal, createEffect, createMemo } from "solid-js";
 import { useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
-import type { Board, List } from "@listr/shared";
+import type { Board } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createList, createBoard, updateList, deleteList, updateBoard, deleteBoard, removeByKey } from "../db/operations.js";
+import { createBoard, updateBoard, deleteBoard, removeByKey } from "../db/operations.js";
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import BoardFormModal from "./BoardFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
@@ -12,7 +12,8 @@ import BoardShareModal from "./BoardShareModal.js";
 import ScanShareModal from "./ScanShareModal.js";
 import ShareIcon from "./ShareIcon.js";
 import { syncStatus } from "../sync/syncStore.js";
-import { selectedListIds, setSelectedListIds } from "../store/sidebarSelection.js";
+import { generateShareKey } from "../sync/shareToken.js";
+import { collapsedGroups, toggleGroupCollapsed } from "../store/sidebarGroups.js";
 import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
 import { triggerDownload } from "../utils/download.js";
 
@@ -27,26 +28,18 @@ const Sidebar: Component<Props> = (props) => {
 
   const boards = from(liveQuery(() => db.boards.orderBy("position").toArray()));
   const lists = from(liveQuery(() => db.lists.orderBy("position").toArray()));
-  const itemCounts = from(liveQuery(async () => {
-    const allLists = await db.lists.toArray();
-    const entries = await Promise.all(
-      allLists.map(async (l) => [l.id, await db.items.where("list_id").equals(l.id).count()] as const)
-    );
-    return new Map<string, number>(entries);
-  }));
+  const syncConfig = from(liveQuery(() => db.sync_config.get("default")));
+  const defaultSyncKey = () => syncConfig()?.sync_key;
 
-  const itemCountForList = (listId: string) => itemCounts()?.get(listId) ?? 0;
-
-  const [expandedBoardId, setExpandedBoardId] = createSignal<string | null>(null);
-  const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; target: { kind: "list"; list: List } | { kind: "board"; board: Board } } | null>(null);
+  const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; board: Board } | null>(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [editingBoard, setEditingBoard] = createSignal<Board | undefined>();
   const [showCreateBoard, setShowCreateBoard] = createSignal(false);
   const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
   const [sharingBoard, setSharingBoard] = createSignal<Board | undefined>();
+  const [sharingGroup, setSharingGroup] = createSignal<{ key: string; name: string } | undefined>();
+  const [creatingGroupKey, setCreatingGroupKey] = createSignal<string | null>(null);
   const [showScanShare, setShowScanShare] = createSignal(false);
-  const [anchorListId, setAnchorListId] = createSignal<string | null>(null);
-  const [multiListCtxMenu, setMultiListCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
 
   // Reset all transient UI state when the panel closes so stale modals/renames
   // don't reappear on the next open.
@@ -56,121 +49,84 @@ const Sidebar: Component<Props> = (props) => {
       setShowCreateBoard(false);
       setRenamingId(null);
       setContextMenu(null);
-      setMultiListCtxMenu(null);
       setImportScope(null);
+      setCreatingGroupKey(null);
     }
   });
 
   const listsForBoard = (boardId: string) =>
     (lists() ?? []).filter((l) => l.board_id === boardId);
 
-  const toggleBoard = (boardId: string) => {
-    setExpandedBoardId((prev) => (prev === boardId ? null : boardId));
-  };
-
-  const handleContextMenu = (e: MouseEvent, target: { kind: "list"; list: List } | { kind: "board"; board: Board }) => {
-    e.preventDefault();
-    if (target.kind === "list" && selectedListIds().size > 1 && selectedListIds().has(target.list.id)) {
-      setMultiListCtxMenu({ x: e.clientX, y: e.clientY });
-      return;
+  const boardGroups = createMemo(() => {
+    const key = defaultSyncKey();
+    const own: Board[] = [];
+    const shared: Board[] = [];
+    for (const b of boards() ?? []) {
+      (!b.sync_key || b.sync_key === key ? own : shared).push(b);
     }
-    if (target.kind === "list") setSelectedListIds(new Set([target.list.id]));
-    setContextMenu({ x: e.clientX, y: e.clientY, target });
-  };
+    return { own, shared };
+  });
 
   const menuItems = (): MenuItem[] => {
     const ctx = contextMenu();
     if (!ctx) return [];
 
-    if (ctx.target.kind === "list") {
-      const list = ctx.target.list;
-      const board = (boards() ?? []).find((b) => b.id === list.board_id);
-      return [
-        { label: "Rename", action: () => setRenamingId(list.id) },
-        { label: "Edit", action: () => { setSelectedListIds(new Set([list.id])); props.onClose?.(); navigate(`/board/${list.board_id}`, { state: { openSettings: list.id } }); } },
-        { label: "Import", action: () => board && setImportScope({
-            type: "list",
-            id: list.id,
-            name: list.name,
-            schema: board.schema,
-            format_string: list.format_string ?? board.format_string,
-            macros: board.macros ?? {},
-          })
-        },
-        { label: "Export", action: async () => {
-            const data = await exportList(list.id);
-            const date = new Date().toISOString().slice(0, 10);
-            triggerDownload(data, `listr-list-${list.name}-${date}.json`);
+    const board = ctx.board;
+    const canRemove = !!board.sync_key;
+    return [
+      { label: "Rename", action: () => setRenamingId(board.id) },
+      { label: "Edit", action: () => setEditingBoard(board) },
+      { label: "Share", action: () => setSharingBoard(board) },
+      { label: "Import", action: () => setImportScope({
+          type: "board",
+          id: board.id,
+          name: board.name,
+          schema: board.schema,
+          format_string: board.format_string,
+          macros: board.macros ?? {},
+        })
+      },
+      { label: "Export", action: async () => {
+          const data = await exportBoard(board.id);
+          const date = new Date().toISOString().slice(0, 10);
+          triggerDownload(data, `listr-board-${board.name}-${date}.json`);
+        }
+      },
+      ...(canRemove ? [{
+        label: "Remove",
+        action: async () => {
+          const sk = board.sync_key!;
+          const others = (boards() ?? []).filter((b) => b.sync_key === sk && b.id !== board.id);
+          let msg = `Remove "${board.name}" from this device only?`;
+          if (others.length > 0) {
+            const names = others.map((b) => `"${b.name}"`).join(", ");
+            msg += ` This will also remove ${names}, which share${others.length === 1 ? "s" : ""} the same sync key.`;
           }
-        },
-        { label: "Delete", danger: true, action: async () => {
-          if (!confirm(`Delete "${list.name}" and all its items?`)) return;
-          await deleteList(list.id);
-          setSelectedListIds((prev) => { const n = new Set(prev); n.delete(list.id); return n; });
-        }},
-      ];
-    } else {
-      const board = ctx.target.board;
-      const canRemove = !!board.sync_key;
-      return [
-        { label: "Rename", action: () => setRenamingId(board.id) },
-        { label: "Edit", action: () => setEditingBoard(board) },
-        { label: "Share", action: () => setSharingBoard(board) },
-        { label: "Import", action: () => setImportScope({
-            type: "board",
-            id: board.id,
-            name: board.name,
-            schema: board.schema,
-            format_string: board.format_string,
-            macros: board.macros ?? {},
-          })
-        },
-        { label: "Export", action: async () => {
-            const data = await exportBoard(board.id);
-            const date = new Date().toISOString().slice(0, 10);
-            triggerDownload(data, `listr-board-${board.name}-${date}.json`);
-          }
-        },
-        ...(canRemove ? [{
-          label: "Remove",
-          action: async () => {
-            const sk = board.sync_key!;
-            const others = (boards() ?? []).filter((b) => b.sync_key === sk && b.id !== board.id);
-            let msg = `Remove "${board.name}" from this device only?`;
-            if (others.length > 0) {
-              const names = others.map((b) => `"${b.name}"`).join(", ");
-              msg += ` This will also remove ${names}, which share${others.length === 1 ? "s" : ""} the same sync key.`;
-            }
-            msg += " Other devices keeping this sync key are unaffected.";
-            if (!confirm(msg)) return;
-            await removeByKey(sk);
-            props.onClose?.();
-            navigate("/");
-          },
-        }] : []),
-        { label: "Delete", danger: true, action: async () => {
-          const listCount = listsForBoard(board.id).length;
-          const msg = listCount > 0
-            ? `Delete "${board.name}" and its ${listCount} list${listCount > 1 ? "s" : ""} with all items?`
-            : `Delete board "${board.name}"?`;
+          msg += " Other devices keeping this sync key are unaffected.";
           if (!confirm(msg)) return;
-          await deleteBoard(board.id);
+          await removeByKey(sk);
           props.onClose?.();
           navigate("/");
-        }},
-      ];
-    }
+        },
+      }] : []),
+      { label: "Delete", danger: true, action: async () => {
+        const listCount = listsForBoard(board.id).length;
+        const msg = listCount > 0
+          ? `Delete "${board.name}" and its ${listCount} list${listCount > 1 ? "s" : ""} with all items?`
+          : `Delete board "${board.name}"?`;
+        if (!confirm(msg)) return;
+        await deleteBoard(board.id);
+        props.onClose?.();
+        navigate("/");
+      }},
+    ];
   };
 
-  const handleRenameBlur = async (id: string, newName: string, kind: "list" | "board") => {
+  const handleRenameBlur = async (id: string, newName: string) => {
     setRenamingId(null);
     const trimmed = newName.trim();
     if (!trimmed) return;
-    if (kind === "list") {
-      await updateList(id, { name: trimmed });
-    } else {
-      await updateBoard(id, { name: trimmed });
-    }
+    await updateBoard(id, { name: trimmed });
   };
 
   const handleRenameKeyDown = (e: KeyboardEvent) => {
@@ -181,59 +137,38 @@ const Sidebar: Component<Props> = (props) => {
     }
   };
 
-  const handleListClick = (e: MouseEvent, list: List) => {
-    e.stopPropagation();
-    if (e.shiftKey && anchorListId()) {
-      const boardLists = listsForBoard(list.board_id);
-      const ids = boardLists.map((l) => l.id);
-      const a = ids.indexOf(anchorListId()!);
-      const b = ids.indexOf(list.id);
-      if (a !== -1 && b !== -1) {
-        const [lo, hi] = a <= b ? [a, b] : [b, a];
-        const rangeIds = new Set(ids.slice(lo, hi + 1));
-        if (e.ctrlKey || e.metaKey) {
-          setSelectedListIds((prev) => new Set([...prev, ...rangeIds]));
-        } else {
-          setSelectedListIds(rangeIds);
-        }
-        return;
+  const renderBoardRow = (board: Board) => (
+    <Show
+      when={renamingId() === board.id}
+      fallback={
+        <div
+          class="sidebar-item sidebar-board"
+          classList={{ active: location.pathname === `/board/${board.id}` }}
+          style={`border-left: 3px solid ${board.color}`}
+          onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }}
+          onDblClick={() => setEditingBoard(board)}
+          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, board }); }}
+        >
+          <span class="sidebar-board-name">
+            {board.name}
+            <Show when={board.sync_key}>
+              <ShareIcon class="sidebar-board-shared-icon" />
+            </Show>
+          </span>
+        </div>
       }
-    }
-    if (e.ctrlKey || e.metaKey) {
-      setAnchorListId(list.id);
-      setSelectedListIds((prev) => {
-        const next = new Set(prev);
-        next.has(list.id) ? next.delete(list.id) : next.add(list.id);
-        return next;
-      });
-      return;
-    }
-    setAnchorListId(list.id);
-    if (selectedListIds().size === 1 && selectedListIds().has(list.id)) {
-      setSelectedListIds(new Set<string>());
-    } else {
-      setSelectedListIds(new Set([list.id]));
-    }
-    navigate(`/board/${list.board_id}`);
-  };
-
-  const deleteSelectedLists = async () => {
-    const ids = [...selectedListIds()];
-    if (!confirm(`Delete ${ids.length} list${ids.length !== 1 ? "s" : ""} and all their items?`)) return;
-    for (const id of ids) {
-      await deleteList(id);
-    }
-    setSelectedListIds(new Set<string>());
-    setMultiListCtxMenu(null);
-  };
-
-  const handleNewList = async (boardId: string) => {
-    const list = await createList("New List", boardId);
-    setRenamingId(list.id);
-    setSelectedListIds(new Set([list.id]));
-    props.onClose?.();
-    navigate(`/board/${boardId}`);
-  };
+    >
+      <div class="sidebar-item sidebar-board">
+        <input
+          class="sidebar-rename-input"
+          value={board.name}
+          onBlur={(e) => handleRenameBlur(board.id, e.currentTarget.value)}
+          onKeyDown={handleRenameKeyDown}
+          ref={(el) => setTimeout(() => { el.focus(); el.select(); }, 0)}
+        />
+      </div>
+    </Show>
+  );
 
   return (
     <nav class="sidebar" classList={{ open: props.open ?? false }}>
@@ -245,88 +180,54 @@ const Sidebar: Component<Props> = (props) => {
         Listr
       </div>
       <div class="sidebar-content">
-        <For each={boards() ?? []}>
-          {(board) => {
-            const isExpanded = () => expandedBoardId() === board.id;
-            return (
-              <div class="sidebar-board">
-                <Show
-                  when={renamingId() === board.id}
-                  fallback={
-                    <div
-                      class="sidebar-board-header"
-                      classList={{ expanded: isExpanded() }}
-                      style={`border-left: 3px solid ${board.color}`}
-                      onContextMenu={(e) => handleContextMenu(e, { kind: "board", board })}
-                    >
-                      <span class="sidebar-board-chevron" onClick={(e) => { e.stopPropagation(); toggleBoard(board.id); }}>{isExpanded() ? "▾" : "▸"}</span>
-                      <span class="sidebar-board-name" onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }} onDblClick={() => setEditingBoard(board)}>
-                        {board.name}
-                        <Show when={board.sync_key}>
-                          <ShareIcon class="sidebar-board-shared-icon" />
-                        </Show>
-                      </span>
-                      <span class="sidebar-board-count">{listsForBoard(board.id).length}</span>
-                    </div>
-                  }
-                >
-                  <div class="sidebar-board-header" style={`border-left: 3px solid ${board.color}`}>
-                    <input
-                      class="sidebar-rename-input"
-                      value={board.name}
-                      onBlur={(e) => handleRenameBlur(board.id, e.currentTarget.value, "board")}
-                      onKeyDown={handleRenameKeyDown}
-                      ref={(el) => setTimeout(() => { el.focus(); el.select(); }, 0)}
-                    />
-                  </div>
-                </Show>
-                <div class="sidebar-board-lists-wrapper" classList={{ expanded: isExpanded() }}>
-                  <div class="sidebar-board-lists">
-                    <For each={listsForBoard(board.id)}>
-                      {(list) => (
-                        <Show
-                          when={renamingId() === list.id}
-                          fallback={
-                            <div
-                              class="sidebar-item"
-                              classList={{ active: selectedListIds().has(list.id) && location.pathname === `/board/${list.board_id}`, selected: selectedListIds().has(list.id) }}
-                              onClick={(e) => handleListClick(e, list)}
-                              onContextMenu={(e) => handleContextMenu(e, { kind: "list", list })}
-                            >
-                              {list.name}
-                              <span class="sidebar-item-count">{itemCountForList(list.id)}</span>
-                            </div>
-                          }
-                        >
-                          <div class="sidebar-item">
-                            <input
-                              class="sidebar-rename-input"
-                              value={list.name}
-                              onBlur={(e) => handleRenameBlur(list.id, e.currentTarget.value, "list")}
-                              onKeyDown={handleRenameKeyDown}
-                              ref={(el) => setTimeout(() => { el.focus(); el.select(); }, 0)}
-                            />
-                          </div>
-                        </Show>
-                      )}
-                    </For>
-                    <div
-                      class="sidebar-item sidebar-new"
-                      onClick={() => handleNewList(board.id)}
-                    >
-                      + New List
-                    </div>
-                  </div>
-                </div>
+        <div class="sidebar-group">
+          <div class="sidebar-group-header" onClick={() => toggleGroupCollapsed("own")}>
+            <span class="sidebar-group-chevron">{collapsedGroups().has("own") ? "▸" : "▾"}</span>
+            <span class="sidebar-group-title">My Boards</span>
+            <Show when={defaultSyncKey()}>
+              <button
+                class="sidebar-group-share-btn"
+                type="button"
+                title="Share My Boards"
+                aria-label="Share My Boards"
+                onClick={(e) => { e.stopPropagation(); setSharingGroup({ key: defaultSyncKey()!, name: "My Boards" }); }}
+              >
+                <ShareIcon />
+              </button>
+            </Show>
+          </div>
+          <div class="sidebar-group-boards-wrapper" classList={{ expanded: !collapsedGroups().has("own") }}>
+            <div class="sidebar-group-boards">
+              <For each={boardGroups().own}>{renderBoardRow}</For>
+            </div>
+          </div>
+        </div>
+
+        <Show when={boardGroups().shared.length > 0}>
+          <div class="sidebar-group">
+            <div class="sidebar-group-header" onClick={() => toggleGroupCollapsed("shared")}>
+              <span class="sidebar-group-chevron">{collapsedGroups().has("shared") ? "▸" : "▾"}</span>
+              <span class="sidebar-group-title">Shared Boards</span>
+            </div>
+            <div class="sidebar-group-boards-wrapper" classList={{ expanded: !collapsedGroups().has("shared") }}>
+              <div class="sidebar-group-boards">
+                <For each={boardGroups().shared}>{renderBoardRow}</For>
               </div>
-            );
-          }}
-        </For>
+            </div>
+          </div>
+        </Show>
+
         <div
           class="sidebar-item sidebar-new board"
           onClick={() => setShowCreateBoard(true)}
         >
           + New Board
+        </div>
+        <div
+          class="sidebar-item sidebar-new"
+          onClick={() => setCreatingGroupKey(generateShareKey())}
+        >
+          + New Board Group
         </div>
         <div
           class="sidebar-item sidebar-new"
@@ -361,17 +262,6 @@ const Sidebar: Component<Props> = (props) => {
         </div>
       </div>
 
-      <Show when={multiListCtxMenu()}>
-        {(pos) => (
-          <ContextMenu
-            x={pos().x}
-            y={pos().y}
-            items={[{ label: `Delete ${selectedListIds().size} lists`, danger: true, action: deleteSelectedLists }]}
-            onClose={() => setMultiListCtxMenu(null)}
-          />
-        )}
-      </Show>
-
       <Show when={contextMenu()}>
         {(ctx) => (
           <ContextMenu
@@ -384,9 +274,10 @@ const Sidebar: Component<Props> = (props) => {
       </Show>
 
       <BoardShareModal
-        open={sharingBoard() !== undefined}
-        onClose={() => setSharingBoard(undefined)}
+        open={sharingBoard() !== undefined || sharingGroup() !== undefined}
+        onClose={() => { setSharingBoard(undefined); setSharingGroup(undefined); }}
         board={sharingBoard()}
+        group={sharingGroup()}
       />
 
       <ScanShareModal
@@ -411,6 +302,18 @@ const Sidebar: Component<Props> = (props) => {
         onSave={async (data) => {
           await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, data.sync_key || undefined);
           setShowCreateBoard(false);
+        }}
+      />
+
+      <BoardFormModal
+        open={creatingGroupKey() !== null}
+        onClose={() => setCreatingGroupKey(null)}
+        defaultSyncKey={creatingGroupKey() ?? undefined}
+        onSave={async (data) => {
+          const key = creatingGroupKey();
+          const board = await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, data.sync_key || key || undefined);
+          setCreatingGroupKey(null);
+          setSharingBoard(board);
         }}
       />
 

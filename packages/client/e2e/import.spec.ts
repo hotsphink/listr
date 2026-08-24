@@ -86,7 +86,7 @@ test.describe("import modal", () => {
 
   test("Import from board context menu opens scoped modal", async ({ page }) => {
     await createBoard(page, "Movies");
-    await page.locator(".sidebar-board-header", { hasText: "Movies" }).click({ button: "right" });
+    await page.locator(".sidebar-board", { hasText: "Movies" }).click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Import" }).click();
     await expect(page.locator(".modal h2")).toHaveText("Import");
     await expect(page.locator(".modal")).toContainText('into "Movies"');
@@ -208,7 +208,7 @@ test.describe("import modal", () => {
       }],
     });
 
-    await page.locator(".sidebar-board-header", { hasText: "Movies" }).click({ button: "right" });
+    await page.locator(".sidebar-board", { hasText: "Movies" }).click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Import" }).click();
     await uploadFakeImage(page);
 
@@ -224,12 +224,11 @@ test.describe("import modal", () => {
       boards: [{ name: "items", lists: [{ name: "items", items: [{ title: "Inception" }, { title: "The Matrix" }] }] }],
     });
 
-    // Create a list in the board (expands via the chevron, then "+ New List").
     await createListInBoard(page, "Watchlist", "Movies");
 
-    // Right-click the list and choose Import
-    const listItem = page.locator(".sidebar-item", { hasText: "Watchlist" });
-    await listItem.click({ button: "right" });
+    // Right-click the list column header and choose Import
+    const listHeader = page.locator(".multi-list-column-header", { hasText: "Watchlist" });
+    await listHeader.click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Import" }).click();
 
     await expect(page.locator(".modal h2")).toHaveText("Import");

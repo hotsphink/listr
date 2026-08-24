@@ -44,6 +44,28 @@ export async function clearDatabase(page: Page) {
   await page.waitForSelector(".sidebar");
 }
 
+/** Set the device's default sync key directly in IndexedDB (bypassing the Admin page UI). */
+export async function setDefaultSyncKey(page: Page, key: string) {
+  await page.evaluate((syncKey) => {
+    return new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open("listr");
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction("sync_config", "readwrite");
+        const store = tx.objectStore("sync_config");
+        const getReq = store.get("default");
+        getReq.onsuccess = () => {
+          const existing = getReq.result ?? { id: "default", sync_url: "", client_id: crypto.randomUUID(), enabled: false, last_sync_at: 0 };
+          store.put({ ...existing, sync_key: syncKey });
+        };
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }, key);
+}
+
 export async function fillSchemaField(page: Page, input: Locator, value: string) {
   await input.click({ clickCount: 3 });
   await page.keyboard.type(value);
@@ -90,24 +112,16 @@ export async function createBoard(
 export async function createListInBoard(
   page: Page,
   name: string,
-  boardName?: string,
+  boardName: string,
 ) {
-  if (boardName) {
-    const catSection = page.locator(".sidebar-board").filter({
-      has: page.locator(".sidebar-board-header", { hasText: boardName }),
-    });
-    const listsDiv = catSection.locator(".sidebar-board-lists");
-    if (!(await listsDiv.isVisible())) {
-      await catSection.locator(".sidebar-board-chevron").click();
-      await listsDiv.waitFor({ state: "visible" });
-    }
-    await catSection.locator(".sidebar-item.sidebar-new").click();
-  } else {
-    await page.locator(".sidebar-board-lists .sidebar-item.sidebar-new").first().click();
-  }
-  const renameInput = page.locator(".sidebar-rename-input").last();
-  await renameInput.waitFor({ state: "visible" });
-  await renameInput.fill(name);
-  await renameInput.press("Enter");
+  const boardRow = page.locator(".sidebar-board").filter({ hasText: boardName });
+  await boardRow.click();
   await page.waitForSelector(".page-header");
+
+  await page.locator(".multi-list-new-column").click();
+  const modal = page.locator(".modal");
+  await modal.waitFor({ state: "visible" });
+  await modal.locator(".form-field input").first().fill(name);
+  await modal.getByRole("button", { name: "Save" }).click();
+  await modal.waitFor({ state: "hidden" });
 }

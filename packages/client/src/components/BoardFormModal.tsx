@@ -25,6 +25,8 @@ interface Props {
     integrations: Integration[];
   }) => Promise<void> | void;
   initial?: Board;
+  /** Pre-fill the share key when creating a new board (e.g. starting a fresh board group). Ignored when editing. */
+  defaultSyncKey?: string;
 }
 
 const BoardFormModal: Component<Props> = (props) => {
@@ -70,7 +72,7 @@ const BoardFormModal: Component<Props> = (props) => {
       setFormatStr(props.initial?.format_string ?? "{title}");
       setMacros(props.initial?.macros ?? {});
       setSchema(props.initial?.schema ?? []);
-      setBoardSyncKey(props.initial?.sync_key ?? "");
+      setBoardSyncKey(props.initial?.sync_key ?? props.defaultSyncKey ?? "");
       setIntegrations(props.initial?.integrations ?? []);
       setFormatManuallyEdited(!!props.initial);
       setNameError(null);
@@ -258,7 +260,7 @@ const BoardFormModal: Component<Props> = (props) => {
       <div class="modal-page-header">
         <button class="modal-page-back" type="button" onClick={props.onClose} aria-label="Back">←</button>
       </div>
-      <h2>{props.initial ? "Edit Board" : "New Board"}</h2>
+      <h2>{props.initial ? "Edit Board" : props.defaultSyncKey ? "New Board Group" : "New Board"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-row">
           <div class="form-field" style="flex: 1">

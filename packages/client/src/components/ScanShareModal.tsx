@@ -195,11 +195,15 @@ const ScanShareModal: Component<Props> = (props) => {
               </Show>
               <div class="field-hint">Key: <code>{payload().sk}</code></div>
             </div>
-            <p>Subscribe to this board and sync its data?</p>
+            <p>
+              {payload().bid
+                ? "Subscribe to this board and sync its data?"
+                : "Subscribe to this board group and sync it? Boards added to or removed from the group later will stay in sync too."}
+            </p>
             <div class="modal-actions">
               <button class="btn-ghost" type="button" onClick={reset}>Back</button>
               <button class="btn-primary" type="button" disabled={saving()} onClick={() => acceptShare(payload())}>
-                {saving() ? "Adding…" : "Add Board"}
+                {saving() ? "Adding…" : payload().bid ? "Add Board" : "Add Group"}
               </button>
             </div>
           </div>

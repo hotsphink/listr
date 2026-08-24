@@ -3,17 +3,19 @@ import type { Board } from "@listr/shared";
 import QRCode from "qrcode";
 import Modal from "./Modal.js";
 import { updateBoard } from "../db/operations.js";
-import { makeShareUrl, type SharePayload } from "../sync/shareToken.js";
-
-function generateShareKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
+import { makeShareUrl, generateShareKey, type SharePayload } from "../sync/shareToken.js";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  board: Board | undefined;
+  /** Share one specific board — generates+persists a sync_key on it if it doesn't have one. */
+  board?: Board;
+  /**
+   * Share a whole board group by its sync_key directly (no board id), so the set of
+   * boards under that key — and any future additions/removals — stays synced for
+   * whoever accepts. Used for e.g. sharing your entire "My Boards" group.
+   */
+  group?: { key: string; name: string };
 }
 
 const BoardShareModal: Component<Props> = (props) => {
@@ -23,9 +25,12 @@ const BoardShareModal: Component<Props> = (props) => {
   let urlCopyTimer: ReturnType<typeof setTimeout> | null = null;
   onCleanup(() => { if (urlCopyTimer) clearTimeout(urlCopyTimer); });
 
+  const title = () => props.board?.name ?? props.group?.name ?? "";
+
   createEffect(() => {
     const board = props.board;
-    if (!props.open || !board) {
+    const group = props.group;
+    if (!props.open || (!board && !group)) {
       setShareUrl(null);
       setQrDataUrl(null);
       return;
@@ -33,14 +38,19 @@ const BoardShareModal: Component<Props> = (props) => {
 
     let cancelled = false;
     (async () => {
-      let key = board.sync_key;
-      if (!key) {
-        key = generateShareKey();
-        await updateBoard(board.id, { sync_key: key });
+      let payload: SharePayload;
+      if (board) {
+        let key = board.sync_key;
+        if (!key) {
+          key = generateShareKey();
+          await updateBoard(board.id, { sync_key: key });
+        }
+        payload = { v: 1, sk: key, bid: board.id, bn: board.name };
+      } else {
+        payload = { v: 1, sk: group!.key, bid: "", bn: group!.name };
       }
       if (cancelled) return;
 
-      const payload: SharePayload = { v: 1, sk: key, bid: board.id, bn: board.name };
       const url = makeShareUrl(payload);
       setShareUrl(url);
 
@@ -62,7 +72,12 @@ const BoardShareModal: Component<Props> = (props) => {
 
   return (
     <Modal open={props.open} onClose={props.onClose} class="board-share">
-      <h2>Share "{props.board?.name}"</h2>
+      <h2>Share "{title()}"</h2>
+      <Show when={props.group}>
+        <div class="field-hint" style="margin-bottom: 8px">
+          Anyone who accepts this link gets the whole group — boards added or removed later stay in sync too.
+        </div>
+      </Show>
       <Show
         when={qrDataUrl()}
         fallback={<div class="share-loading">Generating…</div>}

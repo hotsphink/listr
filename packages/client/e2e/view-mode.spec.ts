@@ -65,8 +65,8 @@ test.describe("view mode switching", () => {
     await page.locator(".view-switcher-btn", { hasText: "Cards" }).click();
     await expect(page.locator(".card-grid")).toBeVisible();
 
-    // Navigate via the sidebar list item; still the same board, view mode persists.
-    await page.locator(".sidebar-item", { hasText: "My Movies" }).click();
+    // Navigate via the sidebar board row; still the same board, view mode persists.
+    await page.locator(".sidebar-board", { hasText: "Movies" }).click();
     await expect(page.locator(".page-header h1")).toHaveText("Movies");
     await expect(page.locator(".view-switcher-btn.active")).toHaveText("Cards");
     await expect(page.locator(".card-grid")).toBeVisible();
