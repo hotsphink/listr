@@ -4,7 +4,7 @@ import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import type { Board } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createBoard, updateBoard, deleteBoard, removeByKey, markBoardGroup } from "../db/operations.js";
+import { createBoard, updateBoard, deleteBoard, removeByKey } from "../db/operations.js";
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import BoardFormModal from "./BoardFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
@@ -334,7 +334,12 @@ const Sidebar: Component<Props> = (props) => {
         open={showCreateBoard()}
         onClose={() => setShowCreateBoard(false)}
         onSave={async (data) => {
-          await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, data.sync_key || undefined);
+          await createBoard(data.name, data.color, {
+            schema: data.schema,
+            formatString: data.format_string,
+            macros: data.macros,
+            syncKey: data.sync_key || undefined,
+          });
           setShowCreateBoard(false);
         }}
       />
@@ -346,9 +351,14 @@ const Sidebar: Component<Props> = (props) => {
         onSave={async (data) => {
           const key = creatingGroupKey();
           const finalKey = data.sync_key || key || undefined;
-          await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, finalKey);
+          await createBoard(data.name, data.color, {
+            schema: data.schema,
+            formatString: data.format_string,
+            macros: data.macros,
+            syncKey: finalKey,
+            groupName: finalKey ? data.name : undefined,
+          });
           setCreatingGroupKey(null);
-          if (finalKey) await markBoardGroup(finalKey, data.name);
         }}
       />
 

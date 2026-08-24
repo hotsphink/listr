@@ -1,4 +1,5 @@
 import { db } from "../db/database.js";
+import { removeKeyLocal } from "../db/keyCleanup.js";
 import type { Board, List } from "@listr/shared";
 import { PROTOCOL_VERSION } from "./protocol.js";
 import { setSyncStatus, setSyncStatusMessage } from "./syncStore.js";
@@ -519,6 +520,15 @@ class SyncClient {
   }
 
   private async doInitialSync(send: (msg: unknown) => void): Promise<void> {
+    // Re-assert every locally-known board group's name on each (re)connect.
+    // associateKey() is fire-and-forget and can be dropped — e.g. the very
+    // call that names a freshly-created group races with the connection
+    // restart that recomputeAllKeys() triggers when the new key first appears
+    // in allKeys. Redoing this on every connect (idempotent server-side) makes
+    // it eventually consistent instead of a single best-effort attempt.
+    const groups = await db.board_groups.toArray();
+    for (const g of groups) this.associateKey(g.key, g.name);
+
     // Fetch per-key since timestamps
     const keyStates = await db.key_sync_state.bulkGet(this.allKeys);
     const sinceByKey = new Map(this.allKeys.map((k, i) => [k, keyStates[i]?.last_sync_at ?? 0]));
@@ -582,6 +592,13 @@ class SyncClient {
       this.mergeEntity(msg.entity_type as EntityType, msg.data).catch(console.error);
     } else if (msg.type === "deleted") {
       this.applyTombstone(msg.entity_type, msg.entity_id, msg.deleted_at).catch(console.error);
+    } else if (msg.type === "user_key_added") {
+      // A sibling connection for this same user associated a key (new board
+      // group, or a name being set on one) — adopt it the same way we would
+      // from ok.user_keys, which cascades into pulling its data normally.
+      this.adoptUserKeys([{ key: msg.key, name: msg.name ?? null }]);
+    } else if (msg.type === "user_key_removed") {
+      removeKeyLocal(msg.key).catch(console.error);
     } else if (msg.type === "error") {
       console.error("Sync error:", msg.message);
     }

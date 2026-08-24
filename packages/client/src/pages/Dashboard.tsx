@@ -59,7 +59,13 @@ const Dashboard: Component = () => {
   };
 
   const handleCreateBoard = async (data: { name: string; color: string; format_string: string; schema: any[]; macros: Record<string, string>; sync_key: string; integrations: Integration[] }) => {
-    await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, data.sync_key || undefined, data.integrations.length ? data.integrations : undefined);
+    await createBoard(data.name, data.color, {
+      schema: data.schema,
+      formatString: data.format_string,
+      macros: data.macros,
+      syncKey: data.sync_key || undefined,
+      integrations: data.integrations.length ? data.integrations : undefined,
+    });
     setShowCreateBoard(false);
   };
 

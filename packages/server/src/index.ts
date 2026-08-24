@@ -102,6 +102,13 @@ const wss = new WebSocketServer({ server: httpServer });
 // sync_key → connected clients (a client may appear under multiple keys)
 const keyToClients = new Map<string, Set<WebSocket>>();
 
+// default_key ("user") → every currently-open connection presenting that
+// default_key, regardless of which other sync_keys it's subscribed to. Used
+// to tell a user's *other* already-open connections about a key they didn't
+// know about yet (or one they should drop), without waiting for their next
+// reconnect — see notifyUserKeyChange/notifyUserKeyRemoved below.
+const defaultKeyToClients = new Map<string, Set<WebSocket>>();
+
 const ts = () => new Date().toISOString();
 const keyTag = (keys: string[]) => `[${keys.map((k) => k.slice(0, 6)).join("+")}]`;
 
@@ -114,11 +121,35 @@ function broadcast(syncKey: string, sender: WebSocket | null, msg: unknown): voi
   }
 }
 
+// Tell a user's other open connections a key now belongs to them (new
+// association, or a name being set/changed on one they already had). The
+// client just needs the key (and name) — receiving it is enough to make the
+// client mark that key locally, which cascades through its own
+// recompute-and-reconnect into pulling the key's actual data normally.
+function notifyUserKeyChange(userKey: string, key: string, name: string | null, sender: WebSocket): void {
+  const clients = defaultKeyToClients.get(userKey);
+  if (!clients) return;
+  const json = JSON.stringify({ type: "user_key_added", key, name });
+  for (const client of clients) {
+    if (client !== sender && client.readyState === WebSocket.OPEN) client.send(json);
+  }
+}
+
+function notifyUserKeyRemoved(userKey: string, key: string, sender: WebSocket): void {
+  const clients = defaultKeyToClients.get(userKey);
+  if (!clients) return;
+  const json = JSON.stringify({ type: "user_key_removed", key });
+  for (const client of clients) {
+    if (client !== sender && client.readyState === WebSocket.OPEN) client.send(json);
+  }
+}
+
 const integrationRunner = new IntegrationRunner(db, INTEGRATIONS, config.integrations ?? {}, broadcast);
 integrationRunner.startPeriodicRefresh();
 
 wss.on("connection", (ws: WebSocket) => {
   let syncKeys: string[] = [];
+  let userKey: string | null = null; // this connection's default_key, once hello arrives
   let clientId: string | null = null;
   let connectedAt = 0;
   const pushCounts: Partial<Record<string, number>> = {};
@@ -155,12 +186,19 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       // Auto-associate every key this client presents (other than its own default)
-      // with its user, so this user's other devices learn about it too.
+      // with its user, so this user's other devices learn about it too. Track which
+      // ones are genuinely new so we only notify siblings about those, not every
+      // key on every reconnect.
+      const knownBefore = new Set(getUserKeys(defaultKey).map((u) => u.key));
+      const newlyAssociated: string[] = [];
       for (const k of validKeys) {
-        if (k !== defaultKey) associateUserKey(defaultKey, k, null);
+        if (k === defaultKey) continue;
+        associateUserKey(defaultKey, k, null);
+        if (!knownBefore.has(k)) newlyAssociated.push(k);
       }
       const userKeys = getUserKeys(defaultKey);
       syncKeys = [...new Set([...validKeys, ...userKeys.map((u) => u.key)])];
+      userKey = defaultKey;
       clientId = typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?";
       connectedAt = Date.now();
 
@@ -168,6 +206,9 @@ wss.on("connection", (ws: WebSocket) => {
         if (!keyToClients.has(k)) keyToClients.set(k, new Set());
         keyToClients.get(k)!.add(ws);
       }
+      if (!defaultKeyToClients.has(defaultKey)) defaultKeyToClients.set(defaultKey, new Set());
+      defaultKeyToClients.get(defaultKey)!.add(ws);
+      for (const k of newlyAssociated) notifyUserKeyChange(defaultKey, k, null, ws);
 
       console.log(`[ws] ${ts()} ${keyTag(syncKeys)} connect client=${clientId} protocol=${clientVersion} keys=${syncKeys.length}`);
       ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION, user_keys: userKeys }));
@@ -274,6 +315,10 @@ wss.on("connection", (ws: WebSocket) => {
         if (!keyToClients.has(key)) keyToClients.set(key, new Set());
         keyToClients.get(key)!.add(ws);
         if (!syncKeys.includes(key)) syncKeys.push(key);
+        // Resolve the actual stored name (associateUserKey never clobbers an
+        // existing name with null) so siblings learn the real current value.
+        const current = getUserKeys(defaultKey).find((u) => u.key === key);
+        notifyUserKeyChange(defaultKey, key, current?.name ?? null, ws);
       }
       return;
     }
@@ -285,12 +330,20 @@ wss.on("connection", (ws: WebSocket) => {
         removeUserKey(defaultKey, key);
         keyToClients.get(key)?.delete(ws);
         syncKeys = syncKeys.filter((k) => k !== key);
+        notifyUserKeyRemoved(defaultKey, key, ws);
       }
       return;
     }
   });
 
   ws.on("close", () => {
+    if (userKey) {
+      const set = defaultKeyToClients.get(userKey);
+      if (set) {
+        set.delete(ws);
+        if (set.size === 0) defaultKeyToClients.delete(userKey);
+      }
+    }
     for (const key of syncKeys) {
       const set = keyToClients.get(key);
       if (set) {

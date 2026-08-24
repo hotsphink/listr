@@ -1,5 +1,6 @@
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
+import { removeKeyLocal } from "./keyCleanup.js";
 import { ENTITY_SCHEMA_VERSION, isCurrentSchemaVersion, type Board, type List, type Item, type AttributeDefinition, type Integration, type ViewMode } from "@listr/shared";
 
 // Boards and lists still use numeric `position` ordering; only items moved to
@@ -250,15 +251,22 @@ function now(): number {
 
 // --- Boards ---
 
+export interface CreateBoardOptions {
+  schema?: AttributeDefinition[];
+  formatString?: string;
+  macros?: Record<string, string>;
+  syncKey?: string;
+  integrations?: Integration[];
+  /** Pass when this board is starting a new named board group, so the key is associated with the right name from the very first (and only) associate_key call. */
+  groupName?: string;
+}
+
 export async function createBoard(
   name: string,
   color: string,
-  schema: AttributeDefinition[] = [],
-  formatString: string = "{title}",
-  macros?: Record<string, string>,
-  syncKey?: string,
-  integrations?: Integration[],
+  options: CreateBoardOptions = {},
 ): Promise<Board> {
+  const { schema = [], formatString = "{title}", macros, syncKey, integrations, groupName } = options;
   const maxPos = await db.boards.orderBy("position").last();
   const board: Board = {
     id: generateId(),
@@ -276,7 +284,10 @@ export async function createBoard(
   };
   await db.boards.add(board);
   syncClient.pushEntity("board", board);
-  if (syncKey) syncClient.associateKey(syncKey);
+  if (syncKey) {
+    if (groupName) await db.board_groups.put({ key: syncKey, name: groupName, created_at: now() });
+    syncClient.associateKey(syncKey, groupName);
+  }
   return board;
 }
 
@@ -317,21 +328,7 @@ export async function deleteBoard(id: string): Promise<void> {
  * Other clients keeping the same sync_key are unaffected.
  */
 export async function removeByKey(syncKey: string): Promise<void> {
-  const boards = await db.boards.filter((b) => b.sync_key === syncKey).toArray();
-
-  await db.transaction("rw", [db.boards, db.lists, db.items], async () => {
-    for (const board of boards) {
-      const lists = await db.lists.where("board_id").equals(board.id).toArray();
-      for (const list of lists) {
-        await db.items.where("list_id").equals(list.id).delete();
-      }
-      await db.lists.where("board_id").equals(board.id).delete();
-      await db.boards.delete(board.id);
-    }
-  });
-
-  await db.shared_keys.delete(syncKey);
-  await db.board_groups.delete(syncKey);
+  await removeKeyLocal(syncKey);
   syncClient.leaveKey(syncKey);
 }
 
