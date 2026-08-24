@@ -1,0 +1,17 @@
+[Unit]
+Description=Listr sync server (production)
+After=network.target
+
+[Service]
+Type=simple
+User=sfink
+WorkingDirectory=/home/sfink/firefox/listr-prod
+Environment=PATH=/usr/bin:/usr/local/bin:/home/sfink/.local/share/pnpm/bin
+ExecStart=/home/sfink/.local/share/pnpm/bin/pnpm prod-server
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

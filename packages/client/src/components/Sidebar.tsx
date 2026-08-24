@@ -4,7 +4,7 @@ import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import type { Board } from "@listr/shared";
 import { db } from "../db/database.js";
-import { createBoard, updateBoard, deleteBoard, removeByKey } from "../db/operations.js";
+import { createBoard, updateBoard, deleteBoard, removeByKey, markBoardGroup } from "../db/operations.js";
 import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import BoardFormModal from "./BoardFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
@@ -30,6 +30,7 @@ const Sidebar: Component<Props> = (props) => {
   const lists = from(liveQuery(() => db.lists.orderBy("position").toArray()));
   const syncConfig = from(liveQuery(() => db.sync_config.get("default")));
   const defaultSyncKey = () => syncConfig()?.sync_key;
+  const groupMeta = from(liveQuery(() => db.board_groups.toArray()));
 
   const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; board: Board } | null>(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
@@ -57,14 +58,33 @@ const Sidebar: Component<Props> = (props) => {
   const listsForBoard = (boardId: string) =>
     (lists() ?? []).filter((l) => l.board_id === boardId);
 
+  // Partition boards into "My Boards" (default key), named board groups (a
+  // non-default key explicitly marked as a group — e.g. created via "New Board
+  // Group" or accepted from a group share link), and a catch-all "Shared Boards"
+  // bucket for everything else — including boards that merely happen to share a
+  // sync_key without ever having been deliberately grouped.
   const boardGroups = createMemo(() => {
     const key = defaultSyncKey();
     const own: Board[] = [];
-    const shared: Board[] = [];
+    const byOtherKey = new Map<string, Board[]>();
     for (const b of boards() ?? []) {
-      (!b.sync_key || b.sync_key === key ? own : shared).push(b);
+      if (!b.sync_key || b.sync_key === key) { own.push(b); continue; }
+      const list = byOtherKey.get(b.sync_key);
+      if (list) list.push(b); else byOtherKey.set(b.sync_key, [b]);
     }
-    return { own, shared };
+
+    const metaByKey = new Map((groupMeta() ?? []).map((m) => [m.key, m.name]));
+    const namedGroups: { key: string; name: string; boards: Board[] }[] = [];
+    const singles: Board[] = [];
+    for (const [k, bds] of byOtherKey) {
+      const explicitName = metaByKey.get(k);
+      if (explicitName) {
+        namedGroups.push({ key: k, name: explicitName, boards: bds });
+      } else {
+        singles.push(...bds);
+      }
+    }
+    return { own, namedGroups, singles };
   });
 
   const menuItems = (): MenuItem[] => {
@@ -137,6 +157,24 @@ const Sidebar: Component<Props> = (props) => {
     }
   };
 
+  const renderGroupHeader = (groupKey: string, name: string, shareKey?: string) => (
+    <div class="sidebar-group-header" onClick={() => toggleGroupCollapsed(groupKey)}>
+      <span class="sidebar-group-chevron">{collapsedGroups().has(groupKey) ? "▸" : "▾"}</span>
+      <span class="sidebar-group-title">{name}</span>
+      <Show when={shareKey}>
+        <button
+          class="sidebar-group-share-btn"
+          type="button"
+          title={`Share ${name}`}
+          aria-label={`Share ${name}`}
+          onClick={(e) => { e.stopPropagation(); setSharingGroup({ key: shareKey!, name }); }}
+        >
+          <ShareIcon />
+        </button>
+      </Show>
+    </div>
+  );
+
   const renderBoardRow = (board: Board) => (
     <Show
       when={renamingId() === board.id}
@@ -181,21 +219,7 @@ const Sidebar: Component<Props> = (props) => {
       </div>
       <div class="sidebar-content">
         <div class="sidebar-group">
-          <div class="sidebar-group-header" onClick={() => toggleGroupCollapsed("own")}>
-            <span class="sidebar-group-chevron">{collapsedGroups().has("own") ? "▸" : "▾"}</span>
-            <span class="sidebar-group-title">My Boards</span>
-            <Show when={defaultSyncKey()}>
-              <button
-                class="sidebar-group-share-btn"
-                type="button"
-                title="Share My Boards"
-                aria-label="Share My Boards"
-                onClick={(e) => { e.stopPropagation(); setSharingGroup({ key: defaultSyncKey()!, name: "My Boards" }); }}
-              >
-                <ShareIcon />
-              </button>
-            </Show>
-          </div>
+          {renderGroupHeader("own", "My Boards", defaultSyncKey())}
           <div class="sidebar-group-boards-wrapper" classList={{ expanded: !collapsedGroups().has("own") }}>
             <div class="sidebar-group-boards">
               <For each={boardGroups().own}>{renderBoardRow}</For>
@@ -203,15 +227,25 @@ const Sidebar: Component<Props> = (props) => {
           </div>
         </div>
 
-        <Show when={boardGroups().shared.length > 0}>
-          <div class="sidebar-group">
-            <div class="sidebar-group-header" onClick={() => toggleGroupCollapsed("shared")}>
-              <span class="sidebar-group-chevron">{collapsedGroups().has("shared") ? "▸" : "▾"}</span>
-              <span class="sidebar-group-title">Shared Boards</span>
+        <For each={boardGroups().namedGroups}>
+          {(group) => (
+            <div class="sidebar-group">
+              {renderGroupHeader(group.key, group.name, group.key)}
+              <div class="sidebar-group-boards-wrapper" classList={{ expanded: !collapsedGroups().has(group.key) }}>
+                <div class="sidebar-group-boards">
+                  <For each={group.boards}>{renderBoardRow}</For>
+                </div>
+              </div>
             </div>
+          )}
+        </For>
+
+        <Show when={boardGroups().singles.length > 0}>
+          <div class="sidebar-group">
+            {renderGroupHeader("shared", "Shared Boards")}
             <div class="sidebar-group-boards-wrapper" classList={{ expanded: !collapsedGroups().has("shared") }}>
               <div class="sidebar-group-boards">
-                <For each={boardGroups().shared}>{renderBoardRow}</For>
+                <For each={boardGroups().singles}>{renderBoardRow}</For>
               </div>
             </div>
           </div>
@@ -311,9 +345,10 @@ const Sidebar: Component<Props> = (props) => {
         defaultSyncKey={creatingGroupKey() ?? undefined}
         onSave={async (data) => {
           const key = creatingGroupKey();
-          const board = await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, data.sync_key || key || undefined);
+          const finalKey = data.sync_key || key || undefined;
+          await createBoard(data.name, data.color, data.schema, data.format_string, data.macros, finalKey);
           setCreatingGroupKey(null);
-          setSharingBoard(board);
+          if (finalKey) await markBoardGroup(finalKey, data.name);
         }}
       />
 

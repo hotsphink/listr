@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js";
 
-export type BoardGroupKey = "own" | "shared";
+// "own" and "shared" are the two fixed pseudo-groups (My Boards / the generic
+// Shared Boards bucket); any other key is a real board group's sync_key.
+export type BoardGroupKey = string;
 
 const STORAGE_KEY = "sidebar-collapsed-groups";
 
@@ -8,8 +10,9 @@ function loadCollapsed(): Set<BoardGroupKey> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return new Set();
-    const arr = JSON.parse(raw) as string[];
-    return new Set(arr.filter((k): k is BoardGroupKey => k === "own" || k === "shared"));
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((k): k is string => typeof k === "string"));
   } catch {
     return new Set();
   }

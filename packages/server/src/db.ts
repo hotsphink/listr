@@ -61,6 +61,13 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS user_keys (
+    user_key TEXT NOT NULL,
+    key TEXT NOT NULL,
+    name TEXT,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (user_key, key)
+  );
   CREATE INDEX IF NOT EXISTS idx_boards ON boards(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_lists ON lists(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_items ON items(sync_key, updated_at);
@@ -69,6 +76,7 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_integration_results ON integration_results(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_integration_results_item ON integration_results(item_id);
   CREATE INDEX IF NOT EXISTS idx_integration_results_refresh ON integration_results(integration_id, status, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_user_keys ON user_keys(user_key);
 `;
 
 // Migrate existing databases that predate the extracted columns.
@@ -283,9 +291,33 @@ export function createDbApi(sql: Database.Database) {
       .all(syncKey, since) as { entity_type: string; entity_id: string; deleted_at: number }[];
   }
 
+  // ── User/key-group associations (stopgap ahead of real user accounts) ──────
+  // `userKey` is a client's default sync_key, standing in for "user". `key` is
+  // never the default itself — see protocol.ts v4.
+
+  function associateUserKey(userKey: string, key: string, name: string | null): void {
+    sql
+      .prepare(
+        `INSERT INTO user_keys (user_key, key, name, added_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_key, key) DO UPDATE SET name = COALESCE(excluded.name, user_keys.name)`,
+      )
+      .run(userKey, key, name, Date.now());
+  }
+
+  function removeUserKey(userKey: string, key: string): void {
+    sql.prepare(`DELETE FROM user_keys WHERE user_key = ? AND key = ?`).run(userKey, key);
+  }
+
+  function getUserKeys(userKey: string): { key: string; name: string | null }[] {
+    return sql
+      .prepare(`SELECT key, name FROM user_keys WHERE user_key = ?`)
+      .all(userKey) as { key: string; name: string | null }[];
+  }
+
   return {
     getServerId, upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince,
     getEntityById, upsertIntegrationResult, getIntegrationResultsSince, getIntegrationResultsForRefresh,
+    associateUserKey, removeUserKey, getUserKeys,
   };
 }
 
@@ -311,4 +343,7 @@ export const {
   upsertIntegrationResult,
   getIntegrationResultsSince,
   getIntegrationResultsForRefresh,
+  associateUserKey,
+  removeUserKey,
+  getUserKeys,
 } = db;

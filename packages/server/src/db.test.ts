@@ -226,3 +226,48 @@ describe("applyTombstone — entity deletion LWW", () => {
     expect(db.getEntitiesSince("list", KEY, 0)).toHaveLength(1);
   });
 });
+
+// ── user_keys: server-side user/key-group association ──────────────────────
+
+describe("user_keys", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("associates a key with a user and returns it via getUserKeys", () => {
+    db.associateUserKey("default1", "group1", null);
+    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: null }]);
+  });
+
+  it("returns nothing for a user with no associations", () => {
+    expect(db.getUserKeys("default1")).toEqual([]);
+  });
+
+  it("keeps associations for different users separate", () => {
+    db.associateUserKey("default1", "group1", null);
+    db.associateUserKey("default2", "group2", null);
+    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: null }]);
+    expect(db.getUserKeys("default2")).toEqual([{ key: "group2", name: null }]);
+  });
+
+  it("re-associating with a name upgrades a previously unnamed key", () => {
+    db.associateUserKey("default1", "group1", null);
+    db.associateUserKey("default1", "group1", "Team Trip");
+    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: "Team Trip" }]);
+  });
+
+  it("re-associating with a null name does not clobber an existing name", () => {
+    db.associateUserKey("default1", "group1", "Team Trip");
+    db.associateUserKey("default1", "group1", null);
+    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: "Team Trip" }]);
+  });
+
+  it("removeUserKey drops the association", () => {
+    db.associateUserKey("default1", "group1", "Team Trip");
+    db.removeUserKey("default1", "group1");
+    expect(db.getUserKeys("default1")).toEqual([]);
+  });
+
+  it("removeUserKey on a nonexistent association is a no-op", () => {
+    expect(() => db.removeUserKey("default1", "group1")).not.toThrow();
+  });
+});

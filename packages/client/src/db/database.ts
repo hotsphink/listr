@@ -41,6 +41,18 @@ export interface SharedKey {
   board_name?: string; // display hint from the share QR
 }
 
+/**
+ * Local-only (never synced) label for a sync_key that's known to be a deliberate
+ * board group, as opposed to an ordinary individually-shared board. Drives the
+ * sidebar's decision to give a key its own group heading instead of lumping it
+ * into the generic "Shared Boards" bucket.
+ */
+export interface BoardGroupMeta {
+  key: string; // primary key — the sync_key this label applies to
+  name: string;
+  created_at: number;
+}
+
 export class ListrDB extends Dexie {
   boards!: EntityTable<Board, "id">;
   lists!: EntityTable<List, "id">;
@@ -52,6 +64,7 @@ export class ListrDB extends Dexie {
   sync_endpoints!: Table<SyncEndpoint, string>;
   key_sync_state!: Table<KeySyncState, string>;
   shared_keys!: Table<SharedKey, string>;
+  board_groups!: Table<BoardGroupMeta, string>;
 
   constructor() {
     super("listr");
@@ -238,6 +251,22 @@ export class ListrDB extends Dexie {
       key_sync_state: "key",
       shared_keys: "key",
       integration_results: "id, item_id, integration_id, status, updated_at",
+    });
+
+    // Adds board_groups table: local-only labels marking a sync_key as a deliberate
+    // board group (vs. an ordinary individually-shared board), for sidebar display.
+    this.version(11).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
+      board_groups: "key",
     });
 
     // Renames categories → boards; renames lists.category_id → lists.board_id

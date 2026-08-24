@@ -276,6 +276,7 @@ export async function createBoard(
   };
   await db.boards.add(board);
   syncClient.pushEntity("board", board);
+  if (syncKey) syncClient.associateKey(syncKey);
   return board;
 }
 
@@ -286,6 +287,7 @@ export async function updateBoard(
   await db.boards.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.boards.get(id);
   if (updated) syncClient.pushEntity("board", updated);
+  if (updates.sync_key) syncClient.associateKey(updates.sync_key);
 }
 
 export async function deleteBoard(id: string): Promise<void> {
@@ -329,6 +331,18 @@ export async function removeByKey(syncKey: string): Promise<void> {
   });
 
   await db.shared_keys.delete(syncKey);
+  await db.board_groups.delete(syncKey);
+  syncClient.leaveKey(syncKey);
+}
+
+/**
+ * Label a sync_key as a deliberate board group (as opposed to an ordinary
+ * individually-shared board), so the sidebar gives it its own group heading.
+ * Also tells the server so the name/association follows the user's other devices.
+ */
+export async function markBoardGroup(key: string, name: string): Promise<void> {
+  await db.board_groups.put({ key, name, created_at: now() });
+  syncClient.associateKey(key, name);
 }
 
 // --- Lists ---

@@ -39,9 +39,14 @@ export interface SyncEndpointConfig {
   lastServerId: string | null;
 }
 
+export interface ServerUserKey {
+  key: string;
+  name: string | null;
+}
+
 interface EndpointCallbacks {
   onStatus: (status: EndpointStatus) => void;
-  onReady: (send: (msg: unknown) => void, serverId: string) => void;
+  onReady: (send: (msg: unknown) => void, serverId: string, userKeys: ServerUserKey[]) => void;
   onMessage: (msg: unknown) => void;
   onNeedsRetry: () => void;
 }
@@ -140,7 +145,7 @@ class EndpointConnection {
       ws.addEventListener("open", () => {
         clearConnectTimer();
         this.setPhase({ phase: "handshaking" });
-        ws.send(JSON.stringify({ type: "hello", keys: this.keys, client_id: this.clientId, protocol_version: PROTOCOL_VERSION }));
+        ws.send(JSON.stringify({ type: "hello", keys: this.keys, default_key: this.keys[0], client_id: this.clientId, protocol_version: PROTOCOL_VERSION }));
       });
 
       ws.addEventListener("message", (e: MessageEvent) => {
@@ -158,7 +163,8 @@ class EndpointConnection {
           const send = (m: unknown) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
           };
-          this.callbacks.onReady(send, serverId);
+          const userKeys: ServerUserKey[] = Array.isArray(msg.user_keys) ? msg.user_keys : [];
+          this.callbacks.onReady(send, serverId, userKeys);
           return;
         }
 
@@ -281,6 +287,34 @@ class SyncClient {
       .catch(console.error);
     const msg = { type: "push_delete", entity_type: entityType, entity_id: entityId, deleted_at, sync_key: syncKey };
     for (const send of this.senders.values()) send(msg);
+  }
+
+  /** Tell the server this key belongs to the current user (default key), optionally naming it (e.g. a board group). Best-effort. */
+  associateKey(key: string, name?: string): void {
+    if (!this.defaultKey || !key || key === this.defaultKey) return;
+    const msg = { type: "associate_key", default_key: this.defaultKey, key, name: name ?? null };
+    for (const send of this.senders.values()) send(msg);
+  }
+
+  /** Tell the server to forget this key's association with the current user. Best-effort. */
+  leaveKey(key: string): void {
+    if (!this.defaultKey || !key) return;
+    const msg = { type: "leave_key", default_key: this.defaultKey, key };
+    for (const send of this.senders.values()) send(msg);
+  }
+
+  /**
+   * Fold keys the server says belong to this user into local state so their
+   * boards/lists/items sync down, reusing the existing shared_keys pipeline
+   * (App.tsx's liveQuery → updateSharedKeys → recomputeAllKeys → reconnect).
+   */
+  private adoptUserKeys(entries: ServerUserKey[]): void {
+    for (const { key, name } of entries) {
+      db.shared_keys.get(key).then((existing) => {
+        if (!existing) db.shared_keys.put({ key, added_at: Date.now(), board_name: name ?? undefined });
+      }).catch(console.error);
+      if (name) db.board_groups.put({ key, name, created_at: Date.now() }).catch(console.error);
+    }
   }
 
   private effectiveKeyForEntity(entityType: EntityType, data: any): string {
@@ -407,9 +441,10 @@ class SyncClient {
 
         this.refreshAggregateStatus();
       },
-      onReady: (send, serverId) => {
+      onReady: (send, serverId, userKeys) => {
         this.allSenders.set(ep.id, send);
         db.sync_endpoints.update(ep.id, { last_server_id: serverId }).catch(console.error);
+        this.adoptUserKeys(userKeys);
         this.claimOrDefer(ep.id, serverId, send);
         this.refreshAggregateStatus();
       },

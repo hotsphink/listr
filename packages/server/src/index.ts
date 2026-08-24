@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { db, upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince, getServerId, getIntegrationResultsSince } from "./db.js";
+import { db, upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince, getServerId, getIntegrationResultsSince, associateUserKey, removeUserKey, getUserKeys } from "./db.js";
 import type { EntityType } from "./db.js";
 import { config } from "./config.js";
 import { extractFromImage } from "./gemini.js";
@@ -133,18 +133,11 @@ wss.on("connection", (ws: WebSocket) => {
     }
 
     if (msg.type === "hello") {
-      // Accept `keys` (v3 array) or `key` (v2 string) for backward compatibility
-      let rawKeys: string[];
-      if (Array.isArray(msg.keys)) {
-        rawKeys = msg.keys.filter((k: unknown) => typeof k === "string");
-      } else if (typeof msg.key === "string") {
-        rawKeys = [msg.key];
-      } else {
-        rawKeys = [];
-      }
+      const rawKeys: string[] = Array.isArray(msg.keys) ? msg.keys.filter((k: unknown) => typeof k === "string") : [];
       const validKeys = rawKeys.map((k) => k.trim()).filter(Boolean);
+      const defaultKey = typeof msg.default_key === "string" ? msg.default_key.trim() : "";
 
-      if (validKeys.length === 0) {
+      if (validKeys.length === 0 || !defaultKey) {
         ws.send(JSON.stringify({ type: "error", message: "Missing key" }));
         return;
       }
@@ -161,7 +154,13 @@ wss.on("connection", (ws: WebSocket) => {
         return;
       }
 
-      syncKeys = validKeys;
+      // Auto-associate every key this client presents (other than its own default)
+      // with its user, so this user's other devices learn about it too.
+      for (const k of validKeys) {
+        if (k !== defaultKey) associateUserKey(defaultKey, k, null);
+      }
+      const userKeys = getUserKeys(defaultKey);
+      syncKeys = [...new Set([...validKeys, ...userKeys.map((u) => u.key)])];
       clientId = typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?";
       connectedAt = Date.now();
 
@@ -171,7 +170,7 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       console.log(`[ws] ${ts()} ${keyTag(syncKeys)} connect client=${clientId} protocol=${clientVersion} keys=${syncKeys.length}`);
-      ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
+      ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION, user_keys: userKeys }));
       return;
     }
 
@@ -234,8 +233,7 @@ wss.on("connection", (ws: WebSocket) => {
     if (msg.type === "push_entity") {
       const entityType = msg.entity_type as EntityType | "integration_result";
       const data = msg.data as Record<string, unknown>;
-      // v3: sync_key on message; v2 compat: use first client key
-      const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : syncKeys[0];
+      const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : "";
       if (!data?.id || !syncKey) return;
       if (entityType === "integration_result") {
         // Clients may push integration_results (e.g. to reset status); don't feed back to runner
@@ -258,12 +256,35 @@ wss.on("connection", (ws: WebSocket) => {
       const entityType = msg.entity_type as EntityType;
       const entityId = msg.entity_id as string;
       const deletedAt = msg.deleted_at as number;
-      // v3: sync_key on message; v2 compat: use first client key
-      const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : syncKeys[0];
+      const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : "";
       if (!entityId || !deletedAt || !syncKey) return;
       if (applyTombstone(entityType, entityId, deletedAt, syncKey)) {
         broadcast(syncKey, ws, { type: "deleted", entity_type: entityType, entity_id: entityId, deleted_at: deletedAt });
         console.log(`[sync] ${ts()} ${keyTag([syncKey])} delete ${entityType} id=${entityId}`);
+      }
+      return;
+    }
+
+    if (msg.type === "associate_key") {
+      const defaultKey = typeof msg.default_key === "string" ? msg.default_key.trim() : "";
+      const key = typeof msg.key === "string" ? msg.key.trim() : "";
+      const name = typeof msg.name === "string" && msg.name ? msg.name : null;
+      if (defaultKey && key && key !== defaultKey) {
+        associateUserKey(defaultKey, key, name);
+        if (!keyToClients.has(key)) keyToClients.set(key, new Set());
+        keyToClients.get(key)!.add(ws);
+        if (!syncKeys.includes(key)) syncKeys.push(key);
+      }
+      return;
+    }
+
+    if (msg.type === "leave_key") {
+      const defaultKey = typeof msg.default_key === "string" ? msg.default_key.trim() : "";
+      const key = typeof msg.key === "string" ? msg.key.trim() : "";
+      if (defaultKey && key) {
+        removeUserKey(defaultKey, key);
+        keyToClients.get(key)?.delete(ws);
+        syncKeys = syncKeys.filter((k) => k !== key);
       }
       return;
     }

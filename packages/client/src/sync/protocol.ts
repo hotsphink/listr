@@ -7,4 +7,7 @@
 // (packages/server/src/protocol.ts) in sync.
 // v2: items switched from numeric `position` to `after_id` linked-list ordering.
 // v3: multi-key sync — hello sends `keys[]`, push_entity/push_delete carry `sync_key`.
-export const PROTOCOL_VERSION = 3;
+// v4: server-side user/key-group tracking. hello sends `default_key`; the server
+// returns known keys via `ok.user_keys`; new `associate_key`/`leave_key` messages.
+// See packages/server/src/protocol.ts for the full v4 writeup.
+export const PROTOCOL_VERSION = 4;

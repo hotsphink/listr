@@ -4,6 +4,7 @@ import { liveQuery } from "dexie";
 import { db } from "../db/database.js";
 import { decodeShareToken } from "../sync/shareToken.js";
 import { setSidebarOpen } from "../store/sidebarStore.js";
+import { markBoardGroup } from "../db/operations.js";
 
 const ReceivePage: Component = () => {
   const params = useParams<{ token: string }>();
@@ -44,6 +45,7 @@ const ReceivePage: Component = () => {
     setSaveError(null);
     try {
       await db.shared_keys.put({ key: p.sk, added_at: Date.now(), board_name: p.bn || undefined });
+      if (!p.bid) await markBoardGroup(p.sk, p.bn || "Shared Group");
       setAccepted(true);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
