@@ -7,7 +7,7 @@ interface DbItem { id: string; title: string; updated_at: number; list_id: strin
 async function getItems(page: Page): Promise<DbItem[]> {
   return page.evaluate(() =>
     new Promise<DbItem[]>((resolve) => {
-      const req = indexedDB.open("listr");
+      const req = indexedDB.open("listr2");
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction("items", "readonly");
@@ -23,7 +23,7 @@ async function getItems(page: Page): Promise<DbItem[]> {
 async function getBoardNames(page: Page): Promise<string[]> {
   return page.evaluate(() =>
     new Promise<string[]>((resolve) => {
-      const req = indexedDB.open("listr");
+      const req = indexedDB.open("listr2");
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction("boards", "readonly");

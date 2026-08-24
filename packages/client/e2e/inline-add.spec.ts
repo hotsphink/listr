@@ -315,7 +315,7 @@ test.describe("InlineAddItem", () => {
     const badAfterId = await page.evaluate(async () => {
       const DUMMY = "__inline_add__";
       return new Promise<boolean>((resolve, reject) => {
-        const req = indexedDB.open("listr");
+        const req = indexedDB.open("listr2");
         req.onsuccess = () => {
           const db = req.result;
           const tx = db.transaction("items", "readonly");

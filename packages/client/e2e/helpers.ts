@@ -35,7 +35,7 @@ export async function clearDatabase(page: Page) {
   await page.goto("/");
   await page.evaluate(() => {
     return new Promise<void>((resolve, reject) => {
-      const req = indexedDB.deleteDatabase("listr");
+      const req = indexedDB.deleteDatabase("listr2");
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
@@ -48,7 +48,7 @@ export async function clearDatabase(page: Page) {
 export async function setDefaultSyncKey(page: Page, key: string) {
   await page.evaluate((syncKey) => {
     return new Promise<void>((resolve, reject) => {
-      const req = indexedDB.open("listr");
+      const req = indexedDB.open("listr2");
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction("sync_config", "readwrite");

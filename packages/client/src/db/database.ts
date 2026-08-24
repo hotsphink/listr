@@ -1,6 +1,8 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
 import type { Asset, Board, Item, List, IntegrationResult } from "@listr/shared";
-import { ENTITY_SCHEMA_VERSION, migrateListToAfterId } from "@listr/shared";
+
+const DB_NAME = "listr2";
+const LEGACY_DB_NAME = "listr";
 
 export interface SyncConfig {
   id: string; // always "default"
@@ -67,7 +69,7 @@ export class ListrDB extends Dexie {
   board_groups!: Table<BoardGroupMeta, string>;
 
   constructor() {
-    super("listr");
+    super(DB_NAME);
 
     // ── Data-format versioning ────────────────────────────────────────────
     // IndexedDB persists the Dexie schema version below; when a client with a
@@ -84,178 +86,15 @@ export class ListrDB extends Dexie {
     //      corrupt each other's data. NOTE: `.upgrade()` migrates only LOCAL
     //      data at open time — it does NOT run on entities pulled over sync.
     // See memory: project_data_format_versioning.
+    //
+    // 2026-08-24: reset to a single version(1) here (DB renamed "listr" →
+    // "listr2") instead of carrying the old position/category-era migration
+    // chain forward — see migrateFromLegacyDatabase() below, which copies
+    // sync_config/sync_endpoints from the old database and otherwise forces
+    // a full resync from the server, alongside the protocol v4 flag day.
     // ──────────────────────────────────────────────────────────────────────
 
     this.version(1).stores({
-      categories: "id, position",
-      lists: "id, category_id, position",
-      items: "id, list_id, position, title",
-    });
-
-    this.version(2).stores({
-      categories: "id, position",
-      lists: "id, category_id, position",
-      items: "id, list_id, position, title",
-    }).upgrade(async (tx) => {
-      const lists = await tx.table("lists").toArray();
-      const categories = tx.table("categories");
-      const listsTable = tx.table("lists");
-      const now = Date.now();
-
-      let generalCatId: string | null = null;
-
-      for (const list of lists) {
-        if (list.schema && list.schema.length > 0 && !list.category_id) {
-          const catId = crypto.randomUUID();
-          await categories.add({
-            id: catId,
-            name: list.name,
-            color: "#5b8def",
-            position: list.position,
-            schema: list.schema,
-            format_string: list.format_string || "{title}",
-            created_at: list.created_at,
-            updated_at: list.updated_at,
-          });
-          await listsTable.update(list.id, { category_id: catId, format_string: null });
-        } else if (!list.category_id) {
-          if (!generalCatId) {
-            generalCatId = crypto.randomUUID();
-            await categories.add({
-              id: generalCatId,
-              name: "General",
-              color: "#888888",
-              position: 999,
-              schema: [],
-              format_string: "{title}",
-              created_at: now,
-              updated_at: now,
-            });
-          }
-          await listsTable.update(list.id, { category_id: generalCatId, format_string: null });
-        }
-      }
-
-      await listsTable.toCollection().modify((list: any) => {
-        delete list.schema;
-      });
-    });
-
-    // Adds updated_at index (for incremental sync), sync_config, and tombstones tables
-    this.version(3).stores({
-      categories: "id, position, updated_at",
-      lists: "id, category_id, position, updated_at",
-      items: "id, list_id, position, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-    });
-
-    // Adds global assets table for synced image/file storage
-    this.version(4).stores({
-      categories: "id, position, updated_at",
-      lists: "id, category_id, position, updated_at",
-      items: "id, list_id, position, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-      assets: "id, updated_at",
-    });
-
-    // Adds sync_endpoints table for multi-server sync configuration
-    this.version(5).stores({
-      categories: "id, position, updated_at",
-      lists: "id, category_id, position, updated_at",
-      items: "id, list_id, position, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-      assets: "id, updated_at",
-      sync_endpoints: "id, position",
-    });
-
-    // Replaces numeric `position` on items with `after_id` linked-list pointers.
-    // Uses the shared migrateListToAfterId so local rows convert identically to
-    // the offline server migration (see packages/shared/src/migrate-after-id.ts).
-    this.version(7).stores({
-      boards: "id, position, updated_at",
-      lists: "id, board_id, position, updated_at",
-      items: "id, list_id, after_id, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-      assets: "id, updated_at",
-      sync_endpoints: "id, position",
-    }).upgrade(async (tx) => {
-      const allItems = await tx.table("items").toArray();
-      const ts = Date.now();
-
-      // Group items by list.
-      const byList = new Map<string, any[]>();
-      for (const item of allItems) {
-        if (!byList.has(item.list_id)) byList.set(item.list_id, []);
-        byList.get(item.list_id)!.push(item);
-      }
-
-      // Convert each list to an after_id chain, then strip the old position field
-      // and stamp the new record shape version.
-      for (const [listId, items] of byList) {
-        const { afterIds, mixed } = migrateListToAfterId(items);
-        if (mixed) {
-          console.warn(`[migrate v7] list ${listId} mixed position/after_id items; order is heuristic`);
-        }
-        for (const item of items) {
-          await tx.table("items").update(item.id, {
-            after_id: afterIds.get(item.id) ?? null,
-            schema_version: ENTITY_SCHEMA_VERSION,
-          });
-        }
-      }
-
-      // Remove position from all items.
-      await tx.table("items").toCollection().modify((item: any) => {
-        delete item.position;
-      });
-    });
-
-    // Adds key_sync_state table for per-namespace incremental sync timestamps (v3 protocol).
-    this.version(8).stores({
-      boards: "id, position, updated_at",
-      lists: "id, board_id, position, updated_at",
-      items: "id, list_id, after_id, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-      assets: "id, updated_at",
-      sync_endpoints: "id, position",
-      key_sync_state: "key",
-    });
-
-    // Adds shared_keys table for explicit key subscriptions (board sharing via QR).
-    this.version(9).stores({
-      boards: "id, position, updated_at",
-      lists: "id, board_id, position, updated_at",
-      items: "id, list_id, after_id, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-      assets: "id, updated_at",
-      sync_endpoints: "id, position",
-      key_sync_state: "key",
-      shared_keys: "key",
-    });
-
-    // Adds integration_results table for server-side integration status tracking.
-    this.version(10).stores({
-      boards: "id, position, updated_at",
-      lists: "id, board_id, position, updated_at",
-      items: "id, list_id, after_id, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-      assets: "id, updated_at",
-      sync_endpoints: "id, position",
-      key_sync_state: "key",
-      shared_keys: "key",
-      integration_results: "id, item_id, integration_id, status, updated_at",
-    });
-
-    // Adds board_groups table: local-only labels marking a sync_key as a deliberate
-    // board group (vs. an ordinary individually-shared board), for sidebar display.
-    this.version(11).stores({
       boards: "id, position, updated_at",
       lists: "id, board_id, position, updated_at",
       items: "id, list_id, after_id, title, updated_at",
@@ -268,28 +107,68 @@ export class ListrDB extends Dexie {
       integration_results: "id, item_id, integration_id, status, updated_at",
       board_groups: "key",
     });
-
-    // Renames categories → boards; renames lists.category_id → lists.board_id
-    this.version(6).stores({
-      boards: "id, position, updated_at",
-      categories: null,
-      lists: "id, board_id, position, updated_at",
-      items: "id, list_id, position, title, updated_at",
-      sync_config: "id",
-      tombstones: "id, entity_type, deleted_at",
-      assets: "id, updated_at",
-      sync_endpoints: "id, position",
-    }).upgrade(async (tx) => {
-      const oldBoards = await tx.table("categories").toArray();
-      if (oldBoards.length > 0) await tx.table("boards").bulkAdd(oldBoards);
-      await tx.table("lists").toCollection().modify((list: any) => {
-        if (list.category_id !== undefined) {
-          list.board_id = list.category_id;
-          delete list.category_id;
-        }
-      });
-    });
   }
 }
 
 export const db = new ListrDB();
+migrateFromLegacyDatabase().catch(console.error);
+
+/**
+ * One-time bridge from the pre-flag-day "listr" database to the current
+ * "listr2" one (see the version(1) comment above): carries over sync_config/
+ * sync_endpoints (so devices don't need their sync key re-entered), then
+ * deletes the old database. Everything else (boards/lists/items/tombstones/
+ * key_sync_state/shared_keys/board_groups) is intentionally left empty —
+ * key_sync_state being empty means every key's `since` is 0, so the normal
+ * sync machinery already does a full resync from the server on first
+ * connect, and shared_keys/board_groups get repopulated the same way via
+ * the server's `user_keys` association (see SyncClient.adoptUserKeys).
+ *
+ * Safe to delete this function (and the migration it performs) once every
+ * device that had local data has run it at least once.
+ */
+async function migrateFromLegacyDatabase(): Promise<void> {
+  if (await db.sync_config.get("default")) return; // already migrated, or fresh install already configured
+
+  const legacy = await readLegacyConfig();
+  if (legacy.syncConfig) {
+    await db.sync_config.put(legacy.syncConfig);
+    if (legacy.syncEndpoints.length) await db.sync_endpoints.bulkPut(legacy.syncEndpoints);
+  }
+  indexedDB.deleteDatabase(LEGACY_DB_NAME);
+}
+
+function readLegacyConfig(): Promise<{ syncConfig: SyncConfig | null; syncEndpoints: SyncEndpoint[] }> {
+  return new Promise((resolve) => {
+    const empty = { syncConfig: null, syncEndpoints: [] };
+    // No version specified: opens at whatever version already exists, or — if
+    // the legacy database never existed on this device — creates a fresh
+    // empty one. Abort that creation in onupgradeneeded so a fresh install
+    // doesn't leave a stray empty "listr" database behind.
+    const req = indexedDB.open(LEGACY_DB_NAME);
+    req.onupgradeneeded = () => req.transaction?.abort();
+    req.onsuccess = () => {
+      const idb = req.result;
+      if (!idb.objectStoreNames.contains("sync_config")) {
+        idb.close();
+        resolve(empty);
+        return;
+      }
+      const storeNames = ["sync_config", ...(idb.objectStoreNames.contains("sync_endpoints") ? ["sync_endpoints"] : [])];
+      const tx = idb.transaction(storeNames, "readonly");
+      let syncConfig: SyncConfig | null = null;
+      let syncEndpoints: SyncEndpoint[] = [];
+      tx.objectStore("sync_config").get("default").onsuccess = (e) => {
+        syncConfig = (e.target as IDBRequest).result ?? null;
+      };
+      if (storeNames.includes("sync_endpoints")) {
+        tx.objectStore("sync_endpoints").getAll().onsuccess = (e) => {
+          syncEndpoints = (e.target as IDBRequest).result ?? [];
+        };
+      }
+      tx.oncomplete = () => { idb.close(); resolve({ syncConfig, syncEndpoints }); };
+      tx.onerror = () => { idb.close(); resolve(empty); };
+    };
+    req.onerror = () => resolve(empty);
+  });
+}

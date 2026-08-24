@@ -18,7 +18,7 @@ const FAKE_PORT = 19999;
 async function setupSyncConfig(page: Page) {
   await page.evaluate(({ host, port }) => {
     return new Promise<void>((resolve, reject) => {
-      const req = indexedDB.open("listr");
+      const req = indexedDB.open("listr2");
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction("sync_endpoints", "readwrite");
@@ -59,7 +59,7 @@ async function uploadFakeImage(page: Page) {
 async function getItemTitles(page: Page): Promise<string[]> {
   return page.evaluate(() =>
     new Promise<string[]>((resolve) => {
-      const req = indexedDB.open("listr");
+      const req = indexedDB.open("listr2");
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction("items", "readonly");
