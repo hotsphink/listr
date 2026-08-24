@@ -202,11 +202,12 @@ test.describe("InlineAddItem", () => {
     await page.locator(".multi-list-add-btn").first().click();
     await expect(page.locator(".list-view-item").first()).toHaveClass(/inline-add-item/);
 
-    // Reload — dummy should be back at the tail.
+    // Reload — dummy should be back at the tail. Use .last() (re-evaluated on each
+    // retry) rather than snapshotting count() up front: right after reload the list
+    // can render in intermediate states (e.g. real items before the dummy is spliced
+    // back in), and a frozen index would then point at the wrong row.
     await page.reload();
-    const all = page.locator(".list-view-item");
-    const count = await all.count();
-    await expect(all.nth(count - 1)).toHaveClass(/inline-add-item/);
+    await expect(page.locator(".list-view-item").last()).toHaveClass(/inline-add-item/);
   });
 
   // -----------------------------------------------------------------------
