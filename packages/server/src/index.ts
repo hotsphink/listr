@@ -97,6 +97,10 @@ export interface SyncServerOptions {
   certDir?: string;
   integrations?: Record<string, IntegrationServerConfig>;
   requestHandler?: (req: IncomingMessage, res: ServerResponse) => void;
+  /** Which world this server belongs to (dev/prod/…), advertised in `ok` so
+   * clients can refuse to talk to the wrong one. Defaults to the process
+   * config's variant; tests override it directly. */
+  variant?: string;
 }
 
 export interface SyncServerHandle {
@@ -111,6 +115,7 @@ export interface SyncServerHandle {
 // single function rather than split further to keep this refactor small.
 export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): SyncServerHandle {
   const SERVER_ID = dbApi.getServerId();
+  const SERVER_VARIANT = opts.variant ?? config.variant;
   const requestHandler = opts.requestHandler ?? ((_req: IncomingMessage, res: ServerResponse) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("Listr sync server running\n");
@@ -238,7 +243,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         for (const k of newlyAssociated) notifyUserKeyChange(helloHomeKey, k, null, ws);
 
         console.log(`[ws] ${ts()} ${keyTag(syncKeys)} connect client=${clientId} protocol=${clientVersion} keys=${syncKeys.length}`);
-        ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION, user_keys: userKeys }));
+        ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, variant: SERVER_VARIANT, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION, user_keys: userKeys }));
         return;
       }
 

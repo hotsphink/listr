@@ -50,7 +50,13 @@ const Layout: Component<{ children?: any }> = (props) => {
       syncClient.updateListBoards(lists);
     });
     const sharedKeysSub = liveQuery(() => db.shared_keys.toArray()).subscribe((rows) => {
-      syncClient.updateSharedKeys(rows.map((r) => r.key));
+      syncClient.updateSharedKeys(rows.map((r) => ({ key: r.key, server_id: r.server_id ?? null })));
+    });
+    // Local, never-synced board→server binding (§3.3.1 item 4) — keeps
+    // SyncClient's copy current so keysForEndpoint/doInitialSync can scope
+    // boards to the one server each belongs to.
+    const bindingSub = liveQuery(() => db.board_server_binding.toArray()).subscribe((rows) => {
+      syncClient.updateBoardBindings(rows);
     });
     onCleanup(() => {
       configSub.unsubscribe();
@@ -58,6 +64,7 @@ const Layout: Component<{ children?: any }> = (props) => {
       boardSub.unsubscribe();
       listSub.unsubscribe();
       sharedKeysSub.unsubscribe();
+      bindingSub.unsubscribe();
     });
   });
 

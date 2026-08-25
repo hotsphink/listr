@@ -25,4 +25,5 @@ export async function removeKeyLocal(syncKey: string): Promise<void> {
 
   await db.shared_keys.delete(syncKey);
   await db.board_groups.delete(syncKey);
+  await db.board_server_binding.bulkDelete(boards.map((b) => b.id));
 }

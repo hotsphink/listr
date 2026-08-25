@@ -4,6 +4,8 @@ import type { Board, List } from "@listr/shared";
 import { PROTOCOL_VERSION } from "./protocol.js";
 import { setSyncStatus, setSyncStatusMessage } from "./syncStore.js";
 import { applyIncomingEntity, shouldDeleteOnTombstone, type EntityType } from "./mergeLogic.js";
+import { variantAllowed } from "./variantGuard.js";
+import { keysForEndpoint, type ScopedKeyRow } from "./keyScoping.js";
 import { assetToSync, assetFromSync, registerAsset } from "./assetStore.js";
 import {
   setEndpointStatus,
@@ -104,6 +106,11 @@ class EndpointConnection {
     return this.retryTimer !== null;
   }
 
+  /** The scoped key list this connection actually sent in `hello` (§3.3.1) — read back by SyncClient when it needs the same list later, e.g. for a promoted-standby's initial sync. */
+  get helloKeys(): string[] {
+    return this.keys;
+  }
+
   private clearTimers(): void {
     if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
@@ -155,6 +162,25 @@ class EndpointConnection {
 
         if (msg.type === "ok") {
           const serverId = typeof msg.server_id === "string" ? msg.server_id : "";
+
+          // Dev/prod variant guard (§3.3): a server that reports no variant
+          // is an older server that predates this field — treated as unknown
+          // and allowed (with a warning) so a new client can still talk to a
+          // not-yet-updated server. PROTOCOL_VERSION is deliberately not
+          // bumped for this.
+          const serverVariant = typeof msg.variant === "string" ? msg.variant : undefined;
+          if (serverVariant === undefined) {
+            console.warn(`[sync] ${this.config.host}:${this.config.port} did not report a variant (older server) — allowing connection`);
+          } else if (!variantAllowed(serverVariant, __VARIANT__)) {
+            this.setPhase({
+              phase: "variant_mismatch",
+              serverVariant,
+              clientVariant: __VARIANT__,
+              message: `This is a "${serverVariant}" server; this client is built for "${__VARIANT__}"`,
+            });
+            return;
+          }
+
           const known = this.config.lastServerId;
           if (known && serverId && serverId !== known) {
             this.setPhase({ phase: "conflict", knownId: known, newId: serverId });
@@ -210,17 +236,64 @@ class SyncClient {
   private allSenders = new Map<string, (msg: unknown) => void>();
   private readyServerId = new Map<string, string>(); // endpoint id -> server_id, while ready
   private primaryForServerId = new Map<string, string>(); // server_id -> primary endpoint id
+  // endpoint id -> the resolved per-server home key that connection actually
+  // used (§3.3.1 item 1) — read back when promoting a standby to primary
+  // (releasePrimaryIfHeld) so doInitialSync gets the right key without
+  // re-resolving it.
+  private resolvedHomeKeyByEndpoint = new Map<string, string>();
   private statusPhases = new Map<string, EndpointPhase>();
   private currentEndpoints: SyncEndpointConfig[] = [];
+  // The user-typed secret (sync_config.sync_key): this client's home key,
+  // the same on every server it talks to. Per-server derived home keys were
+  // built and then removed — see resolveConnectionKeys for why, and Phase 1
+  // for where they belong instead.
   private homeKey = "";
-  private allKeys: string[] = []; // homeKey + distinct board sync_keys
+  // The resolved home key of whichever server is currently primary — either
+  // derived or grandfathered (§3.3.1 items 1/3), set in claimOrDefer /
+  // releasePrimaryIfHeld. This is what pushEntity/pushDelete/associateKey/
+  // leaveKey use, because those broadcast one message to every primary
+  // sender rather than computing a per-connection message (that per-
+  // connection rework was judged out of scope here — see the phase report).
+  // In the common case (one distinct server_id primary, which is what
+  // claimOrDefer already collapses multiple *endpoints* on the same server
+  // down to) this is exactly correct; talking to two genuinely different
+  // servers at once is explicitly a non-goal per work/auth-design.md §3.3
+  // ([sf3]: "I have no desire to have them both enabled").
+  private primaryHomeKey = "";
   private clientId = "";
+  // Signature of the inputs to keysForEndpoint, used only to skip a
+  // reconnect-all when recomputeAllKeys is triggered by a no-op change (e.g.
+  // a liveQuery re-firing with equivalent data). Not itself a key list —
+  // each endpoint computes its own scoped list at connect time.
+  private lastKeysSignature = "";
 
   // Entity routing caches — populated from board/list subscriptions and pushes
   private boardSyncKeys = new Map<string, string>(); // boardId → sync_key (only boards with custom key)
+  private allBoardIds = new Set<string>(); // every local board id, custom-keyed or not — for bindUnboundBoards
   private listBoardMap = new Map<string, string>(); // listId → boardId
   private itemListMap = new Map<string, string>(); // itemId → listId
-  private explicitSharedKeys: string[] = []; // keys added via QR share, independent of boards
+  // Keys added via QR share or learned from the server (ok.user_keys),
+  // independent of local boards — see keyScoping.ts for how server_id scopes
+  // which endpoints each one is offered to.
+  private sharedKeyRoster: ScopedKeyRow[] = [];
+  // Local-only board→server binding (§3.3.1 item 4). boardId -> server_id,
+  // or absent/null for "not yet placed" — see database.ts's
+  // BoardServerBinding and keyScoping.ts's null-means-unscoped convention.
+  private boardServerBinding = new Map<string, string | null>();
+
+  /**
+   * The home key for entities/messages not tied to a specific connection
+   * (pushEntity, pushDelete, associateKey, leaveKey) — see primaryHomeKey's
+   * doc comment for the multi-server caveat.
+   *
+   * Today this is always just `homeKey`: the same key goes to every server,
+   * so the per-connection plumbing below is a no-op. It is kept because it is
+   * the exact seam Phase 1 needs, when the server assigns each client its home
+   * key per server and these values genuinely diverge.
+   */
+  private get currentHomeKey(): string {
+    return this.primaryHomeKey || this.homeKey;
+  }
 
   setCredentials(key: string, clientId: string): void {
     if (key === this.homeKey && clientId === this.clientId) return;
@@ -232,15 +305,24 @@ class SyncClient {
   /** Called reactively from App.tsx whenever the boards table changes. */
   updateBoardKeys(boards: Board[]): void {
     this.boardSyncKeys.clear();
+    this.allBoardIds.clear();
     for (const board of boards) {
+      this.allBoardIds.add(board.id);
       if (board.sync_key) this.boardSyncKeys.set(board.id, board.sync_key);
     }
     this.recomputeAllKeys();
   }
 
   /** Called reactively from App.tsx whenever shared_keys table changes. */
-  updateSharedKeys(keys: string[]): void {
-    this.explicitSharedKeys = keys;
+  updateSharedKeys(rows: ScopedKeyRow[]): void {
+    this.sharedKeyRoster = rows;
+    this.recomputeAllKeys();
+  }
+
+  /** Called reactively from App.tsx whenever the board_server_binding table changes (§3.3.1 item 4). */
+  updateBoardBindings(rows: { board_id: string; server_id: string | null }[]): void {
+    this.boardServerBinding.clear();
+    for (const r of rows) this.boardServerBinding.set(r.board_id, r.server_id ?? null);
     this.recomputeAllKeys();
   }
 
@@ -250,6 +332,19 @@ class SyncClient {
     for (const list of lists) {
       this.listBoardMap.set(list.id, list.board_id);
     }
+  }
+
+  /**
+   * The server_id of the currently active primary connection, for binding a
+   * newly created board to "the" server it belongs to (§3.3.1 item 4, second
+   * bullet: "a board created while a server is primary binds to that
+   * server"). If more than one distinct server is simultaneously primary
+   * (the non-goal multi-server case — see primaryHomeKey's doc comment),
+   * this arbitrarily returns one of them rather than guessing; a board is
+   * only ever placed once and can be moved later like any other resync.
+   */
+  getPrimaryServerId(): string | null {
+    return [...this.primaryForServerId.keys()][0] ?? null;
   }
 
   setEndpoints(endpoints: SyncEndpointConfig[]): void {
@@ -292,15 +387,17 @@ class SyncClient {
 
   /** Tell the server this key belongs to the current user (default key), optionally naming it (e.g. a board group). Best-effort. */
   associateKey(key: string, name?: string): void {
-    if (!this.homeKey || !key || key === this.homeKey) return;
-    const msg = { type: "associate_key", default_key: this.homeKey, key, name: name ?? null };
+    const homeKey = this.currentHomeKey;
+    if (!homeKey || !key || key === homeKey) return;
+    const msg = { type: "associate_key", default_key: homeKey, key, name: name ?? null };
     for (const send of this.senders.values()) send(msg);
   }
 
   /** Tell the server to forget this key's association with the current user. Best-effort. */
   leaveKey(key: string): void {
-    if (!this.homeKey || !key) return;
-    const msg = { type: "leave_key", default_key: this.homeKey, key };
+    const homeKey = this.currentHomeKey;
+    if (!homeKey || !key) return;
+    const msg = { type: "leave_key", default_key: homeKey, key };
     for (const send of this.senders.values()) send(msg);
   }
 
@@ -308,62 +405,101 @@ class SyncClient {
    * Fold keys the server says belong to this user into local state so their
    * boards/lists/items sync down, reusing the existing shared_keys pipeline
    * (App.tsx's liveQuery → updateSharedKeys → recomputeAllKeys → reconnect).
+   *
+   * `serverId` is the server that told us about these keys (its `ok.user_keys`
+   * echoes back everything we sent it in `hello`, plus any it already knew).
+   * That's a direct signal the key belongs there, so this is also where a
+   * still-unscoped roster row gets tagged (§3.3.1) — but only if it's still
+   * unscoped: a key another server already claimed is left alone, so two
+   * endpoints racing their first connect can't fight over who owns it.
    */
-  private adoptUserKeys(entries: ServerUserKey[]): void {
+  private adoptUserKeys(entries: ServerUserKey[], serverId: string | null): void {
     for (const { key, name } of entries) {
       db.shared_keys.get(key).then((existing) => {
-        if (!existing) db.shared_keys.put({ key, added_at: Date.now(), board_name: name ?? undefined });
+        if (!existing) {
+          db.shared_keys.put({ key, added_at: Date.now(), board_name: name ?? undefined, server_id: serverId });
+        } else if (existing.server_id === null && serverId) {
+          db.shared_keys.update(key, { server_id: serverId });
+        }
       }).catch(console.error);
       if (name) db.board_groups.put({ key, name, created_at: Date.now() }).catch(console.error);
     }
   }
 
   private effectiveKeyForEntity(entityType: EntityType, data: any): string {
-    if (entityType === "board") return data.sync_key || this.homeKey;
+    const homeKey = this.currentHomeKey;
+    if (entityType === "board") return data.sync_key || homeKey;
     if (entityType === "list") {
       const boardId = data.board_id as string;
-      return this.boardSyncKeys.get(boardId) ?? this.homeKey;
+      return this.boardSyncKeys.get(boardId) ?? homeKey;
     }
     if (entityType === "item") {
       const listId = data.list_id as string;
       const boardId = this.listBoardMap.get(listId);
-      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.homeKey) : this.homeKey;
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? homeKey) : homeKey;
     }
-    return this.homeKey; // assets are not namespaced
+    return homeKey; // assets are not namespaced
   }
 
   private effectiveKeyForEntityId(entityType: EntityType, entityId: string): string {
-    if (entityType === "board") return this.boardSyncKeys.get(entityId) ?? this.homeKey;
+    const homeKey = this.currentHomeKey;
+    if (entityType === "board") return this.boardSyncKeys.get(entityId) ?? homeKey;
     if (entityType === "list") {
       const boardId = this.listBoardMap.get(entityId);
-      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.homeKey) : this.homeKey;
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? homeKey) : homeKey;
     }
     if (entityType === "item") {
       const listId = this.itemListMap.get(entityId);
       const boardId = listId ? this.listBoardMap.get(listId) : undefined;
-      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.homeKey) : this.homeKey;
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? homeKey) : homeKey;
     }
-    return this.homeKey;
+    return homeKey;
   }
 
+  // Every distinct custom sync_key among local boards, tagged with the
+  // binding of the board(s) that use it (§3.3.1 items 4/5). If two boards
+  // sharing a group key somehow disagree on which server they're bound to,
+  // fall back to unscoped (null) rather than guess — the safe direction,
+  // since unscoped means "offer to every endpoint" (today's behavior),
+  // not "offer to none".
+  private boardKeyRows(): ScopedKeyRow[] {
+    const byKey = new Map<string, Set<string | null>>();
+    for (const [boardId, key] of this.boardSyncKeys) {
+      const serverId = this.boardServerBinding.get(boardId) ?? null;
+      if (!byKey.has(key)) byKey.set(key, new Set());
+      byKey.get(key)!.add(serverId);
+    }
+    return [...byKey.entries()].map(([key, serverIds]) => ({
+      key,
+      server_id: serverIds.size === 1 ? [...serverIds][0] : null,
+    }));
+  }
+
+  // Restarts every connection so each recomputes its own scoped key list
+  // (keysForEndpoint) and resends it in hello — the key list is now a
+  // function of the endpoint (its resolved server_id and this device's
+  // per-server home key), not one flat array, so it can't be diffed as a
+  // single before/after list the way it used to be. Guarded by a signature
+  // of the (synchronous) inputs so an unrelated liveQuery re-fire with
+  // equivalent data doesn't churn every connection. The home key is part of
+  // that signature because changing it changes every connection's key list.
   private recomputeAllKeys(): void {
     if (!this.homeKey) return;
-    const extra = [...new Set([...this.boardSyncKeys.values(), ...this.explicitSharedKeys])];
-    const newKeys = [this.homeKey, ...extra.filter((k) => k !== this.homeKey)];
-    const changed =
-      newKeys.length !== this.allKeys.length || newKeys.some((k, i) => k !== this.allKeys[i]);
-    if (changed) {
-      this.allKeys = newKeys;
-      // Restart all connections so they send the updated keys list in hello
-      for (const conn of this.connections.values()) conn.stop();
-      this.connections.clear();
-      this.senders.clear();
-      this.allSenders.clear();
-      this.readyServerId.clear();
-      this.primaryForServerId.clear();
-      this.statusPhases.clear();
-      this.applyEndpoints(this.currentEndpoints);
-    }
+    const boardRows = this.boardKeyRows().map((r) => `${r.key}:${r.server_id ?? ""}`).sort();
+    const roster = this.sharedKeyRoster.map((r) => `${r.key}:${r.server_id ?? ""}`).sort();
+    const signature = JSON.stringify([this.homeKey, boardRows, roster]);
+    if (signature === this.lastKeysSignature) return;
+    this.lastKeysSignature = signature;
+
+    for (const conn of this.connections.values()) conn.stop();
+    this.connections.clear();
+    this.senders.clear();
+    this.allSenders.clear();
+    this.readyServerId.clear();
+    this.primaryForServerId.clear();
+    this.resolvedHomeKeyByEndpoint.clear();
+    this.statusPhases.clear();
+    this.applyEndpoints(this.currentEndpoints);
   }
 
   private applyEndpoints(endpoints: SyncEndpointConfig[]): void {
@@ -416,8 +552,41 @@ class SyncClient {
     this.refreshAggregateStatus();
   }
 
+  // Resolves this connection's server_id and the keys to offer it (§3.3.1).
+  // server_id comes from trust-on-first-use (`sync_endpoints.last_server_id`)
+  // and is null for an endpoint never connected to before — keysForEndpoint
+  // then offers only still-unscoped rows, which is what makes a brand-new
+  // endpoint safe without knowing its identity yet.
+  //
+  // The home key is the same on every server. Per-server *derived* home keys
+  // were built here and then deliberately removed: grandfathering could only
+  // be judged from this device's local Dexie, so a device added later would
+  // derive a different key than its siblings and silently fail to converge on
+  // a server they already share. Deferred to Phase 1, where the server hands
+  // an authenticated client its keys via `ok.user_keys` and no such split is
+  // possible. Board binding, not key derivation, is what keeps a board from
+  // reaching a server it does not belong to.
+  private resolveConnectionKeys(ep: SyncEndpointConfig): {
+    keys: string[];
+    serverId: string | null;
+    homeKeyUsed: string;
+  } {
+    const serverId = ep.lastServerId;
+    const homeKeyUsed = this.homeKey;
+    const keys = keysForEndpoint(homeKeyUsed, this.boardKeyRows(), this.sharedKeyRoster, serverId);
+    return { keys, serverId, homeKeyUsed };
+  }
+
   private startConnection(ep: SyncEndpointConfig): void {
-    const conn = new EndpointConnection(ep, this.allKeys, this.clientId, {
+    setEndpointStatus(ep.id, { phase: "connecting" });
+    this.reallyStartConnection(ep, this.resolveConnectionKeys(ep));
+  }
+
+  private reallyStartConnection(
+    ep: SyncEndpointConfig,
+    resolved: { keys: string[]; serverId: string | null; homeKeyUsed: string },
+  ): void {
+    const conn = new EndpointConnection(ep, resolved.keys, this.clientId, {
       onStatus: (status) => {
         const wasReady = this.statusPhases.get(ep.id) === "ready";
         if (status.phase !== "ready") {
@@ -445,11 +614,13 @@ class SyncClient {
       onReady: (send, serverId, userKeys) => {
         this.allSenders.set(ep.id, send);
         db.sync_endpoints.update(ep.id, { last_server_id: serverId }).catch(console.error);
-        this.adoptUserKeys(userKeys);
-        this.claimOrDefer(ep.id, serverId, send);
+
+        this.adoptUserKeys(userKeys, serverId);
+        this.bindUnboundBoards(serverId);
+        this.claimOrDefer(ep.id, serverId, send, resolved.keys, resolved.homeKeyUsed);
         this.refreshAggregateStatus();
       },
-      onMessage: (msg) => this.handleMessage(msg),
+      onMessage: (msg) => this.handleMessage(msg, resolved.keys, ep.id),
       onNeedsRetry: () => {
         if (this.senders.size === 0) {
           conn.scheduleRetry(5000);
@@ -461,21 +632,35 @@ class SyncClient {
     conn.start();
   }
 
+  // Every local board with no binding yet (§3.3.1 item 4: "unbound means not
+  // yet placed") gets bound to the server that just successfully connected.
+  // Idempotent and cheap once a user's boards are all placed — after the
+  // first bind this is a no-op on every subsequent connect.
+  private bindUnboundBoards(serverId: string): void {
+    for (const boardId of this.allBoardIds) {
+      if ((this.boardServerBinding.get(boardId) ?? null) !== null) continue;
+      this.boardServerBinding.set(boardId, serverId);
+      db.board_server_binding.put({ board_id: boardId, server_id: serverId }).catch(console.error);
+    }
+  }
+
   // Two connections landing on the same server_id are almost always the same
   // physical server reached by two different routes (e.g. tailnet + public
   // proxy). Only one of them — whichever finishes its handshake first, which
   // in practice tracks the lower-latency path — pushes/pulls; the other stays
   // connected as a hot standby so it can take over instantly if the primary
   // drops, without duplicating outgoing traffic to the same server meanwhile.
-  private claimOrDefer(epId: string, serverId: string, send: (msg: unknown) => void): void {
+  private claimOrDefer(epId: string, serverId: string, send: (msg: unknown) => void, keys: string[], homeKeyUsed: string): void {
     this.readyServerId.set(epId, serverId);
+    this.resolvedHomeKeyByEndpoint.set(epId, homeKeyUsed);
     const currentPrimary = this.primaryForServerId.get(serverId);
     const isPrimary = !currentPrimary || currentPrimary === epId || !this.connections.has(currentPrimary);
     if (isPrimary) {
       this.primaryForServerId.set(serverId, epId);
       this.senders.set(epId, send);
+      this.primaryHomeKey = homeKeyUsed;
       setEndpointStatus(epId, { phase: "ready", serverId, primary: true });
-      this.doInitialSync(send).catch(console.error);
+      this.doInitialSync(send, keys, serverId, homeKeyUsed).catch(console.error);
     } else {
       this.senders.delete(epId);
       setEndpointStatus(epId, { phase: "ready", serverId, primary: false });
@@ -487,17 +672,21 @@ class SyncClient {
   private releasePrimaryIfHeld(epId: string): void {
     const serverId = this.readyServerId.get(epId);
     this.readyServerId.delete(epId);
+    this.resolvedHomeKeyByEndpoint.delete(epId);
     if (!serverId || this.primaryForServerId.get(serverId) !== epId) return;
     this.primaryForServerId.delete(serverId);
 
     for (const [otherId, otherServerId] of this.readyServerId) {
       if (otherServerId !== serverId) continue;
       const send = this.allSenders.get(otherId);
-      if (!send) continue;
+      const otherConn = this.connections.get(otherId);
+      const otherHomeKey = this.resolvedHomeKeyByEndpoint.get(otherId);
+      if (!send || !otherConn || !otherHomeKey) continue;
       this.primaryForServerId.set(serverId, otherId);
       this.senders.set(otherId, send);
+      this.primaryHomeKey = otherHomeKey;
       setEndpointStatus(otherId, { phase: "ready", serverId, primary: true });
-      this.doInitialSync(send).catch(console.error);
+      this.doInitialSync(send, otherConn.helloKeys, serverId, otherHomeKey).catch(console.error);
       break;
     }
   }
@@ -510,50 +699,85 @@ class SyncClient {
     } else if (phases.some((p) => p === "connecting" || p === "handshaking")) {
       setSyncStatus("connecting");
       setSyncStatusMessage("");
-    } else if (phases.length > 0 && phases.every((p) => p === "error" || p === "conflict")) {
+    } else if (phases.length > 0 && phases.every((p) => p === "error" || p === "conflict" || p === "variant_mismatch")) {
       setSyncStatus("error");
-      setSyncStatusMessage(phases.every((p) => p === "conflict") ? "Server ID conflict" : "Connection failed");
+      setSyncStatusMessage(
+        phases.every((p) => p === "conflict")
+          ? "Server ID conflict"
+          : phases.every((p) => p === "variant_mismatch")
+            ? "Wrong server variant"
+            : "Connection failed",
+      );
     } else {
       setSyncStatus("disconnected");
       setSyncStatusMessage("");
     }
   }
 
-  private async doInitialSync(send: (msg: unknown) => void): Promise<void> {
-    // Re-assert every locally-known board group's name on each (re)connect.
-    // associateKey() is fire-and-forget and can be dropped — e.g. the very
-    // call that names a freshly-created group races with the connection
-    // restart that recomputeAllKeys() triggers when the new key first appears
-    // in allKeys. Redoing this on every connect (idempotent server-side) makes
-    // it eventually consistent instead of a single best-effort attempt.
-    const groups = await db.board_groups.toArray();
-    for (const g of groups) this.associateKey(g.key, g.name);
-
-    // Fetch per-key since timestamps
-    const keyStates = await db.key_sync_state.bulkGet(this.allKeys);
-    const sinceByKey = new Map(this.allKeys.map((k, i) => [k, keyStates[i]?.last_sync_at ?? 0]));
-    const minSince = Math.min(...[...sinceByKey.values()]);
-
-    // Build board→key and list→board maps for routing
-    const boards = await db.boards.where("updated_at").above(minSince).toArray();
-    const allBoards = await db.boards.toArray();
-    const boardKeyMap = new Map<string, string>(
-      allBoards.map((b) => [b.id, b.sync_key || this.homeKey]),
+  private async doInitialSync(send: (msg: unknown) => void, keys: string[], serverId: string, homeKeyForServer: string): Promise<void> {
+    // Boards explicitly bound (§3.3.1 item 4) to a DIFFERENT server than
+    // this connection's must not be pushed here, regardless of which key
+    // they'd otherwise use. This check exists in addition to the
+    // `keys.includes(key)` guards below (not instead of): a home-keyed
+    // board's key is `homeKeyForServer`, which is unconditionally present in
+    // `keys` for every connection, so the includes() guard alone can never
+    // catch a home-keyed board bound elsewhere — only this binding lookup
+    // can. Unbound (null) boards are "not yet placed" and are NOT excluded;
+    // bindUnboundBoards (called just before doInitialSync, in onReady) has
+    // already placed any that were still unbound as of this connection.
+    const excludedBoardIds = new Set(
+      [...this.boardServerBinding.entries()]
+        .filter(([, boundServerId]) => boundServerId !== null && boundServerId !== serverId)
+        .map(([boardId]) => boardId),
     );
 
-    const lists = await db.lists.where("updated_at").above(minSince).toArray();
+    // Re-assert every locally-known board group's name on each (re)connect,
+    // scoped to the keys this connection actually has (§3.3.1) — a group
+    // key withheld from this endpoint's hello must not be associated with it
+    // here either, or the scoping above would be pointless. Sent directly
+    // via this connection's own `send` rather than the broadcast-to-every-
+    // sender associateKey() helper, so it's also no longer redundantly
+    // re-broadcast to every other connected endpoint on every reconnect.
+    // Fire-and-forget and can be dropped (e.g. racing a connection restart);
+    // redoing it on every connect (idempotent server-side) makes it
+    // eventually consistent instead of a single best-effort attempt.
+    const groups = await db.board_groups.toArray();
+    for (const g of groups) {
+      if (g.key !== homeKeyForServer && keys.includes(g.key)) {
+        send({ type: "associate_key", default_key: homeKeyForServer, key: g.key, name: g.name });
+      }
+    }
+
+    // Fetch per-key since timestamps
+    const keyStates = await db.key_sync_state.bulkGet(keys);
+    const sinceByKey = new Map(keys.map((k, i) => [k, keyStates[i]?.last_sync_at ?? 0]));
+    const minSince = Math.min(...[...sinceByKey.values()]);
+
+    // Build board→key and list→board maps for routing (unfiltered — used to
+    // resolve keys/binding, not to decide what to iterate below).
+    const allBoards = await db.boards.toArray();
+    const boardKeyMap = new Map<string, string>(
+      allBoards.map((b) => [b.id, b.sync_key || homeKeyForServer]),
+    );
+
     const allLists = await db.lists.toArray();
     const listBoardId = new Map<string, string>(allLists.map((l) => [l.id, l.board_id]));
 
+    const boards = (await db.boards.where("updated_at").above(minSince).toArray())
+      .filter((b) => !excludedBoardIds.has(b.id));
     for (const board of boards) {
-      const key = board.sync_key || this.homeKey;
+      const key = board.sync_key || homeKeyForServer;
+      if (!keys.includes(key)) continue;
       if (board.updated_at > (sinceByKey.get(key) ?? 0)) {
         send({ type: "push_entity", entity_type: "board", sync_key: key, data: board });
       }
     }
 
+    const lists = (await db.lists.where("updated_at").above(minSince).toArray())
+      .filter((l) => !excludedBoardIds.has(l.board_id));
     for (const list of lists) {
-      const key = boardKeyMap.get(list.board_id) ?? this.homeKey;
+      const key = boardKeyMap.get(list.board_id) ?? homeKeyForServer;
+      if (!keys.includes(key)) continue;
       if (list.updated_at > (sinceByKey.get(key) ?? 0)) {
         send({ type: "push_entity", entity_type: "list", sync_key: key, data: list });
       }
@@ -562,7 +786,9 @@ class SyncClient {
     const items = await db.items.where("updated_at").above(minSince).toArray();
     for (const item of items) {
       const boardId = listBoardId.get(item.list_id);
-      const key = boardId ? (boardKeyMap.get(boardId) ?? this.homeKey) : this.homeKey;
+      if (boardId && excludedBoardIds.has(boardId)) continue;
+      const key = boardId ? (boardKeyMap.get(boardId) ?? homeKeyForServer) : homeKeyForServer;
+      if (!keys.includes(key)) continue;
       if (item.updated_at > (sinceByKey.get(key) ?? 0)) {
         send({ type: "push_entity", entity_type: "item", sync_key: key, data: item });
         this.itemListMap.set(item.id, item.list_id);
@@ -571,23 +797,31 @@ class SyncClient {
 
     const assets = await db.assets.where("updated_at").above(minSince).toArray();
     for (const a of assets) {
-      send({ type: "push_entity", entity_type: "asset", sync_key: this.homeKey, data: assetToSync(a) });
+      send({ type: "push_entity", entity_type: "asset", sync_key: homeKeyForServer, data: assetToSync(a) });
     }
 
+    // The `keys.includes(syncKey)` guard here fixes a latent bug this change
+    // exposed rather than introduced: without it, a tombstone whose sync_key
+    // isn't in `keys` still gets pushed, because `sinceByKey.get(syncKey)`
+    // defaults to 0 for a key this connection never declared. That was
+    // harmless before per-server board scoping existed (every board key was
+    // always in every endpoint's `keys`); it stops being harmless once a
+    // board's key can legitimately be absent from a given connection's list.
     const tombstones = await db.tombstones.where("deleted_at").above(minSince).toArray();
     for (const t of tombstones) {
-      const syncKey = t.sync_key ?? this.homeKey;
+      const syncKey = t.sync_key ?? homeKeyForServer;
+      if (!keys.includes(syncKey)) continue;
       if (t.deleted_at > (sinceByKey.get(syncKey) ?? 0)) {
         send({ type: "push_delete", entity_type: t.entity_type, entity_id: t.entity_id, deleted_at: t.deleted_at, sync_key: syncKey });
       }
     }
 
-    send({ type: "pull", keys: this.allKeys.map((k) => ({ key: k, since: sinceByKey.get(k) ?? 0 })) });
+    send({ type: "pull", keys: keys.map((k) => ({ key: k, since: sinceByKey.get(k) ?? 0 })) });
   }
 
-  private handleMessage(msg: any): void {
+  private handleMessage(msg: any, keys: string[], epId: string): void {
     if (msg.type === "snapshot") {
-      this.applySnapshot(msg).catch(console.error);
+      this.applySnapshot(msg, keys).catch(console.error);
     } else if (msg.type === "entity") {
       this.mergeEntity(msg.entity_type as EntityType, msg.data).catch(console.error);
     } else if (msg.type === "deleted") {
@@ -596,7 +830,8 @@ class SyncClient {
       // A sibling connection for this same user associated a key (new board
       // group, or a name being set on one) — adopt it the same way we would
       // from ok.user_keys, which cascades into pulling its data normally.
-      this.adoptUserKeys([{ key: msg.key, name: msg.name ?? null }]);
+      // This connection's own server_id is the one that told us, per §3.3.1.
+      this.adoptUserKeys([{ key: msg.key, name: msg.name ?? null }], this.readyServerId.get(epId) ?? null);
     } else if (msg.type === "user_key_removed") {
       removeKeyLocal(msg.key).catch(console.error);
     } else if (msg.type === "error") {
@@ -604,7 +839,7 @@ class SyncClient {
     }
   }
 
-  private async applySnapshot(msg: any): Promise<void> {
+  private async applySnapshot(msg: any, keys: string[]): Promise<void> {
     await this.mergeEntityBatch("board", msg.boards ?? []);
     await this.mergeEntityBatch("list", msg.lists ?? []);
     await this.mergeEntityBatch("item", msg.items ?? []);
@@ -621,8 +856,10 @@ class SyncClient {
         }
       }
     } else if (now) {
-      // Backward compat: server sent a single server_time; apply to all keys
-      for (const key of this.allKeys) {
+      // Backward compat: server sent a single server_time; apply to the keys
+      // this connection actually pulled (its own scoped list, not every key
+      // this client knows about — see §3.3.1).
+      for (const key of keys) {
         await db.key_sync_state.put({ key, last_sync_at: now });
       }
     }

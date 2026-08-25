@@ -44,7 +44,7 @@ const ReceivePage: Component = () => {
     setSaving(true);
     setSaveError(null);
     try {
-      await db.shared_keys.put({ key: p.sk, added_at: Date.now(), board_name: p.bn || undefined });
+      await db.shared_keys.put({ key: p.sk, added_at: Date.now(), board_name: p.bn || undefined, server_id: null });
       if (!p.bid) await markBoardGroup(p.sk, p.bn || "Shared Group");
       setAccepted(true);
     } catch (e) {

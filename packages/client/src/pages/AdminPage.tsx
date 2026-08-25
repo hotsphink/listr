@@ -19,6 +19,7 @@ const PHASE_LABELS: Record<string, string> = {
   ready: "Connected",
   error: "Error",
   conflict: "ID Conflict",
+  variant_mismatch: "Wrong Server",
 };
 
 const PHASE_COLORS: Record<string, string> = {
@@ -28,6 +29,7 @@ const PHASE_COLORS: Record<string, string> = {
   ready: "var(--success)",
   error: "var(--danger)",
   conflict: "var(--danger)",
+  variant_mismatch: "var(--danger)",
 };
 
 // A connection that's ready but lost the race for its server_id to another
@@ -179,7 +181,7 @@ const AdminPage: Component = () => {
   createEffect(() => {
     for (const ep of endpoints()) {
       const ph = (statuses()[ep.id] as EndpointStatus | undefined)?.phase;
-      if (ph === "ready" && !autoExpanded.has(ep.id)) {
+      if ((ph === "ready" || ph === "variant_mismatch") && !autoExpanded.has(ep.id)) {
         autoExpanded.add(ep.id);
         setExpandedIds((prev) => { prev.add(ep.id); return prev; });
       }
@@ -327,6 +329,25 @@ const AdminPage: Component = () => {
                     </div>
                     <Show when={ep.secure && /^[\d.]+$|^[0-9a-f:]+$/i.test(ep.host)}>
                       <div class="endpoint-hint">TLS certificates are issued for hostnames, not IPs — try disabling TLS for this address.</div>
+                    </Show>
+
+                    <Show when={phase() === "variant_mismatch"}>
+                      <div class="endpoint-conflict">
+                        <div class="endpoint-conflict-msg">
+                          This server is <code>{status()?.serverVariant}</code>, but this client is built for{" "}
+                          <code>{status()?.clientVariant}</code>. Refusing to connect — a dev client talking to a prod
+                          server (or the reverse) would write live data to the wrong place.
+                        </div>
+                        <div class="endpoint-conflict-actions">
+                          <button
+                            class="btn btn-sm"
+                            type="button"
+                            onClick={() => updateEndpoint(ep.id, { enabled: false })}
+                          >
+                            Disable
+                          </button>
+                        </div>
+                      </div>
                     </Show>
 
                     <Show when={phase() === "conflict"}>

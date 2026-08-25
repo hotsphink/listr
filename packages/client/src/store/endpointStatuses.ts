@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 
-export type EndpointPhase = "disabled" | "connecting" | "handshaking" | "ready" | "error" | "conflict";
+export type EndpointPhase = "disabled" | "connecting" | "handshaking" | "ready" | "error" | "conflict" | "variant_mismatch";
 
 export interface EndpointStatus {
   phase: EndpointPhase;
@@ -8,6 +8,10 @@ export interface EndpointStatus {
   knownId?: string;
   newId?: string;
   message?: string;
+  /** Only set when phase is "variant_mismatch" — the server's declared world
+   * (e.g. "dev"/"prod") vs. this client's build. */
+  serverVariant?: string;
+  clientVariant?: string;
   /** Only meaningful when phase is "ready". False means another endpoint is
    * already connected to the same server_id and is handling push/pull —
    * this connection is a hot standby, not actively used. */

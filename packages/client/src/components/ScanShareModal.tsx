@@ -85,7 +85,7 @@ const ScanShareModal: Component<Props> = (props) => {
 
   const acceptShare = async (payload: SharePayload) => {
     setSaving(true);
-    await db.shared_keys.put({ key: payload.sk, added_at: Date.now(), board_name: payload.bn });
+    await db.shared_keys.put({ key: payload.sk, added_at: Date.now(), board_name: payload.bn, server_id: null });
     if (!payload.bid) await markBoardGroup(payload.sk, payload.bn || "Shared Group");
     setSaving(false);
     // Close immediately — the board will appear in the sidebar reactively once sync completes.

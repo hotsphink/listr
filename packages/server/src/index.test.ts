@@ -73,6 +73,27 @@ describe("sync server — WS integration", () => {
     ws.close();
   });
 
+  it("reports the server's configured variant in ok, defaulting to prod", async () => {
+    const ws = connect();
+    const ok = await hello(ws, "alice-key");
+    expect(ok.variant).toBe("prod");
+    ws.close();
+  });
+
+  it("reports a non-default variant when the server is configured for one (§3.3 dev/prod guard)", async () => {
+    const devHandle = createSyncServer(openDb(":memory:"), { tls: false, variant: "dev" });
+    await new Promise<void>((resolve) => devHandle.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    const devPort = (devHandle.httpServer.address() as AddressInfo).port;
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${devPort}/sync`);
+      const ok = await hello(ws, "alice-key");
+      expect(ok.variant).toBe("dev");
+      ws.close();
+    } finally {
+      devHandle.stop();
+    }
+  });
+
   it("round-trips an entity push and pull under its own key", async () => {
     const ws = connect();
     await hello(ws, "alice-key");

@@ -2,6 +2,7 @@ import { type Component, createSignal, createEffect, onCleanup, Show } from "sol
 import type { Board } from "@listr/shared";
 import QRCode from "qrcode";
 import Modal from "./Modal.js";
+import { db } from "../db/database.js";
 import { updateBoard } from "../db/operations.js";
 import { makeShareUrl, generateShareKey, type SharePayload } from "../sync/shareToken.js";
 
@@ -22,6 +23,10 @@ const BoardShareModal: Component<Props> = (props) => {
   const [shareUrl, setShareUrl] = createSignal<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = createSignal<string | null>(null);
   const [urlCopied, setUrlCopied] = createSignal(false);
+  // Other boards that would ride along under the same sync key — null while
+  // still computing, so the warning doesn't flash a wrong number. See §7.6:
+  // `sk` conveys the whole namespace, not just the one board being shared.
+  const [otherBoardCount, setOtherBoardCount] = createSignal<number | null>(null);
   let urlCopyTimer: ReturnType<typeof setTimeout> | null = null;
   onCleanup(() => { if (urlCopyTimer) clearTimeout(urlCopyTimer); });
 
@@ -33,6 +38,7 @@ const BoardShareModal: Component<Props> = (props) => {
     if (!props.open || (!board && !group)) {
       setShareUrl(null);
       setQrDataUrl(null);
+      setOtherBoardCount(null);
       return;
     }
 
@@ -46,6 +52,13 @@ const BoardShareModal: Component<Props> = (props) => {
           await updateBoard(board.id, { sync_key: key });
         }
         payload = { v: 1, sk: key, bid: board.id, bn: board.name };
+
+        // Count other boards riding along under this same key so the dialog
+        // can be honest about what `sk` actually hands over (§7.6).
+        const homeKey = (await db.sync_config.get("default"))?.sync_key ?? "";
+        const allBoards = await db.boards.toArray();
+        const others = allBoards.filter((b) => b.id !== board.id && (b.sync_key ?? homeKey) === key);
+        if (!cancelled) setOtherBoardCount(others.length);
       } else {
         payload = { v: 1, sk: group!.key, bid: "", bn: group!.name };
       }
@@ -76,6 +89,13 @@ const BoardShareModal: Component<Props> = (props) => {
       <Show when={props.group}>
         <div class="field-hint" style="margin-bottom: 8px">
           Anyone who accepts this link gets the whole group — boards added or removed later stay in sync too.
+        </div>
+      </Show>
+      <Show when={props.board && otherBoardCount() !== null}>
+        <div class="field-hint" style="margin-bottom: 8px">
+          {otherBoardCount()! > 0
+            ? `This link shares the whole namespace this board lives in — it also shares ${otherBoardCount()} other board${otherBoardCount()! > 1 ? "s" : ""}.`
+            : "This board is alone in its sync namespace, so this link shares only it."}
         </div>
       </Show>
       <Show

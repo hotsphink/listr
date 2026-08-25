@@ -283,6 +283,15 @@ export async function createBoard(
     schema_version: ENTITY_SCHEMA_VERSION,
   };
   await db.boards.add(board);
+  // Bind this new board to whichever server is currently primary (§3.3.1
+  // item 4, second bullet: "a board created while a server is primary binds
+  // to that server"). If none is primary yet (offline, or still connecting),
+  // it's left unbound — placed on this board's first successful connect
+  // instead, via SyncClient.bindUnboundBoards.
+  const primaryServerId = syncClient.getPrimaryServerId();
+  if (primaryServerId) {
+    await db.board_server_binding.put({ board_id: board.id, server_id: primaryServerId });
+  }
   syncClient.pushEntity("board", board);
   if (syncKey) {
     if (groupName) await db.board_groups.put({ key: syncKey, name: groupName, created_at: now() });
@@ -320,6 +329,7 @@ export async function deleteBoard(id: string): Promise<void> {
   for (const itemId of itemIds) syncClient.pushDelete("item", itemId);
   for (const list of lists) syncClient.pushDelete("list", list.id);
   syncClient.pushDelete("board", id);
+  await db.board_server_binding.delete(id);
 }
 
 /**

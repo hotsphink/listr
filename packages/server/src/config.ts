@@ -14,6 +14,7 @@ export interface Config {
   tls?: boolean;
   port?: number;
   db_path?: string;
+  variant: string;
   integrations?: Record<string, IntegrationServerConfig>;
 }
 
@@ -63,14 +64,18 @@ function parseSimpleYaml(content: string): Record<string, unknown> {
 
 export function loadConfig(): Config {
   let raw: Record<string, unknown> = {};
+  // Which world this server belongs to (dev/prod/whatever) — used both to
+  // pick the config file below and, at the caller, advertised to clients in
+  // the `ok` handshake message so a client built for one variant can refuse
+  // to sync with a server running another (§3.3 of work/auth-design.md).
+  const variant = process.env.LISTR_VARIANT ?? "prod";
   try {
-    const variant = process.env.LISTR_VARIANT ?? "prod";
     const path = process.env.LISTR_CONFIG_PATH ?? join(homedir(), ".config", "listr", variant + ".yaml");
     raw = parseSimpleYaml(readFileSync(path, "utf8"));
   } catch {
     // no config file — use defaults
   }
-  const config: Config = {};
+  const config: Config = { variant };
   if (typeof raw.gemini === "string") config.gemini = raw.gemini;
   if (typeof raw.gemini_model === "string") config.gemini_model = raw.gemini_model;
   if (typeof raw.tls === "string") config.tls = raw.tls === "true";

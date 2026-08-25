@@ -41,6 +41,14 @@ export interface SharedKey {
   key: string; // primary key — the sync_key to subscribe to
   added_at: number;
   board_name?: string; // display hint from the share QR
+  /**
+   * Which server this key is scoped to, or null if unscoped (offered to
+   * every configured endpoint — the behavior every key had before this
+   * column existed, and the state a freshly-accepted share starts in until
+   * its first successful connect tags it). See SyncClient's per-endpoint
+   * key scoping (§3.3.1 of work/auth-design.md) and keyScoping.ts.
+   */
+  server_id: string | null;
 }
 
 /**
@@ -55,6 +63,21 @@ export interface BoardGroupMeta {
   created_at: number;
 }
 
+
+/**
+ * Local-only (never synced) board→server binding (§3.3.1 item 4). A board
+ * with no row here, or `server_id: null`, is "not yet placed" — the same
+ * null-means-unscoped convention shared_keys already uses (see keyScoping.ts)
+ * — and is offered to every endpoint until it's bound on first successful
+ * connect. Deliberately a separate table rather than a field on Board: Board
+ * is a synced entity type shared with the wire protocol, and this must never
+ * become a synced field.
+ */
+export interface BoardServerBinding {
+  board_id: string; // primary key
+  server_id: string | null;
+}
+
 export class ListrDB extends Dexie {
   boards!: EntityTable<Board, "id">;
   lists!: EntityTable<List, "id">;
@@ -67,6 +90,7 @@ export class ListrDB extends Dexie {
   key_sync_state!: Table<KeySyncState, string>;
   shared_keys!: Table<SharedKey, string>;
   board_groups!: Table<BoardGroupMeta, string>;
+  board_server_binding!: Table<BoardServerBinding, string>;
 
   constructor() {
     super(DB_NAME);
@@ -106,6 +130,74 @@ export class ListrDB extends Dexie {
       shared_keys: "key",
       integration_results: "id, item_id, integration_id, status, updated_at",
       board_groups: "key",
+    });
+
+    // shared_keys gains a nullable `server_id` (§3.3.1 — server-scoped sync
+    // keys). Not part of the index string below since nothing queries by it;
+    // the upgrade only needs to back-fill the field on existing rows so
+    // `row.server_id` is always present (never `undefined`) going forward.
+    // null means unscoped — every pre-existing row migrates to null, which
+    // preserves today's "send this key to every endpoint" behavior exactly.
+    this.version(2).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
+      board_groups: "key",
+    }).upgrade(async (tx) => {
+      await tx.table("shared_keys").toCollection().modify((row: SharedKey) => {
+        if (row.server_id === undefined) row.server_id = null;
+      });
+    });
+
+    // board_server_binding (§3.3.1 item 4 — closing the rest of the [GAP]:
+    // a board syncs only to the server it belongs to). A new table only, so
+    // no store string changes for anything else. The upgrade binds every
+    // existing board to the one server this client already knows
+    // (sync_endpoints.last_server_id), so an existing single-server setup is
+    // completely unaffected.
+    //
+    // Only when there is exactly one distinct known server_id: zero or
+    // several is ambiguous (this client has never synced, or has talked to
+    // more than one server), so boards are left unbound (null) and get placed
+    // individually the next time each is pushed — see
+    // SyncClient.bindUnboundBoards.
+    this.version(3).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
+      board_groups: "key",
+      board_server_binding: "board_id",
+    }).upgrade(async (tx) => {
+      const endpoints = await tx.table("sync_endpoints").toArray();
+      const knownServerIds = [
+        ...new Set(
+          endpoints
+            .map((e: SyncEndpoint) => e.last_server_id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      ];
+
+      if (knownServerIds.length === 1) {
+        const serverId = knownServerIds[0];
+        const boards = await tx.table("boards").toArray();
+        for (const b of boards) {
+          await tx.table("board_server_binding").put({ board_id: b.id, server_id: serverId });
+        }
+      }
     });
   }
 }
