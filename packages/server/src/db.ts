@@ -180,26 +180,47 @@ function migrateV1LegacyColumnBaseline(sql: Database.Database): void {
 // concern, and these databases are small enough that an O(assets × entities)
 // scan is fine. Assets matching nothing are genuinely orphaned; they're left
 // unassociated and counted in the log line below.
+// Assets are referenced from entity content as `hash://<20 hex>.<ext>` — the
+// same form the client scans for in extractReferencedAssetIds (exportImport.ts).
+// Pulling ids out of the JSON is O(references); matching against the whole
+// assets table would be O(assets) on every single push.
+const ASSET_HASH_RE = /hash:\/\/([0-9a-f]{20})\.[a-z0-9]+/gi;
+
+function extractAssetIds(json: string): Set<string> {
+  const ids = new Set<string>();
+  if (!json.includes("hash://")) return ids;
+  for (const m of json.matchAll(ASSET_HASH_RE)) ids.add(m[1].toLowerCase());
+  return ids;
+}
+
 function migrateV2AssetKeys(sql: Database.Database): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS asset_keys (asset_id TEXT NOT NULL, sync_key TEXT NOT NULL, PRIMARY KEY (asset_id, sync_key))`);
   sql.exec(`CREATE INDEX IF NOT EXISTS idx_asset_keys_key ON asset_keys(sync_key)`);
 
-  const assets = sql.prepare(`SELECT id FROM assets`).all() as { id: string }[];
-  if (assets.length === 0) return;
+  const known = new Set(
+    (sql.prepare(`SELECT id FROM assets`).all() as { id: string }[]).map((r) => r.id),
+  );
+  if (known.size === 0) return;
+
+  // One pass over each entity table, extracting references as we go. The
+  // previous shape ran a non-indexable `data LIKE '%id%'` scan per asset per
+  // table, which is O(assets x rows) at startup.
   const insert = sql.prepare(`INSERT OR IGNORE INTO asset_keys (asset_id, sync_key) VALUES (?, ?)`);
-  let matched = 0;
-  for (const { id } of assets) {
-    let hit = false;
-    for (const table of ["boards", "lists", "items"] as const) {
-      const rows = sql.prepare(`SELECT DISTINCT sync_key FROM ${table} WHERE data LIKE ?`).all(`%${id}%`) as { sync_key: string }[];
-      for (const { sync_key } of rows) {
-        insert.run(id, sync_key);
-        hit = true;
+  const associated = new Set<string>();
+  for (const table of ["boards", "lists", "items"] as const) {
+    const rows = sql.prepare(`SELECT sync_key, data FROM ${table}`).all() as { sync_key: string; data: string }[];
+    for (const row of rows) {
+      if (!row.sync_key) continue;
+      for (const id of extractAssetIds(row.data)) {
+        // Backfill only associates assets that actually exist; unlike the live
+        // push path there is no later arrival to wait for.
+        if (!known.has(id)) continue;
+        insert.run(id, row.sync_key);
+        associated.add(id);
       }
     }
-    if (hit) matched++;
   }
-  console.log(`[migrate] asset_keys backfill: associated ${matched}/${assets.length} asset(s), ${assets.length - matched} left orphaned (no referencing entity found)`);
+  console.log(`[migrate] asset_keys backfill: associated ${associated.size}/${known.size} asset(s), ${known.size - associated.size} left orphaned (no referencing entity found)`);
 }
 
 // Migration 3: user_keys.user_key -> home_key (§12.1 — internal rename only;
@@ -266,12 +287,15 @@ export function createDbApi(sql: Database.Database) {
   // board would sync down for its uploader only, not the people it was
   // shared with.
   function associateReferencedAssets(dataJson: string, syncKey: string): void {
-    const assetIds = sql.prepare(`SELECT id FROM assets`).all() as { id: string }[];
-    if (assetIds.length === 0) return;
+    if (!syncKey) return;
+    // Deliberately does NOT check that the asset already exists: doInitialSync
+    // pushes boards/lists/items *before* assets, so on a first sync the asset
+    // row lands after the entity that references it. Recording the association
+    // up front makes this order-independent. asset_keys has no foreign key, and
+    // getEntitiesSince joins through assets, so a row for an asset that never
+    // arrives is inert.
     const insert = sql.prepare(`INSERT OR IGNORE INTO asset_keys (asset_id, sync_key) VALUES (?, ?)`);
-    for (const { id } of assetIds) {
-      if (dataJson.includes(id)) insert.run(id, syncKey);
-    }
+    for (const id of extractAssetIds(dataJson)) insert.run(id, syncKey);
   }
 
   function upsertEntity(

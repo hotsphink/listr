@@ -46,9 +46,9 @@ function makeLegacyDbFile(): { path: string; cleanup: () => void } {
   `);
   raw
     .prepare(`INSERT INTO boards (id, sync_key, updated_at, data) VALUES (?, ?, ?, ?)`)
-    .run("b1", "sharedKey", 100, JSON.stringify({ id: "b1", sync_key: "sharedKey", updated_at: 100, name: "Legacy", format_string: "![img](hash://legacyasset0000001.png)" }));
-  raw.prepare(`INSERT INTO assets (id, updated_at, data) VALUES (?, ?, ?)`).run("legacyasset0000001", 90, JSON.stringify(makeAsset("legacyasset0000001", 90)));
-  raw.prepare(`INSERT INTO assets (id, updated_at, data) VALUES (?, ?, ?)`).run("orphanasset00000001", 80, JSON.stringify(makeAsset("orphanasset00000001", 80)));
+    .run("b1", "sharedKey", 100, JSON.stringify({ id: "b1", sync_key: "sharedKey", updated_at: 100, name: "Legacy", format_string: "![img](hash://a1b2c3d4e5f60718293a.png)" }));
+  raw.prepare(`INSERT INTO assets (id, updated_at, data) VALUES (?, ?, ?)`).run("a1b2c3d4e5f60718293a", 90, JSON.stringify(makeAsset("a1b2c3d4e5f60718293a", 90)));
+  raw.prepare(`INSERT INTO assets (id, updated_at, data) VALUES (?, ?, ?)`).run("b2c3d4e5f60718293a4b", 80, JSON.stringify(makeAsset("b2c3d4e5f60718293a4b", 80)));
   raw.prepare(`INSERT INTO user_keys (user_key, key, name, added_at) VALUES (?, ?, ?, ?)`).run("home1", "grp1", null, 100);
   raw.close();
   return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -412,15 +412,45 @@ describe("assets — per-key isolation via asset_keys", () => {
     // uploader's own key (no board context at asset-push time), and only
     // becomes visible on a shared board once something referencing it is
     // pushed under the board's own sync_key.
-    db.upsertEntity("asset", makeAsset("referencedasset0001", 100), "uploaderKey");
+    db.upsertEntity("asset", makeAsset("c3d4e5f60718293a4b5c", 100), "uploaderKey");
     db.upsertEntity(
       "board",
-      { id: "b1", updated_at: 100, name: "B", format_string: "![img](hash://referencedasset0001.png)" },
+      { id: "b1", updated_at: 100, name: "B", format_string: "![img](hash://c3d4e5f60718293a4b5c.png)" },
       "sharedBoardKey",
     );
     expect(db.getEntitiesSince("asset", "sharedBoardKey", 0)).toHaveLength(1);
     // And the uploader's own key still sees it too — association is additive.
     expect(db.getEntitiesSince("asset", "uploaderKey", 0)).toHaveLength(1);
+  });
+
+  it("associates correctly when the entity is pushed BEFORE the asset", () => {
+    // This is the order doInitialSync actually uses: boards, then lists, then
+    // items, and only then assets. An implementation that scans the existing
+    // assets table at entity-push time silently misses this case, leaving the
+    // image visible only to the uploader.
+    db.upsertEntity(
+      "board",
+      { id: "b1", updated_at: 100, name: "B", format_string: "![img](hash://d4e5f60718293a4b5c6d.png)" },
+      "sharedBoardKey",
+    );
+    // Asset arrives afterwards, under the uploader's home key as always.
+    db.upsertEntity("asset", makeAsset("d4e5f60718293a4b5c6d", 100), "uploaderKey");
+
+    expect(db.getEntitiesSince("asset", "sharedBoardKey", 0)).toHaveLength(1);
+    expect(db.getEntitiesSince("asset", "uploaderKey", 0)).toHaveLength(1);
+    expect(db.getEntitiesSince("asset", "unrelatedKey", 0)).toHaveLength(0);
+  });
+
+  it("only matches well-formed hash:// references, not bare id substrings", () => {
+    db.upsertEntity("asset", makeAsset("e5f60718293a4b5c6d7e", 100), "uploaderKey");
+    // The id appears in the text but not as a hash:// reference, so it is not
+    // a real reference and must not grant the board's key access to the asset.
+    db.upsertEntity(
+      "board",
+      { id: "b1", updated_at: 100, name: "e5f60718293a4b5c6d7e is just a word here" },
+      "someKey",
+    );
+    expect(db.getEntitiesSince("asset", "someKey", 0)).toHaveLength(0);
   });
 
   it("an asset with no referencing entity anywhere is invisible to everyone", () => {
@@ -459,7 +489,7 @@ describe("schema_version migrations", () => {
       expect(db.getEntitiesSince("asset", "sharedKey", 0)).toHaveLength(1);
       // The unreferenced asset is left orphaned rather than guessed at.
       const boardKeyAssets = db.getEntitiesSince("asset", "sharedKey", 0) as any[];
-      expect(boardKeyAssets.map((a) => a.id)).toEqual(["legacyasset0000001"]);
+      expect(boardKeyAssets.map((a) => a.id)).toEqual(["a1b2c3d4e5f60718293a"]);
     } finally {
       cleanup();
     }
