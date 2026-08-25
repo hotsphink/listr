@@ -212,8 +212,8 @@ class SyncClient {
   private primaryForServerId = new Map<string, string>(); // server_id -> primary endpoint id
   private statusPhases = new Map<string, EndpointPhase>();
   private currentEndpoints: SyncEndpointConfig[] = [];
-  private defaultKey = "";
-  private allKeys: string[] = []; // defaultKey + distinct board sync_keys
+  private homeKey = "";
+  private allKeys: string[] = []; // homeKey + distinct board sync_keys
   private clientId = "";
 
   // Entity routing caches — populated from board/list subscriptions and pushes
@@ -223,8 +223,8 @@ class SyncClient {
   private explicitSharedKeys: string[] = []; // keys added via QR share, independent of boards
 
   setCredentials(key: string, clientId: string): void {
-    if (key === this.defaultKey && clientId === this.clientId) return;
-    this.defaultKey = key;
+    if (key === this.homeKey && clientId === this.clientId) return;
+    this.homeKey = key;
     this.clientId = clientId;
     this.recomputeAllKeys();
   }
@@ -292,15 +292,15 @@ class SyncClient {
 
   /** Tell the server this key belongs to the current user (default key), optionally naming it (e.g. a board group). Best-effort. */
   associateKey(key: string, name?: string): void {
-    if (!this.defaultKey || !key || key === this.defaultKey) return;
-    const msg = { type: "associate_key", default_key: this.defaultKey, key, name: name ?? null };
+    if (!this.homeKey || !key || key === this.homeKey) return;
+    const msg = { type: "associate_key", default_key: this.homeKey, key, name: name ?? null };
     for (const send of this.senders.values()) send(msg);
   }
 
   /** Tell the server to forget this key's association with the current user. Best-effort. */
   leaveKey(key: string): void {
-    if (!this.defaultKey || !key) return;
-    const msg = { type: "leave_key", default_key: this.defaultKey, key };
+    if (!this.homeKey || !key) return;
+    const msg = { type: "leave_key", default_key: this.homeKey, key };
     for (const send of this.senders.values()) send(msg);
   }
 
@@ -319,37 +319,37 @@ class SyncClient {
   }
 
   private effectiveKeyForEntity(entityType: EntityType, data: any): string {
-    if (entityType === "board") return data.sync_key || this.defaultKey;
+    if (entityType === "board") return data.sync_key || this.homeKey;
     if (entityType === "list") {
       const boardId = data.board_id as string;
-      return this.boardSyncKeys.get(boardId) ?? this.defaultKey;
+      return this.boardSyncKeys.get(boardId) ?? this.homeKey;
     }
     if (entityType === "item") {
       const listId = data.list_id as string;
       const boardId = this.listBoardMap.get(listId);
-      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.defaultKey) : this.defaultKey;
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.homeKey) : this.homeKey;
     }
-    return this.defaultKey; // assets are not namespaced
+    return this.homeKey; // assets are not namespaced
   }
 
   private effectiveKeyForEntityId(entityType: EntityType, entityId: string): string {
-    if (entityType === "board") return this.boardSyncKeys.get(entityId) ?? this.defaultKey;
+    if (entityType === "board") return this.boardSyncKeys.get(entityId) ?? this.homeKey;
     if (entityType === "list") {
       const boardId = this.listBoardMap.get(entityId);
-      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.defaultKey) : this.defaultKey;
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.homeKey) : this.homeKey;
     }
     if (entityType === "item") {
       const listId = this.itemListMap.get(entityId);
       const boardId = listId ? this.listBoardMap.get(listId) : undefined;
-      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.defaultKey) : this.defaultKey;
+      return boardId ? (this.boardSyncKeys.get(boardId) ?? this.homeKey) : this.homeKey;
     }
-    return this.defaultKey;
+    return this.homeKey;
   }
 
   private recomputeAllKeys(): void {
-    if (!this.defaultKey) return;
+    if (!this.homeKey) return;
     const extra = [...new Set([...this.boardSyncKeys.values(), ...this.explicitSharedKeys])];
-    const newKeys = [this.defaultKey, ...extra.filter((k) => k !== this.defaultKey)];
+    const newKeys = [this.homeKey, ...extra.filter((k) => k !== this.homeKey)];
     const changed =
       newKeys.length !== this.allKeys.length || newKeys.some((k, i) => k !== this.allKeys[i]);
     if (changed) {
@@ -538,7 +538,7 @@ class SyncClient {
     const boards = await db.boards.where("updated_at").above(minSince).toArray();
     const allBoards = await db.boards.toArray();
     const boardKeyMap = new Map<string, string>(
-      allBoards.map((b) => [b.id, b.sync_key || this.defaultKey]),
+      allBoards.map((b) => [b.id, b.sync_key || this.homeKey]),
     );
 
     const lists = await db.lists.where("updated_at").above(minSince).toArray();
@@ -546,14 +546,14 @@ class SyncClient {
     const listBoardId = new Map<string, string>(allLists.map((l) => [l.id, l.board_id]));
 
     for (const board of boards) {
-      const key = board.sync_key || this.defaultKey;
+      const key = board.sync_key || this.homeKey;
       if (board.updated_at > (sinceByKey.get(key) ?? 0)) {
         send({ type: "push_entity", entity_type: "board", sync_key: key, data: board });
       }
     }
 
     for (const list of lists) {
-      const key = boardKeyMap.get(list.board_id) ?? this.defaultKey;
+      const key = boardKeyMap.get(list.board_id) ?? this.homeKey;
       if (list.updated_at > (sinceByKey.get(key) ?? 0)) {
         send({ type: "push_entity", entity_type: "list", sync_key: key, data: list });
       }
@@ -562,7 +562,7 @@ class SyncClient {
     const items = await db.items.where("updated_at").above(minSince).toArray();
     for (const item of items) {
       const boardId = listBoardId.get(item.list_id);
-      const key = boardId ? (boardKeyMap.get(boardId) ?? this.defaultKey) : this.defaultKey;
+      const key = boardId ? (boardKeyMap.get(boardId) ?? this.homeKey) : this.homeKey;
       if (item.updated_at > (sinceByKey.get(key) ?? 0)) {
         send({ type: "push_entity", entity_type: "item", sync_key: key, data: item });
         this.itemListMap.set(item.id, item.list_id);
@@ -571,12 +571,12 @@ class SyncClient {
 
     const assets = await db.assets.where("updated_at").above(minSince).toArray();
     for (const a of assets) {
-      send({ type: "push_entity", entity_type: "asset", sync_key: this.defaultKey, data: assetToSync(a) });
+      send({ type: "push_entity", entity_type: "asset", sync_key: this.homeKey, data: assetToSync(a) });
     }
 
     const tombstones = await db.tombstones.where("deleted_at").above(minSince).toArray();
     for (const t of tombstones) {
-      const syncKey = t.sync_key ?? this.defaultKey;
+      const syncKey = t.sync_key ?? this.homeKey;
       if (t.deleted_at > (sinceByKey.get(syncKey) ?? 0)) {
         send({ type: "push_delete", entity_type: t.entity_type, entity_id: t.entity_id, deleted_at: t.deleted_at, sync_key: syncKey });
       }
