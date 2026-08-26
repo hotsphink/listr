@@ -20,5 +20,15 @@
 // association (e.g. leaving a shared board removes it from all your devices).
 // Flag day: MIN bumped to 4 so pre-v4 clients (no default_key) are rejected
 // outright rather than silently missing out on cross-device sync.
-export const MIN_PROTOCOL_VERSION: number = 4;
-export const MAX_PROTOCOL_VERSION: number = 4;
+// v5 (auth-design.md §4): client-keypair identity replaces the bare
+// `default_key`-as-credential model. hello now carries `client_id` (RFC 7638
+// thumbprint) + `pubkey_jwk` instead of `default_key`; a `challenge`/`auth`
+// round trip (signed nonce) sits between `hello` and `ok`; `variant` moves
+// from `ok` to `challenge` (§3.3 — reject a dev/prod mismatch before any
+// crypto runs); `ok` gains `home_key` (server-assigned, §3.1) since the
+// client no longer supplies one. Flag day, same shape as v4's: MIN bumped to
+// 5 so a pre-v5 client (no keypair, sends `default_key`) is rejected
+// outright with an actionable message rather than being silently unable to
+// complete a handshake it doesn't know it needs to speak differently.
+export const MIN_PROTOCOL_VERSION: number = 5;
+export const MAX_PROTOCOL_VERSION: number = 5;

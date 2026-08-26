@@ -64,9 +64,9 @@ function parseSimpleYaml(content: string): Record<string, unknown> {
 
 export function loadConfig(): Config {
   let raw: Record<string, unknown> = {};
-  // Which world this server belongs to (dev/prod/whatever) — used both to
-  // pick the config file below and, at the caller, advertised to clients in
-  // the `ok` handshake message so a client built for one variant can refuse
+  // Which world this server belongs to (dev/prod/whatever) — used both to pick
+  // the config file below and, at the caller, advertised to clients in the
+  // `challenge` handshake message so a client built for one variant can refuse
   // to sync with a server running another (§3.3 of work/auth-design.md).
   const variant = process.env.LISTR_VARIANT ?? "prod";
   try {

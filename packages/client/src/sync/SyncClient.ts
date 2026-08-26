@@ -1,4 +1,4 @@
-import { db } from "../db/database.js";
+import { db, type ClientIdentity, type ServerIdentity } from "../db/database.js";
 import { removeKeyLocal } from "../db/keyCleanup.js";
 import type { Board, List } from "@listr/shared";
 import { PROTOCOL_VERSION } from "./protocol.js";
@@ -7,6 +7,8 @@ import { applyIncomingEntity, shouldDeleteOnTombstone, type EntityType } from ".
 import { variantAllowed } from "./variantGuard.js";
 import { keysForEndpoint, type ScopedKeyRow } from "./keyScoping.js";
 import { connectionsForPush, type PushRoutingConnection } from "./pushRouting.js";
+import { buildAuthPayload } from "./clientIdentity.js";
+import { exportPublicJwk, getOrCreateClientIdentity, signAuthPayload } from "./clientKeys.js";
 import { assetToSync, assetFromSync, registerAsset } from "./assetStore.js";
 import {
   setEndpointStatus,
@@ -48,9 +50,31 @@ export interface ServerUserKey {
   name: string | null;
 }
 
+/** This device's identity on the wire (§4.1/§4.2) — the RFC 7638 thumbprint
+ * plus the exported public JWK, both derived once from the local keypair and
+ * reused for every connection. */
+interface ClientContext {
+  clientId: string;
+  pubkeyJwk: Record<string, unknown>;
+  sign: (payload: Uint8Array) => Promise<string>;
+}
+
 interface EndpointCallbacks {
   onStatus: (status: EndpointStatus) => void;
-  onReady: (send: (msg: unknown) => void, serverId: string, userKeys: ServerUserKey[]) => void;
+  onReady: (
+    send: (msg: unknown) => void,
+    serverId: string,
+    homeKey: string,
+    userId: string,
+    caps: string[],
+    displayName: string | null,
+    userKeys: ServerUserKey[],
+  ) => void;
+  /** The handshake completed but this client isn't registered on this server
+   * (§4.2/§6). `send` is kept live so a later `redeem_grant` (job 3's join UI,
+   * or SyncClient.redeemGrant below) can complete registration on this same
+   * connection without a reconnect. */
+  onNeedsGrant: (send: (msg: unknown) => void, serverId: string) => void;
   onMessage: (msg: unknown) => void;
   onNeedsRetry: () => void;
 }
@@ -62,11 +86,15 @@ class EndpointConnection {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  // Known only once `challenge` arrives (§4.2). Held so a later `error` (e.g.
+  // suspended/revoked) can still be attributed to a server_id even though it
+  // arrives after `challenge`.
+  private challengeServerId: string | null = null;
 
   constructor(
     config: SyncEndpointConfig,
     private keys: string[],
-    private clientId: string,
+    private clientCtx: ClientContext,
     private callbacks: EndpointCallbacks,
   ) {
     this.config = { ...config };
@@ -125,13 +153,10 @@ class EndpointConnection {
       this.callbacks.onNeedsRetry();
       return;
     }
-    if (!this.keys.length || !this.keys[0]) {
-      this.setPhase({ phase: "error", message: "No sync key configured" });
-      return;
-    }
     const proto = secure ? "wss" : "ws";
     const url = `${proto}://${host}:${port}/sync`;
     this.setPhase({ phase: "connecting" });
+    this.challengeServerId = null;
 
     try {
       const ws = new WebSocket(url);
@@ -154,50 +179,45 @@ class EndpointConnection {
       ws.addEventListener("open", () => {
         clearConnectTimer();
         this.setPhase({ phase: "handshaking" });
-        ws.send(JSON.stringify({ type: "hello", keys: this.keys, default_key: this.keys[0], client_id: this.clientId, protocol_version: PROTOCOL_VERSION }));
+        // v5 (§4.2): identity travels every time as client_id + pubkey_jwk, so
+        // no bearer credential here in 'hello'.
+        ws.send(JSON.stringify({
+          type: "hello",
+          protocol_version: PROTOCOL_VERSION,
+          client_id: this.clientCtx.clientId,
+          pubkey_jwk: this.clientCtx.pubkeyJwk,
+          keys: this.keys,
+        }));
       });
 
       ws.addEventListener("message", (e: MessageEvent) => {
         let msg: any;
         try { msg = JSON.parse(e.data as string); } catch { return; }
 
-        if (msg.type === "ok") {
-          const serverId = typeof msg.server_id === "string" ? msg.server_id : "";
-
-          // Dev/prod variant guard (§3.3): a server that reports no variant
-          // is an older server that predates this field — treated as unknown
-          // and allowed (with a warning) so a new client can still talk to a
-          // not-yet-updated server. PROTOCOL_VERSION is deliberately not
-          // bumped for this.
-          const serverVariant = typeof msg.variant === "string" ? msg.variant : undefined;
-          if (serverVariant === undefined) {
-            console.warn(`[sync] ${this.config.host}:${this.config.port} did not report a variant (older server) — allowing connection`);
-          } else if (!variantAllowed(serverVariant, __VARIANT__)) {
-            this.setPhase({
-              phase: "variant_mismatch",
-              serverVariant,
-              clientVariant: __VARIANT__,
-              message: `This is a "${serverVariant}" server; this client is built for "${__VARIANT__}"`,
-            });
-            return;
-          }
-
-          const known = this.config.lastServerId;
-          if (known && serverId && serverId !== known) {
-            this.setPhase({ phase: "conflict", knownId: known, newId: serverId });
-            return;
-          }
-          this.setPhase({ phase: "ready", serverId });
-          const send = (m: unknown) => {
-            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
-          };
-          const userKeys: ServerUserKey[] = Array.isArray(msg.user_keys) ? msg.user_keys : [];
-          this.callbacks.onReady(send, serverId, userKeys);
+        if (msg.type === "challenge") {
+          this.handleChallenge(ws, msg);
           return;
         }
 
-        if (msg.type === "error" && this.currentPhase === "handshaking") {
-          this.setPhase({ phase: "error", message: msg.message ?? "Server rejected connection" });
+        if (msg.type === "ok") {
+          this.handleOk(ws, msg);
+          return;
+        }
+
+        if (msg.type === "needs_grant") {
+          this.setPhase({ phase: "needs_grant", serverId: this.challengeServerId ?? undefined });
+          this.callbacks.onNeedsGrant(this.makeSend(ws), this.challengeServerId ?? "");
+          return;
+        }
+
+        if (msg.type === "error" && this.currentPhase !== "ready") {
+          const reason = typeof msg.reason === "string" ? msg.reason : undefined;
+          this.setPhase({
+            phase: "error",
+            message: msg.message ?? "Server rejected connection",
+            serverId: this.challengeServerId ?? undefined,
+            authReason: reason,
+          });
           ws.close();
           return;
         }
@@ -222,6 +242,67 @@ class EndpointConnection {
     }
   }
 
+  private makeSend(ws: WebSocket): (msg: unknown) => void {
+    return (m: unknown) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
+    };
+  }
+
+  /** §4.2's challenge step: check variant and server_id conflict BEFORE doing
+   * any crypto, then sign and send `auth`. */
+  private async handleChallenge(ws: WebSocket, msg: any): Promise<void> {
+    const serverId = typeof msg.server_id === "string" ? msg.server_id : "";
+    this.challengeServerId = serverId || null;
+
+    // Dev/prod variant guard (§3.3): a server that reports no variant is an
+    // older server that predates this field. Treat it as unknown and allow
+    // (with a warning) so a new client can still talk to a not-yet-updated
+    // server.
+    const serverVariant = typeof msg.variant === "string" ? msg.variant : undefined;
+    if (serverVariant === undefined) {
+      console.warn(`[sync] ${this.config.host}:${this.config.port} did not report a variant (older server) — allowing connection`);
+    } else if (!variantAllowed(serverVariant, __VARIANT__)) {
+      this.setPhase({
+        phase: "variant_mismatch",
+        serverVariant,
+        clientVariant: __VARIANT__,
+        message: `This is a "${serverVariant}" server; this client is built for "${__VARIANT__}"`,
+      });
+      return;
+    }
+
+    const known = this.config.lastServerId;
+    if (known && serverId && serverId !== known) {
+      this.setPhase({ phase: "conflict", knownId: known, newId: serverId });
+      return;
+    }
+
+    const nonce = typeof msg.nonce === "string" ? msg.nonce : "";
+    try {
+      const payload = buildAuthPayload(serverId, nonce, this.clientCtx.clientId);
+      const sig = await this.clientCtx.sign(payload);
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "auth", sig }));
+    } catch (err) {
+      console.error("[sync] failed to sign auth challenge:", err);
+      this.setPhase({ phase: "error", message: "Failed to sign authentication challenge" });
+      ws.close();
+    }
+  }
+
+  private handleOk(ws: WebSocket, msg: any): void {
+    const serverId = this.challengeServerId ?? (typeof msg.server_id === "string" ? msg.server_id : "");
+    const userId = typeof msg.user_id === "string" ? msg.user_id : "";
+    // §3.1: the home key is server-assigned and arrives here — the client
+    // never invents or asserts one.
+    const homeKey = typeof msg.home_key === "string" ? msg.home_key : "";
+    const caps: string[] = Array.isArray(msg.caps) ? msg.caps.filter((c: unknown) => typeof c === "string") : [];
+    const displayName = typeof msg.display_name === "string" ? msg.display_name : null;
+    const userKeys: ServerUserKey[] = Array.isArray(msg.user_keys) ? msg.user_keys : [];
+
+    this.setPhase({ phase: "ready", serverId });
+    this.callbacks.onReady(this.makeSend(ws), serverId, homeKey, userId, caps, displayName, userKeys);
+  }
+
   private setPhase(status: EndpointStatus): void {
     this.currentPhase = status.phase;
     this.callbacks.onStatus(status);
@@ -231,10 +312,12 @@ class EndpointConnection {
 // One primary connection's outgoing plumbing plus everything pushEntity /
 // pushDelete / associateKey / leaveKey need to build a message *for that
 // connection specifically* (§3.3.1) — `send`, the scoped `keys` list this
-// connection actually offered in `hello`, its resolved home key, and the
-// server_id it's bound to (for the board-binding exclusion). One primary per
-// distinct server_id (claimOrDefer already collapses multiple endpoints on
-// the same server down to one), keyed by endpoint id.
+// connection actually offered in `hello` (now always including its
+// server-assigned home key once known — see SyncClient.onReady), its
+// resolved home key, and the server_id it's bound to (for the board-binding
+// exclusion). One primary per distinct server_id (claimOrDefer already
+// collapses multiple endpoints on the same server down to one), keyed by
+// endpoint id.
 interface PrimaryConnection {
   send: (msg: unknown) => void;
   keys: string[];
@@ -248,6 +331,8 @@ class SyncClient {
   private primaries = new Map<string, PrimaryConnection>();
   // Every ready connection regardless of primary/standby role, so a standby
   // can be promoted to primary without reconnecting when the primary drops.
+  // Also holds a connection's `send` while it's sitting in "needs_grant",
+  // so SyncClient.redeemGrant can reach it without a reconnect.
   private allSenders = new Map<string, (msg: unknown) => void>();
   private readyServerId = new Map<string, string>(); // endpoint id -> server_id, while ready
   private primaryForServerId = new Map<string, string>(); // server_id -> primary endpoint id
@@ -259,14 +344,19 @@ class SyncClient {
   private resolvedHomeKeyByEndpoint = new Map<string, string>();
   private statusPhases = new Map<string, EndpointPhase>();
   private currentEndpoints: SyncEndpointConfig[] = [];
-  // The user-typed secret (sync_config.sync_key): this client's home key,
-  // the same on every server it talks to. Per-server derived home keys were
-  // built and then removed — see resolveConnectionKeys for why, and Phase 1
-  // for where they belong instead. Used directly (not per-connection) only
-  // for the one thing that isn't per-connection: the sync_key stamped on a
-  // locally-written tombstone row (see pushDelete's comment for why that's a
-  // known Phase 1 gap, not fixed here).
-  private homeKey = "";
+
+  // This device's keypair-derived identity (§4.1). Generated lazily once an
+  // endpoint is enabled. `pubkeyJwk` is exported once and cached alongside it
+  // rather than re-exported per connection.
+  private identity: ClientIdentity | null = null;
+  private pubkeyJwk: Record<string, unknown> | null = null;
+
+  // Per-server registration state (§8.1's server_identity, mirrored here so
+  // resolveConnectionKeys can read it synchronously) — server_id -> what
+  // that server told us about this client. Updated reactively from
+  // updateServerIdentities (App.tsx's liveQuery over db.server_identity).
+  private serverIdentities = new Map<string, { userId: string | null; homeKey: string | null }>();
+
   private clientId = "";
   // Signature of the inputs to keysForEndpoint, used only to skip a
   // reconnect-all when recomputeAllKeys is triggered by a no-op change (e.g.
@@ -288,11 +378,29 @@ class SyncClient {
   // BoardServerBinding and keyScoping.ts's null-means-unscoped convention.
   private boardServerBinding = new Map<string, string | null>();
 
-  setCredentials(key: string, clientId: string): void {
-    if (key === this.homeKey && clientId === this.clientId) return;
-    this.homeKey = key;
-    this.clientId = clientId;
-    this.recomputeAllKeys();
+  /** Called reactively from App.tsx whenever sync_endpoints changes. Lazily
+   * creates this device's keypair (§4.1) the first time any endpoint is
+   * actually enabled — never before, so an offline-only user never mints
+   * one. A change that leaves nothing enabled just tears connections down,
+   * with no keypair involved at all. */
+  setEndpoints(endpoints: SyncEndpointConfig[]): void {
+    this.currentEndpoints = endpoints;
+    if (!endpoints.some((e) => e.enabled)) {
+      this.applyEndpoints(endpoints);
+      return;
+    }
+    if (this.identity) {
+      this.applyEndpoints(endpoints);
+      return;
+    }
+    getOrCreateClientIdentity()
+      .then(async (identity) => {
+        this.identity = identity;
+        this.pubkeyJwk = await exportPublicJwk(identity);
+        this.clientId = identity.client_id;
+        this.applyEndpoints(this.currentEndpoints);
+      })
+      .catch((err) => console.error("[sync] failed to create client identity:", err));
   }
 
   /** Called reactively from App.tsx whenever the boards table changes. */
@@ -319,6 +427,15 @@ class SyncClient {
     this.recomputeAllKeys();
   }
 
+  /** Called reactively from App.tsx whenever server_identity changes (§8.1) —
+   * this is where a server-assigned home key becomes visible to
+   * resolveConnectionKeys/keysForEndpoint. */
+  updateServerIdentities(rows: ServerIdentity[]): void {
+    this.serverIdentities.clear();
+    for (const r of rows) this.serverIdentities.set(r.server_id, { userId: r.user_id, homeKey: r.home_key });
+    this.recomputeAllKeys();
+  }
+
   /** Called reactively from App.tsx whenever the lists table changes. */
   updateListBoards(lists: List[]): void {
     this.listBoardMap.clear();
@@ -340,11 +457,6 @@ class SyncClient {
     return [...this.primaryForServerId.keys()][0] ?? null;
   }
 
-  setEndpoints(endpoints: SyncEndpointConfig[]): void {
-    this.currentEndpoints = endpoints;
-    this.applyEndpoints(endpoints);
-  }
-
   async forceFullSync(): Promise<void> {
     await Promise.all([db.boards.clear(), db.lists.clear(), db.items.clear(), db.assets.clear(), db.tombstones.clear(), db.integration_results.clear()]);
     await db.key_sync_state.clear();
@@ -357,6 +469,19 @@ class SyncClient {
   async forcePushAll(): Promise<void> {
     await db.key_sync_state.clear();
     for (const conn of this.connections.values()) conn.resetAndReconnect();
+  }
+
+  /**
+   * Registration plumbing for join UI (§6, §7.2): redeem a grant on an
+   * already-open connection sitting in "needs_grant" (or, for a `share` grant,
+   * one that's already authenticated). This is just the wire call. The server's
+   * reply is an ordinary `ok` (or `error`), handled by the same
+   * EndpointConnection message path as any other `ok`.
+   */
+  redeemGrant(endpointId: string, grantId: string, secret: string, label?: string): void {
+    const send = this.allSenders.get(endpointId);
+    if (!send) throw new Error(`redeemGrant: endpoint ${endpointId} has no open connection`);
+    send({ type: "redeem_grant", grant_id: grantId, secret, label: label ?? null });
   }
 
   pushEntity(entityType: EntityType, data: unknown): void {
@@ -379,13 +504,16 @@ class SyncClient {
   }
 
   pushDelete(entityType: EntityType, entityId: string, deletedAt?: number): void {
-    // The local tombstone row carries a single sync_key (this.homeKey as the
-    // fallback), even though per-connection routing below may resolve a
-    // different key per connection once home keys are server-assigned
-    // (Phase 1). Today homeKey is the same everywhere so it doesn't matter;
-    // once it isn't, a tombstone needs a key *per server*, not one column —
-    // a real Phase 1 issue, not solved here.
-    const syncKey = this.effectiveKeyForEntityId(entityType, entityId, this.homeKey);
+    // The local tombstone row carries a single sync_key, using whichever
+    // primary connection's home key happens to be resolved first as the
+    // fallback (arbitrary once more than one server is primary — see
+    // getPrimaryServerId). Per-connection routing below may resolve a
+    // different key per connection once home keys genuinely differ per
+    // server (they now can, per §3.1/§3.3.1) — this is the known Phase 1 gap
+    // flagged in §3.3.1/§16.5: a tombstone needs a key *per server*, not one
+    // column. Not fixed here; flagging again at the write site.
+    const fallbackHomeKey = [...this.primaries.values()][0]?.homeKeyForServer ?? "";
+    const syncKey = this.effectiveKeyForEntityId(entityType, entityId, fallbackHomeKey);
     const deleted_at = deletedAt ?? Date.now();
     db.tombstones
       .put({ id: `${entityType}:${entityId}`, entity_type: entityType, entity_id: entityId, deleted_at, sync_key: syncKey })
@@ -404,12 +532,12 @@ class SyncClient {
     }
   }
 
-  /** Tell the server this key belongs to the current user (default key), optionally naming it (e.g. a board group). Best-effort. Sent per connection, using that connection's own home key and scoped key list (§3.3.1) — mirrors the board_groups reassertion doInitialSync does on every reconnect. */
+  /** Tell the server this key belongs to the current user, optionally naming it (e.g. a board group). Best-effort. Sent per connection, using that connection's own scoped key list (§3.3.1) — mirrors the board_groups reassertion doInitialSync does on every reconnect. Identity is implicit in the authenticated connection (§4.2) — there's no client-supplied identity field to send anymore. */
   associateKey(key: string, name?: string): void {
     if (!key) return;
     for (const conn of this.primaries.values()) {
       if (key === conn.homeKeyForServer || !conn.keys.includes(key)) continue;
-      conn.send({ type: "associate_key", default_key: conn.homeKeyForServer, key, name: name ?? null });
+      conn.send({ type: "associate_key", key, name: name ?? null });
     }
   }
 
@@ -418,7 +546,7 @@ class SyncClient {
     if (!key) return;
     for (const conn of this.primaries.values()) {
       if (key === conn.homeKeyForServer || !conn.keys.includes(key)) continue;
-      conn.send({ type: "leave_key", default_key: conn.homeKeyForServer, key });
+      conn.send({ type: "leave_key", key });
     }
   }
 
@@ -447,10 +575,32 @@ class SyncClient {
     }
   }
 
-  // `homeKey` is a parameter, not `this.homeKey`/currentHomeKey, so callers
-  // can resolve the same entity's key differently per connection (§3.3.1) —
-  // today every connection's homeKeyForServer is equal, so it's a no-op, but
-  // this is the seam Phase 1 needs when that stops being true.
+  /** Create or update this server's server_identity row (§8.1). `serverId`
+   * empty/falsy is a no-op, since a connection that never got as far as
+   * `challenge` has nothing to record. */
+  private upsertServerIdentity(serverId: string, fields: {
+    state: ServerIdentity["state"];
+    userId: string | null;
+    homeKey: string | null;
+    caps: string[];
+    displayName: string | null;
+  }): void {
+    if (!serverId) return;
+    db.server_identity.put({
+      server_id: serverId,
+      state: fields.state,
+      user_id: fields.userId,
+      home_key: fields.homeKey,
+      caps: fields.caps,
+      display_name: fields.displayName,
+      updated_at: Date.now(),
+    }).catch(console.error);
+  }
+
+  // `homeKey` is a parameter, not a single client-wide field, so callers can
+  // resolve the same entity's key differently per connection (§3.3.1). Each
+  // server assigns its own home key (§3.1), so the same board can map to
+  // different wire keys on different servers.
   private effectiveKeyForEntity(entityType: EntityType, data: any, homeKey: string): string {
     if (entityType === "board") return data.sync_key || homeKey;
     if (entityType === "list") {
@@ -523,17 +673,16 @@ class SyncClient {
 
   // Restarts every connection so each recomputes its own scoped key list
   // (keysForEndpoint) and resends it in hello — the key list is now a
-  // function of the endpoint (its resolved server_id and this device's
-  // per-server home key), not one flat array, so it can't be diffed as a
-  // single before/after list the way it used to be. Guarded by a signature
-  // of the (synchronous) inputs so an unrelated liveQuery re-fire with
-  // equivalent data doesn't churn every connection. The home key is part of
-  // that signature because changing it changes every connection's key list.
+  // function of the endpoint (its resolved server_id and that server's
+  // assigned home key, §3.1/§3.3.1), not one flat array, so it can't be
+  // diffed as a single before/after list the way it used to be. Guarded by a
+  // signature of the (synchronous) inputs so an unrelated liveQuery re-fire
+  // with equivalent data doesn't churn every connection.
   private recomputeAllKeys(): void {
-    if (!this.homeKey) return;
     const boardRows = this.boardKeyRows().map((r) => `${r.key}:${r.server_id ?? ""}`).sort();
     const roster = this.sharedKeyRoster.map((r) => `${r.key}:${r.server_id ?? ""}`).sort();
-    const signature = JSON.stringify([this.homeKey, boardRows, roster]);
+    const identities = [...this.serverIdentities.entries()].map(([sid, v]) => `${sid}:${v.homeKey ?? ""}`).sort();
+    const signature = JSON.stringify([boardRows, roster, identities]);
     if (signature === this.lastKeysSignature) return;
     this.lastKeysSignature = signature;
 
@@ -577,6 +726,16 @@ class SyncClient {
         continue;
       }
 
+      // Identity not resolved yet (setEndpoints kicked off generation but it
+      // hasn't landed) — leave this endpoint at "connecting" and do nothing
+      // further; the identity's `.then` callback re-invokes applyEndpoints
+      // once it's ready (§4.1: never block on this before it's needed, but
+      // never try to connect without it either).
+      if (!this.identity || !this.pubkeyJwk) {
+        setEndpointStatus(ep.id, { phase: "connecting" });
+        continue;
+      }
+
       if (this.connections.has(ep.id)) {
         const conn = this.connections.get(ep.id)!;
         const prev = conn.config;
@@ -604,22 +763,18 @@ class SyncClient {
   // then offers only still-unscoped rows, which is what makes a brand-new
   // endpoint safe without knowing its identity yet.
   //
-  // The home key is the same on every server. Per-server *derived* home keys
-  // were built here and then deliberately removed: grandfathering could only
-  // be judged from this device's local Dexie, so a device added later would
-  // derive a different key than its siblings and silently fail to converge on
-  // a server they already share. Deferred to Phase 1, where the server hands
-  // an authenticated client its keys via `ok.user_keys` and no such split is
-  // possible. Board binding, not key derivation, is what keeps a board from
-  // reaching a server it does not belong to.
+  // The home key is resolved per-server from server_identity (§3.1/§8.1) —
+  // this server's own assignment, or "" if not yet known (never connected,
+  // or still needs_grant). Falsy entries are filtered out of the sent key
+  // list below rather than sending an empty string as a "key".
   private resolveConnectionKeys(ep: SyncEndpointConfig): {
     keys: string[];
     serverId: string | null;
     homeKeyUsed: string;
   } {
     const serverId = ep.lastServerId;
-    const homeKeyUsed = this.homeKey;
-    const keys = keysForEndpoint(homeKeyUsed, this.boardKeyRows(), this.sharedKeyRoster, serverId);
+    const homeKeyUsed = (serverId ? this.serverIdentities.get(serverId)?.homeKey : null) ?? "";
+    const keys = keysForEndpoint(homeKeyUsed, this.boardKeyRows(), this.sharedKeyRoster, serverId).filter(Boolean);
     return { keys, serverId, homeKeyUsed };
   }
 
@@ -632,7 +787,12 @@ class SyncClient {
     ep: SyncEndpointConfig,
     resolved: { keys: string[]; serverId: string | null; homeKeyUsed: string },
   ): void {
-    const conn = new EndpointConnection(ep, resolved.keys, this.clientId, {
+    const clientCtx: ClientContext = {
+      clientId: this.clientId,
+      pubkeyJwk: this.pubkeyJwk!,
+      sign: (payload) => signAuthPayload(this.identity!, payload),
+    };
+    const conn = new EndpointConnection(ep, resolved.keys, clientCtx, {
       onStatus: (status) => {
         const wasReady = this.statusPhases.get(ep.id) === "ready";
         if (status.phase !== "ready") {
@@ -642,6 +802,21 @@ class SyncClient {
         }
         this.statusPhases.set(ep.id, status.phase);
         setEndpointStatus(ep.id, status);
+
+        // A structured account-state rejection (§4.2: suspended/revoked)
+        // still names a real server — persist that so an offline read of
+        // server_identity reflects it, without inventing a home key/caps
+        // this rejection didn't supply.
+        if (status.phase === "error" && status.serverId && (status.authReason === "suspended" || status.authReason === "revoked")) {
+          const known = this.serverIdentities.get(status.serverId);
+          this.upsertServerIdentity(status.serverId, {
+            state: status.authReason,
+            userId: known?.userId ?? null,
+            homeKey: known?.homeKey ?? null,
+            caps: [],
+            displayName: null,
+          });
+        }
 
         if (status.phase === "ready") {
           for (const [id, c] of this.connections) {
@@ -657,13 +832,27 @@ class SyncClient {
 
         this.refreshAggregateStatus();
       },
-      onReady: (send, serverId, userKeys) => {
+      onReady: (send, serverId, homeKey, userId, caps, displayName, userKeys) => {
         this.allSenders.set(ep.id, send);
         db.sync_endpoints.update(ep.id, { last_server_id: serverId }).catch(console.error);
+        this.upsertServerIdentity(serverId, { state: "active", userId, homeKey, caps, displayName });
+
+        // The key list resolved before `ok` arrived may not yet include the
+        // home key (unknown until now, e.g. a brand-new registration) — fold
+        // it in so this connection's own routing (connectionsForPush's
+        // `keys.includes(key)` check) doesn't withhold the very first push
+        // of this user's home-namespace boards.
+        const effectiveKeys = [...new Set([...resolved.keys, homeKey])].filter(Boolean);
 
         this.adoptUserKeys(userKeys, serverId);
         this.bindUnboundBoards(serverId);
-        this.claimOrDefer(ep.id, serverId, send, resolved.keys, resolved.homeKeyUsed);
+        this.claimOrDefer(ep.id, serverId, send, effectiveKeys, homeKey);
+        this.refreshAggregateStatus();
+      },
+      onNeedsGrant: (send, serverId) => {
+        this.allSenders.set(ep.id, send);
+        if (serverId) db.sync_endpoints.update(ep.id, { last_server_id: serverId }).catch(console.error);
+        this.upsertServerIdentity(serverId, { state: "needs_grant", userId: null, homeKey: null, caps: [], displayName: null });
         this.refreshAggregateStatus();
       },
       onMessage: (msg) => this.handleMessage(msg, resolved.keys, ep.id),
@@ -727,10 +916,15 @@ class SyncClient {
       const otherConn = this.connections.get(otherId);
       const otherHomeKey = this.resolvedHomeKeyByEndpoint.get(otherId);
       if (!send || !otherConn || !otherHomeKey) continue;
+      // Same fold-in as onReady: the OTHER connection's original hello.keys
+      // may predate learning its home key (e.g. it was the one that just
+      // registered), so include it explicitly rather than trusting helloKeys
+      // alone.
+      const effectiveKeys = [...new Set([...otherConn.helloKeys, otherHomeKey])].filter(Boolean);
       this.primaryForServerId.set(serverId, otherId);
-      this.primaries.set(otherId, { send, keys: otherConn.helloKeys, homeKeyForServer: otherHomeKey, serverId });
+      this.primaries.set(otherId, { send, keys: effectiveKeys, homeKeyForServer: otherHomeKey, serverId });
       setEndpointStatus(otherId, { phase: "ready", serverId, primary: true });
-      this.doInitialSync(send, otherConn.helloKeys, serverId, otherHomeKey).catch(console.error);
+      this.doInitialSync(send, effectiveKeys, serverId, otherHomeKey).catch(console.error);
       break;
     }
   }
@@ -743,6 +937,9 @@ class SyncClient {
     } else if (phases.some((p) => p === "connecting" || p === "handshaking")) {
       setSyncStatus("connecting");
       setSyncStatusMessage("");
+    } else if (phases.some((p) => p === "needs_grant")) {
+      setSyncStatus("connecting");
+      setSyncStatusMessage("Not registered on this server yet");
     } else if (phases.length > 0 && phases.every((p) => p === "error" || p === "conflict" || p === "variant_mismatch")) {
       setSyncStatus("error");
       setSyncStatusMessage(
@@ -784,7 +981,7 @@ class SyncClient {
     const groups = await db.board_groups.toArray();
     for (const g of groups) {
       if (g.key !== homeKeyForServer && keys.includes(g.key)) {
-        send({ type: "associate_key", default_key: homeKeyForServer, key: g.key, name: g.name });
+        send({ type: "associate_key", key: g.key, name: g.name });
       }
     }
 

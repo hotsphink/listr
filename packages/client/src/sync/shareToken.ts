@@ -5,9 +5,14 @@ export interface SharePayload {
   bn: string;  // board or group name (display hint)
 }
 
-/** Generate a fresh random sync key, suitable for a new individual share or board group. */
+/** Generate a fresh random sync key, suitable for a new individual share or board group.
+ * 16 bytes (128 bits) — raised from 8 (auth-design.md §2.1 defect 4): a sync
+ * key is a bearer capability sent in cleartext and checked only by the
+ * server holding it, so 64 bits was acceptable-ish as an unguessable
+ * namespace but too weak for anything auth-adjacent now that the server
+ * treats it as part of a user's identity-scoped key set. */
 export function generateShareKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 

@@ -9,5 +9,11 @@
 // v3: multi-key sync — hello sends `keys[]`, push_entity/push_delete carry `sync_key`.
 // v4: server-side user/key-group tracking. hello sends `default_key`; the server
 // returns known keys via `ok.user_keys`; new `associate_key`/`leave_key` messages.
-// See packages/server/src/protocol.ts for the full v4 writeup.
-export const PROTOCOL_VERSION = 4;
+// v5: client-keypair identity + challenge/response handshake (auth-design.md
+// §4). Flag day, same as v4's: hello drops `default_key` (identity is now the
+// keypair; the home key comes back from the server) and gains `client_id`
+// (RFC 7638 thumbprint) + `pubkey_jwk`. hello -> challenge -> auth -> ok now
+// replaces hello -> ok directly; `variant` moves from `ok` to `challenge` so
+// a dev/prod mismatch (§3.3) is caught before any crypto runs. See
+// packages/server/src/protocol.ts for the full v4/v5 writeup.
+export const PROTOCOL_VERSION = 5;

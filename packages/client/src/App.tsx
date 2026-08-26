@@ -27,9 +27,9 @@ const Layout: Component<{ children?: any }> = (props) => {
   });
 
   createEffect(() => {
-    const configSub = liveQuery(() => db.sync_config.get("default")).subscribe((config) => {
-      if (config?.sync_key) syncClient.setCredentials(config.sync_key, config.client_id);
-    });
+    // SyncClient manages its own client_identity keypair lazily and learns its
+    // home key per server from the `ok` message (see clientKeys.ts,
+    // database.ts's ClientIdentity/ServerIdentity).
     const epSub = liveQuery(() => db.sync_endpoints.orderBy("position").toArray()).subscribe((eps) => {
       syncClient.setEndpoints(
         eps.map((ep) => ({
@@ -58,13 +58,18 @@ const Layout: Component<{ children?: any }> = (props) => {
     const bindingSub = liveQuery(() => db.board_server_binding.toArray()).subscribe((rows) => {
       syncClient.updateBoardBindings(rows);
     });
+    // Per-server registration state (§8.1) — this is where a server-assigned
+    // home key (§3.1) becomes visible to SyncClient's key resolution.
+    const identitySub = liveQuery(() => db.server_identity.toArray()).subscribe((rows) => {
+      syncClient.updateServerIdentities(rows);
+    });
     onCleanup(() => {
-      configSub.unsubscribe();
       epSub.unsubscribe();
       boardSub.unsubscribe();
       listSub.unsubscribe();
       sharedKeysSub.unsubscribe();
       bindingSub.unsubscribe();
+      identitySub.unsubscribe();
     });
   });
 

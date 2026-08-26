@@ -3,17 +3,24 @@ import { createServer as createHttpServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { getProductionDb } from "./db.js";
-import type { EntityType, createDbApi } from "./db.js";
+import type { EntityType, createDbApi, UserRow } from "./db.js";
 import { config } from "./config.js";
 import type { IntegrationServerConfig } from "./config.js";
 import { extractFromImage } from "./gemini.js";
 import { MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION } from "./protocol.js";
+import { jwkThumbprint, verifyAuthSignature } from "./authCrypto.js";
 import { INTEGRATIONS } from "./integrations/index.js";
 import { IntegrationRunner } from "./integration-runner.js";
 import type { Item } from "@listr/shared";
+
+// v5 handshake tuning (auth-design.md §4.2). 60s is generous for a
+// challenge round trip (including the crypto) while still being short
+// enough that a captured nonce is useless shortly after issuance.
+const NONCE_TTL_MS = 60_000;
 
 type DbApi = ReturnType<typeof createDbApi>;
 
@@ -97,9 +104,9 @@ export interface SyncServerOptions {
   certDir?: string;
   integrations?: Record<string, IntegrationServerConfig>;
   requestHandler?: (req: IncomingMessage, res: ServerResponse) => void;
-  /** Which world this server belongs to (dev/prod/…), advertised in `ok` so
-   * clients can refuse to talk to the wrong one. Defaults to the process
-   * config's variant; tests override it directly. */
+  /** Which world this server belongs to (dev/prod/...), advertised in
+   * `challenge` so clients can refuse to talk to the wrong one. Defaults to the
+   * process config's variant; tests override it directly. */
   variant?: string;
 }
 
@@ -131,7 +138,29 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         requestHandler,
       );
 
-  const wss = new WebSocketServer({ server: httpServer });
+  // §2.1 defect 3 / §7.3a: the app and sync server are permanently different
+  // origins (listr.aapx.org vs listr-sync.aapx.org), so Origin is a
+  // meaningful signal here, unlike a same-origin app. ALLOWED_ORIGINS was
+  // previously only used to set a CORS header on the HTTP handlers; the
+  // WebSocketServer itself had no check at all. A request with no Origin
+  // header is allowed through rather than rejected — browsers always send
+  // Origin on a cross-origin WS handshake, so an absent header means a
+  // non-browser client (the `ws` client this repo's own test harness and
+  // any future CLI/native client use), which this check has nothing to say
+  // about; it exists to stop an unexpected *browser* origin, not to require
+  // one.
+  const wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: (info, callback) => {
+      const origin = info.origin;
+      if (!origin || ALLOWED_ORIGINS.has(origin)) {
+        callback(true);
+        return;
+      }
+      console.warn(`[ws] ${ts()} rejected upgrade from disallowed origin: ${origin}`);
+      callback(false, 403, "Origin not allowed");
+    },
+  });
 
   // sync_key → connected clients (a client may appear under multiple keys)
   const keyToClients = new Map<string, Set<WebSocket>>();
@@ -180,10 +209,67 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
 
   wss.on("connection", (ws: WebSocket) => {
     let syncKeys: string[] = [];
-    let homeKey: string | null = null; // this connection's authenticated identity, once hello arrives
-    let clientId: string | null = null;
+    let homeKey: string | null = null; // this connection's authenticated home key, once ok/needs_grant is resolved
+    let userId: string | null = null; // set once this connection is authenticated (post-ok, or post-redeem_grant)
+    let clientId: string | null = null; // full RFC 7638 thumbprint, set at hello time (pre-authentication)
+    let clientVersion = 0;
+    let pubkeyJwk: Record<string, unknown> | null = null; // set at hello time — needed again by redeem_grant
+    let declaredKeys: string[] = []; // this connection's hello.keys, held until auth succeeds
+    // Single in-flight nonce per connection (§4.2): 128 bits, consumed by the
+    // very next `auth` attempt regardless of outcome (single-use), 60s TTL. A
+    // per-connection nonce is sufficient for replay resistance across
+    // connections: a captured (nonce, sig) pair was signed against *this*
+    // connection's nonce, and any other connection (including a reconnect) gets
+    // its own fresh one, so the signature simply won't verify there (see
+    // authCrypto.ts's verifyAuthSignature and its cross-server-replay test).
+    let expectedNonce: string | null = null;
+    let nonceExpiresAt = 0;
+    let authenticated = false;
     let connectedAt = 0;
     const pushCounts: Partial<Record<string, number>> = {};
+
+    // Finish authenticating this connection as `user`. Shared by the normal
+    // auth success path and by a successful redeem_grant, which is exactly the
+    // same "now we know who this connection is" event from a different cause
+    // (§6/§7.2: a brand-new client redeeming a grant should be able to reach a
+    // working `ok` without a second round trip).
+    function completeAuthentication(user: UserRow): void {
+      // Auto-associate every key this client declared (other than its own home
+      // key) with its user, so this user's other devices learn about it too.
+      const knownBefore = new Set(dbApi.getUserKeys(user.user_id).map((u) => u.key));
+      const newlyAssociated: string[] = [];
+      for (const k of declaredKeys) {
+        if (k === user.home_key) continue;
+        dbApi.associateUserKey(user.user_id, k, null);
+        if (!knownBefore.has(k)) newlyAssociated.push(k);
+      }
+      const userKeys = dbApi.getUserKeys(user.user_id);
+      syncKeys = [...new Set([user.home_key, ...declaredKeys, ...userKeys.map((u) => u.key)])];
+      homeKey = user.home_key;
+      userId = user.user_id;
+      authenticated = true;
+      connectedAt = Date.now();
+
+      for (const k of syncKeys) {
+        if (!keyToClients.has(k)) keyToClients.set(k, new Set());
+        keyToClients.get(k)!.add(ws);
+      }
+      if (!homeKeyToClients.has(user.home_key)) homeKeyToClients.set(user.home_key, new Set());
+      homeKeyToClients.get(user.home_key)!.add(ws);
+      for (const k of newlyAssociated) notifyUserKeyChange(user.home_key, k, null, ws);
+
+      dbApi.touchClientLastSeen(clientId!, Date.now());
+      console.log(`[ws] ${ts()} ${keyTag(syncKeys)} connect client=${clientId!.slice(0, 8)} user=${user.user_id.slice(0, 8)} protocol=${clientVersion} keys=${syncKeys.length}`);
+      ws.send(JSON.stringify({
+        type: "ok",
+        user_id: user.user_id,
+        home_key: user.home_key,
+        display_name: user.display_name,
+        caps: user.caps,
+        user_keys: userKeys,
+        server_time: Date.now(),
+      }));
+    }
 
     ws.on("message", (raw: Buffer) => {
       let msg: any;
@@ -194,61 +280,163 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
+      // ── hello: version-gate, then issue a challenge (§4.2) ──────────────
       if (msg.type === "hello") {
-        const rawKeys: string[] = Array.isArray(msg.keys) ? msg.keys.filter((k: unknown) => typeof k === "string") : [];
-        const validKeys = rawKeys.map((k) => k.trim()).filter(Boolean);
-        // Wire field name is `default_key` — unchanged, see protocol.ts v4/v5.
-        const helloHomeKey = typeof msg.default_key === "string" ? msg.default_key.trim() : "";
-
-        if (validKeys.length === 0 || !helloHomeKey) {
-          ws.send(JSON.stringify({ type: "error", message: "Missing key" }));
-          return;
-        }
-
-        const clientVersion = typeof msg.protocol_version === "number" ? msg.protocol_version : 0;
+        clientVersion = typeof msg.protocol_version === "number" ? msg.protocol_version : 0;
         if (clientVersion < MIN_PROTOCOL_VERSION || clientVersion > MAX_PROTOCOL_VERSION) {
           const range = MIN_PROTOCOL_VERSION === MAX_PROTOCOL_VERSION
             ? `${MIN_PROTOCOL_VERSION}`
             : `${MIN_PROTOCOL_VERSION}–${MAX_PROTOCOL_VERSION}`;
           const message = `Unsupported client protocol version ${clientVersion}; server understands ${range}. Please update the client.`;
-          console.log(`[ws] ${ts()} ${keyTag(validKeys)} reject client=${typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?"} protocol=${clientVersion} (server ${range})`);
-          ws.send(JSON.stringify({ type: "error", message, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
+          console.log(`[ws] ${ts()} reject client=${typeof msg.client_id === "string" ? msg.client_id.slice(0, 8) : "?"} protocol=${clientVersion} (server ${range})`);
+          ws.send(JSON.stringify({ type: "error", message, reason: "protocol", min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
           ws.close(1008, "Unsupported protocol version");
           return;
         }
 
-        // Auto-associate every key this client presents (other than its own home
-        // key) with its user, so this user's other devices learn about it too.
-        // Track which ones are genuinely new so we only notify siblings about
-        // those, not every key on every reconnect.
-        const knownBefore = new Set(dbApi.getUserKeys(helloHomeKey).map((u) => u.key));
-        const newlyAssociated: string[] = [];
-        for (const k of validKeys) {
-          if (k === helloHomeKey) continue;
-          dbApi.associateUserKey(helloHomeKey, k, null);
-          if (!knownBefore.has(k)) newlyAssociated.push(k);
-        }
-        const userKeys = dbApi.getUserKeys(helloHomeKey);
-        syncKeys = [...new Set([...validKeys, ...userKeys.map((u) => u.key)])];
-        homeKey = helloHomeKey;
-        clientId = typeof msg.client_id === "string" ? msg.client_id.replace(/-/g, "").slice(0, 8) : "?";
-        connectedAt = Date.now();
+        const helloClientId = typeof msg.client_id === "string" ? msg.client_id : "";
+        const pubkey = msg.pubkey_jwk;
+        const rawKeys: string[] = Array.isArray(msg.keys) ? msg.keys.filter((k: unknown) => typeof k === "string") : [];
+        const keys = rawKeys.map((k) => k.trim()).filter(Boolean);
 
-        for (const k of syncKeys) {
-          if (!keyToClients.has(k)) keyToClients.set(k, new Set());
-          keyToClients.get(k)!.add(ws);
+        if (!helloClientId || !pubkey || typeof pubkey !== "object") {
+          ws.send(JSON.stringify({ type: "error", message: "hello requires client_id and pubkey_jwk", reason: "protocol" }));
+          ws.close(1008, "Missing client identity");
+          return;
         }
-        if (!homeKeyToClients.has(helloHomeKey)) homeKeyToClients.set(helloHomeKey, new Set());
-        homeKeyToClients.get(helloHomeKey)!.add(ws);
-        for (const k of newlyAssociated) notifyUserKeyChange(helloHomeKey, k, null, ws);
 
-        console.log(`[ws] ${ts()} ${keyTag(syncKeys)} connect client=${clientId} protocol=${clientVersion} keys=${syncKeys.length}`);
-        ws.send(JSON.stringify({ type: "ok", server_id: SERVER_ID, variant: SERVER_VARIANT, min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION, user_keys: userKeys }));
+        // Self-consistency check (§4.2), before anything else: client_id
+        // must be the thumbprint of the key it claims. This makes signature
+        // verification at `auth` time self-contained — the `clients` table
+        // row (if any) is consulted only for registration status, never
+        // trusted to supply the identity itself.
+        jwkThumbprint(pubkey)
+          .then((computed) => {
+            if (computed !== helloClientId) {
+              console.log(`[ws] ${ts()} reject client_id ${helloClientId.slice(0, 8)}… does not match pubkey_jwk thumbprint`);
+              ws.send(JSON.stringify({ type: "error", message: "client_id does not match pubkey_jwk", reason: "protocol" }));
+              ws.close(1008, "client_id mismatch");
+              return;
+            }
+
+            clientId = helloClientId;
+            pubkeyJwk = pubkey;
+            declaredKeys = keys;
+
+            const nonce = randomBytes(16).toString("base64url"); // 128 bits (§4.2)
+            expectedNonce = nonce;
+            nonceExpiresAt = Date.now() + NONCE_TTL_MS;
+
+            ws.send(JSON.stringify({
+              type: "challenge",
+              nonce,
+              server_id: SERVER_ID,
+              // §3.3 decision: variant travels in `challenge`, not `ok`, so a
+              // dev/prod mismatch is caught before the client does any
+              // crypto at all.
+              variant: SERVER_VARIANT,
+              min_protocol_version: MIN_PROTOCOL_VERSION,
+              max_protocol_version: MAX_PROTOCOL_VERSION,
+            }));
+          })
+          .catch((err) => {
+            console.error(`[ws] ${ts()} error computing thumbprint: ${err instanceof Error ? err.message : err}`);
+            ws.send(JSON.stringify({ type: "error", message: "Internal error verifying client identity" }));
+            ws.close(1011, "Internal error");
+          });
         return;
       }
 
-      if (syncKeys.length === 0) {
-        ws.send(JSON.stringify({ type: "error", message: "Send hello first" }));
+      // ── auth: verify the signed nonce, then ok / needs_grant / error ────
+      if (msg.type === "auth") {
+        if (!clientId || !pubkeyJwk || !expectedNonce) {
+          ws.send(JSON.stringify({ type: "error", message: "No pending challenge", reason: "protocol" }));
+          return;
+        }
+        const nonce = expectedNonce;
+        const expired = Date.now() > nonceExpiresAt;
+        expectedNonce = null; // single-use: consumed by this attempt regardless of outcome
+
+        if (expired) {
+          ws.send(JSON.stringify({ type: "error", message: "Challenge expired", reason: "protocol" }));
+          ws.close(1008, "Challenge expired");
+          return;
+        }
+
+        const sig = typeof msg.sig === "string" ? msg.sig : "";
+        const capturedClientId = clientId;
+        const capturedPubkey = pubkeyJwk;
+        verifyAuthSignature(capturedPubkey, sig, SERVER_ID, nonce, capturedClientId)
+          .then((valid) => {
+            if (!valid) {
+              console.log(`[ws] ${ts()} auth failed client=${capturedClientId.slice(0, 8)}… bad signature`);
+              ws.send(JSON.stringify({ type: "error", message: "Invalid signature", reason: "bad_signature" }));
+              ws.close(1008, "Invalid signature");
+              return;
+            }
+
+            const record = dbApi.getUserForClient(capturedClientId);
+            if (!record) {
+              ws.send(JSON.stringify({ type: "needs_grant" }));
+              return;
+            }
+            if (record.effectiveState !== "active") {
+              console.log(`[ws] ${ts()} client=${capturedClientId.slice(0, 8)}… rejected: ${record.effectiveState}`);
+              ws.send(JSON.stringify({ type: "error", message: `Account is ${record.effectiveState}`, reason: record.effectiveState }));
+              ws.close(1008, record.effectiveState);
+              return;
+            }
+            completeAuthentication(record.user);
+          })
+          .catch((err) => {
+            console.error(`[ws] ${ts()} error verifying signature: ${err instanceof Error ? err.message : err}`);
+            ws.send(JSON.stringify({ type: "error", message: "Internal error verifying signature" }));
+            ws.close(1011, "Internal error");
+          });
+        return;
+      }
+
+      // ── redeem_grant (§6, §7.2): registration plumbing, no UI here ──────
+      // Works whether this connection is still unauthenticated (invite/
+      // device/guest — registers a brand-new client) or already
+      // authenticated (share — hands one more key to the existing user);
+      // db.ts's applyGrantEffect picks whichever of clientId/pubkeyJwk vs.
+      // existingUserId a given grant kind actually needs.
+      if (msg.type === "redeem_grant") {
+        if (!clientId || !pubkeyJwk) {
+          ws.send(JSON.stringify({ type: "error", message: "redeem_grant requires a completed challenge/auth first", reason: "protocol" }));
+          return;
+        }
+        const grantId = typeof msg.grant_id === "string" ? msg.grant_id : "";
+        const secret = typeof msg.secret === "string" ? msg.secret : "";
+        if (!grantId || !secret) {
+          ws.send(JSON.stringify({ type: "error", message: "redeem_grant requires grant_id and secret" }));
+          return;
+        }
+        const label = typeof msg.label === "string" && msg.label ? msg.label : null;
+
+        let result: ReturnType<typeof dbApi.redeemGrant>;
+        try {
+          result = dbApi.redeemGrant(
+            grantId,
+            secret,
+            { clientId, pubkeyJwk: JSON.stringify(pubkeyJwk), label, existingUserId: userId ?? undefined },
+            Date.now(),
+          );
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "error", message: err instanceof Error ? err.message : String(err) }));
+          return;
+        }
+        if (!result.ok) {
+          ws.send(JSON.stringify({ type: "error", message: `Grant redemption failed: ${result.reason}`, reason: result.reason }));
+          return;
+        }
+        completeAuthentication(result.result.user);
+        return;
+      }
+
+      if (!authenticated) {
+        ws.send(JSON.stringify({ type: "error", message: "Not authenticated", reason: "protocol" }));
         return;
       }
 
@@ -290,7 +478,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
 
         const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
         for (const k of Object.keys(pushCounts)) delete pushCounts[k];
-        console.log(`[sync] ${ts()} ${keyTag(syncKeys)} client=${clientId} pull keys=${keysSince.length}${pushed ? ` pushed: ${pushed}` : ""} → boards=${allBoards.length} lists=${allLists.length} items=${allItems.length} assets=${allAssets.length} tombstones=${allTombstones.length} integration_results=${allIntegrationResults.length}`);
+        console.log(`[sync] ${ts()} ${keyTag(syncKeys)} client=${clientId?.slice(0, 8)} pull keys=${keysSince.length}${pushed ? ` pushed: ${pushed}` : ""} → boards=${allBoards.length} lists=${allLists.length} items=${allItems.length} assets=${allAssets.length} tombstones=${allTombstones.length} integration_results=${allIntegrationResults.length}`);
 
         ws.send(JSON.stringify({
           type: "snapshot",
@@ -342,40 +530,32 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       }
 
       if (msg.type === "associate_key") {
-        // Defect 2.1(1) fix: the identity acted on is the connection's own
-        // authenticated home key from `hello`, never the message body — a
-        // client cannot mutate another user's key set just by naming their
-        // home key here. The body field is only used to detect and log the
-        // mismatch; it is never trusted.
-        const bodyHomeKey = typeof msg.default_key === "string" ? msg.default_key.trim() : "";
+        // Defect 2.1(1) fix (now structural, not just checked): the identity
+        // acted on is always this connection's own authenticated identity
+        // (userId/homeKey from the v5 handshake) — there is no client-
+        // supplied identity field on this message at all anymore for a
+        // client to spoof another user's home key with.
         const key = typeof msg.key === "string" ? msg.key.trim() : "";
         const name = typeof msg.name === "string" && msg.name ? msg.name : null;
-        if (bodyHomeKey && homeKey && bodyHomeKey !== homeKey) {
-          console.warn(`[ws] ${ts()} client=${clientId} associate_key: body default_key (${bodyHomeKey.slice(0, 6)}…) != connection identity (${homeKey.slice(0, 6)}…) — using connection identity`);
-        }
-        if (homeKey && key && key !== homeKey) {
-          dbApi.associateUserKey(homeKey, key, name);
+        if (homeKey && userId && key && key !== homeKey) {
+          dbApi.associateUserKey(userId, key, name);
           if (!keyToClients.has(key)) keyToClients.set(key, new Set());
           keyToClients.get(key)!.add(ws);
           if (!syncKeys.includes(key)) syncKeys.push(key);
           // Resolve the actual stored name (associateUserKey never clobbers an
           // existing name with null) so siblings learn the real current value.
-          const current = dbApi.getUserKeys(homeKey).find((u) => u.key === key);
+          const current = dbApi.getUserKeys(userId).find((u) => u.key === key);
           notifyUserKeyChange(homeKey, key, current?.name ?? null, ws);
         }
         return;
       }
 
       if (msg.type === "leave_key") {
-        // Same fix as associate_key above: identity comes from the connection,
-        // not the message body.
-        const bodyHomeKey = typeof msg.default_key === "string" ? msg.default_key.trim() : "";
+        // Same fix as associate_key above: identity comes from the
+        // connection, and there is no message-body field to spoof it with.
         const key = typeof msg.key === "string" ? msg.key.trim() : "";
-        if (bodyHomeKey && homeKey && bodyHomeKey !== homeKey) {
-          console.warn(`[ws] ${ts()} client=${clientId} leave_key: body default_key (${bodyHomeKey.slice(0, 6)}…) != connection identity (${homeKey.slice(0, 6)}…) — using connection identity`);
-        }
-        if (homeKey && key) {
-          dbApi.removeUserKey(homeKey, key);
+        if (homeKey && userId && key) {
+          dbApi.removeUserKey(userId, key);
           keyToClients.get(key)?.delete(ws);
           syncKeys = syncKeys.filter((k) => k !== key);
           notifyUserKeyRemoved(homeKey, key, ws);
@@ -401,10 +581,10 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       }
       if (syncKeys.length > 0) {
         const secs = Math.round((Date.now() - connectedAt) / 1000);
-        console.log(`[ws] ${ts()} ${keyTag(syncKeys)} disconnect after=${secs}s client=${clientId ?? "?"}`);
+        console.log(`[ws] ${ts()} ${keyTag(syncKeys)} disconnect after=${secs}s client=${clientId?.slice(0, 8) ?? "?"}`);
       }
     });
-    ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKeys.length ? keyTag(syncKeys) : "[?]"} client=${clientId ?? "?"} error: ${err.message}`));
+    ws.on("error", (err: Error) => console.error(`[ws] ${ts()} ${syncKeys.length ? keyTag(syncKeys) : "[?]"} client=${clientId?.slice(0, 8) ?? "?"} error: ${err.message}`));
   });
 
   return {

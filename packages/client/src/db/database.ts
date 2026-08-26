@@ -78,6 +78,42 @@ export interface BoardServerBinding {
   server_id: string | null;
 }
 
+/**
+ * Client's own keypair (auth-design.md §4.1, §8.1), global to the browser
+ * profile and created lazily on first server connection. Offline-only users do
+ * not have a key. The same keypair may register independently with several
+ * servers (§3.3). CryptoKey objects are structured-cloneable, so Dexie stores
+ * them directly and `privateKey`'s non-extractability survives reloads. The
+ * private key is never serialized to anything else (see clientKeys.ts).
+ *
+ * `client_id` is the RFC 7638 JWK thumbprint of `publicKey`, computed once at
+ * creation time and cached here.
+ */
+export interface ClientIdentity {
+  id: string; // always "default"
+  privateKey: CryptoKey; // extractable: false
+  publicKey: CryptoKey;
+  client_id: string;
+}
+
+/**
+ * Per-server registration state (§8.1), keyed by `server_id`. `state` folds
+ * registration status and account status into one field: "needs_grant" means
+ * this server has never seen this client's key (or has forgotten it) and is
+ * waiting for a grant to be redeemed; the other three mirror the server's own
+ * UserState. `home_key`/`user_id`/`caps`/ `display_name` are all null until the
+ * first successful `ok`.
+ */
+export interface ServerIdentity {
+  server_id: string; // primary key
+  state: "needs_grant" | "active" | "suspended" | "revoked";
+  user_id: string | null;
+  home_key: string | null;
+  caps: string[];
+  display_name: string | null;
+  updated_at: number;
+}
+
 export class ListrDB extends Dexie {
   boards!: EntityTable<Board, "id">;
   lists!: EntityTable<List, "id">;
@@ -91,6 +127,8 @@ export class ListrDB extends Dexie {
   shared_keys!: Table<SharedKey, string>;
   board_groups!: Table<BoardGroupMeta, string>;
   board_server_binding!: Table<BoardServerBinding, string>;
+  client_identity!: Table<ClientIdentity, string>;
+  server_identity!: Table<ServerIdentity, string>;
 
   constructor() {
     super(DB_NAME);
@@ -198,6 +236,25 @@ export class ListrDB extends Dexie {
           await tx.table("board_server_binding").put({ board_id: b.id, server_id: serverId });
         }
       }
+    });
+
+    // client_identity / server_identity (§8.1 — the v5 handshake's client-side
+    // state).
+    this.version(4).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
+      board_groups: "key",
+      board_server_binding: "board_id",
+      client_identity: "id",
+      server_identity: "server_id",
     });
   }
 }

@@ -264,47 +264,80 @@ describe("applyTombstone — entity deletion LWW", () => {
 });
 
 // ── user_keys: server-side user/key-group association ──────────────────────
+// Keyed by user_id (migration 5), with a real FK to `users` — better-sqlite3
+// enforces foreign_keys by default, so every association here is created
+// against an actual user, not an arbitrary string standing in for one.
 
 describe("user_keys", () => {
   let db: DbApi;
-  beforeEach(() => { db = openDb(":memory:"); });
+  let user1: string;
+  let user2: string;
+  beforeEach(() => {
+    db = openDb(":memory:");
+    user1 = db.createUser({ authorizedBy: null, caps: ["sync"] }, Date.now()).user_id;
+    user2 = db.createUser({ authorizedBy: null, caps: ["sync"] }, Date.now()).user_id;
+  });
 
   it("associates a key with a user and returns it via getUserKeys", () => {
-    db.associateUserKey("default1", "group1", null);
-    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: null }]);
+    db.associateUserKey(user1, "group1", null);
+    expect(db.getUserKeys(user1)).toEqual([{ key: "group1", name: null }]);
   });
 
   it("returns nothing for a user with no associations", () => {
-    expect(db.getUserKeys("default1")).toEqual([]);
+    expect(db.getUserKeys(user1)).toEqual([]);
   });
 
   it("keeps associations for different users separate", () => {
-    db.associateUserKey("default1", "group1", null);
-    db.associateUserKey("default2", "group2", null);
-    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: null }]);
-    expect(db.getUserKeys("default2")).toEqual([{ key: "group2", name: null }]);
+    db.associateUserKey(user1, "group1", null);
+    db.associateUserKey(user2, "group2", null);
+    expect(db.getUserKeys(user1)).toEqual([{ key: "group1", name: null }]);
+    expect(db.getUserKeys(user2)).toEqual([{ key: "group2", name: null }]);
   });
 
   it("re-associating with a name upgrades a previously unnamed key", () => {
-    db.associateUserKey("default1", "group1", null);
-    db.associateUserKey("default1", "group1", "Team Trip");
-    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: "Team Trip" }]);
+    db.associateUserKey(user1, "group1", null);
+    db.associateUserKey(user1, "group1", "Team Trip");
+    expect(db.getUserKeys(user1)).toEqual([{ key: "group1", name: "Team Trip" }]);
   });
 
   it("re-associating with a null name does not clobber an existing name", () => {
-    db.associateUserKey("default1", "group1", "Team Trip");
-    db.associateUserKey("default1", "group1", null);
-    expect(db.getUserKeys("default1")).toEqual([{ key: "group1", name: "Team Trip" }]);
+    db.associateUserKey(user1, "group1", "Team Trip");
+    db.associateUserKey(user1, "group1", null);
+    expect(db.getUserKeys(user1)).toEqual([{ key: "group1", name: "Team Trip" }]);
   });
 
   it("removeUserKey drops the association", () => {
-    db.associateUserKey("default1", "group1", "Team Trip");
-    db.removeUserKey("default1", "group1");
-    expect(db.getUserKeys("default1")).toEqual([]);
+    db.associateUserKey(user1, "group1", "Team Trip");
+    db.removeUserKey(user1, "group1");
+    expect(db.getUserKeys(user1)).toEqual([]);
   });
 
   it("removeUserKey on a nonexistent association is a no-op", () => {
-    expect(() => db.removeUserKey("default1", "group1")).not.toThrow();
+    expect(() => db.removeUserKey(user1, "group1")).not.toThrow();
+  });
+
+  it("rejects an association against a user_id that doesn't exist (FK enforced)", () => {
+    expect(() => db.associateUserKey("no-such-user", "group1", null)).toThrow();
+  });
+});
+
+describe("getOrCreateUserByHomeKey — v4 bridge", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("mints an unparented, non-provisional user with caps=['sync'] on first sight of a home key", () => {
+    const user = db.getOrCreateUserByHomeKey("some-home-key");
+    expect(user.home_key).toBe("some-home-key");
+    expect(user.authorized_by).toBeNull();
+    expect(user.provisional).toBe(false);
+    expect(user.caps).toEqual(["sync"]);
+  });
+
+  it("is idempotent — the same home key resolves to the same user on a later call", () => {
+    const first = db.getOrCreateUserByHomeKey("some-home-key");
+    const second = db.getOrCreateUserByHomeKey("some-home-key");
+    expect(second.user_id).toBe(first.user_id);
+    expect(db.listAllUsers()).toHaveLength(1);
   });
 });
 
@@ -475,9 +508,11 @@ describe("schema_version migrations", () => {
       const db = openDb(path);
       expect(db.getSchemaVersion()).toBeGreaterThan(0);
 
-      // user_keys column rename (migration 3) survived and is queryable
-      // through the renamed-internals API.
-      expect(db.getUserKeys("home1")).toEqual([{ key: "grp1", name: null }]);
+      // user_keys is now keyed by user_id (migration 5), rekeyed from the
+      // home-key shape migration 3 produced — the association for "home1"
+      // survived, reachable via the user migration 5 minted for it.
+      const user = db.getOrCreateUserByHomeKey("home1");
+      expect(db.getUserKeys(user.user_id)).toEqual([{ key: "grp1", name: null }]);
 
       // Pre-existing board data is intact and reachable through the normal
       // read path.
@@ -500,14 +535,392 @@ describe("schema_version migrations", () => {
     try {
       const first = openDb(path);
       const version = first.getSchemaVersion();
+      const mintedUserId = first.getOrCreateUserByHomeKey("home1").user_id;
       first.close();
 
       const second = openDb(path);
       expect(second.getSchemaVersion()).toBe(version);
-      // Data survives a second migration pass untouched.
-      expect(second.getUserKeys("home1")).toEqual([{ key: "grp1", name: null }]);
+      // Data survives a second migration pass untouched — same user, same
+      // association, no double-mint.
+      expect(second.getOrCreateUserByHomeKey("home1").user_id).toBe(mintedUserId);
+      expect(second.getUserKeys(mintedUserId)).toEqual([{ key: "grp1", name: null }]);
     } finally {
       cleanup();
     }
+  });
+
+  it("migration 4 adds the identity tables and user_keys.access to a pre-v5 database", () => {
+    const { path, cleanup } = makeLegacyDbFile();
+    try {
+      const db = openDb(path);
+      // Didn't exist at all pre-migration; a working createUser call is the
+      // real assertion that the tables (and their columns) are usable.
+      const user = db.createUser({ authorizedBy: null, caps: ["sync"] }, Date.now());
+      expect(user.user_id).toBeTruthy();
+      // access column defaults to 'rw', including on rows migration 5 rekeyed
+      // from the pre-existing "home1"/"grp1" association.
+      const legacyUser = db.getOrCreateUserByHomeKey("home1");
+      const raw = new Database(path);
+      const row = raw.prepare(`SELECT access FROM user_keys WHERE user_id = ? AND key = 'grp1'`).get(legacyUser.user_id) as {
+        access: string;
+      };
+      expect(row.access).toBe("rw");
+      raw.close();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ── migration 5: user_keys rekeyed to user_id, legacy home keys minted ──────
+
+describe("migration 5 — user_keys rekey and legacy user minting", () => {
+  it("mints exactly one unparented, non-provisional, caps=['sync'] user per distinct pre-existing home key", () => {
+    const { path, cleanup } = makeLegacyDbFile();
+    try {
+      const db = openDb(path);
+      const user = db.getOrCreateUserByHomeKey("home1"); // resolves the minted user, doesn't create a second one
+      expect(user.home_key).toBe("home1");
+      expect(user.authorized_by).toBeNull();
+      expect(user.provisional).toBe(false);
+      expect(user.caps).toEqual(["sync"]);
+      expect(db.getUserKeys(user.user_id)).toEqual([{ key: "grp1", name: null }]);
+      expect(db.listAllUsers()).toHaveLength(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not confuse a migration-minted legacy user with the designated root", () => {
+    // §5.1: several unparented users is a structurally-fine forest, but only
+    // one of them is "the root" bootstrap-root created — findRootUser must
+    // not just grab whichever unparented row it finds first.
+    const { path, cleanup } = makeLegacyDbFile();
+    try {
+      const db = openDb(path);
+      const legacyUser = db.getOrCreateUserByHomeKey("home1"); // unparented, minted by migration 5
+      expect(db.findRootUser()).toBeNull();
+
+      const root = db.bootstrapRootUser(Date.now());
+      expect(root.user_id).not.toBe(legacyUser.user_id);
+      expect(db.findRootUser()?.user_id).toBe(root.user_id);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a fresh (never-legacy) database needs no minting and gets the plain user_id index", () => {
+    const db = openDb(":memory:");
+    expect(db.listAllUsers()).toHaveLength(0);
+    const user = db.createUser({ authorizedBy: null, caps: ["sync"] }, Date.now());
+    db.associateUserKey(user.user_id, "k", null);
+    expect(db.getUserKeys(user.user_id)).toEqual([{ key: "k", name: null }]);
+  });
+});
+
+// ── Identity & authorization (auth-design.md §5, §6, §12.1, Phase 1 job 1) ───
+
+describe("users — tree, effective state, cascade", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("bootstrapRootUser creates a root with all caps and is idempotent", () => {
+    const root = db.bootstrapRootUser(Date.now());
+    expect(root.authorized_by).toBeNull();
+    expect(root.caps.sort()).toEqual(["admin", "invite", "moderate", "sync"]);
+    const again = db.bootstrapRootUser(Date.now());
+    expect(again.user_id).toBe(root.user_id);
+    expect(db.listAllUsers()).toHaveLength(1);
+  });
+
+  it("computes effective state across a 3-deep tree via the recursive CTE", () => {
+    const now = Date.now();
+    const root = db.createUser({ authorizedBy: null, caps: ["sync", "invite", "admin"] }, now);
+    const a = db.createUser({ authorizedBy: root.user_id, caps: ["sync", "invite"] }, now);
+    const b = db.createUser({ authorizedBy: a.user_id, caps: ["sync", "invite"] }, now);
+    const c = db.createUser({ authorizedBy: b.user_id, caps: ["sync"] }, now);
+
+    // Everyone starts active.
+    for (const u of [root, a, b, c]) expect(db.getEffectiveState(u.user_id)).toBe("active");
+
+    // Suspending A (depth 1) is the worst state on the path for B and C
+    // (depth 2 and 3), but not for root, which is above A.
+    db.setUserState(a.user_id, "suspended", now);
+    expect(db.getEffectiveState(root.user_id)).toBe("active");
+    expect(db.getEffectiveState(a.user_id)).toBe("suspended");
+    expect(db.getEffectiveState(b.user_id)).toBe("suspended");
+    expect(db.getEffectiveState(c.user_id)).toBe("suspended");
+  });
+
+  it("cascade suspend is one UPDATE, and restore reverts descendants to their OWN explicit state", () => {
+    const now = Date.now();
+    const root = db.createUser({ authorizedBy: null, caps: ["sync", "invite", "admin"] }, now);
+    const a = db.createUser({ authorizedBy: root.user_id, caps: ["sync", "invite"] }, now);
+    const b = db.createUser({ authorizedBy: a.user_id, caps: ["sync"] }, now);
+    const c = db.createUser({ authorizedBy: b.user_id, caps: ["sync"] }, now);
+
+    // C is independently suspended by its own moderator, unrelated to A.
+    db.setUserState(c.user_id, "suspended", now);
+    // Now A gets cut off too, cascading to B and (already-suspended) C.
+    db.setUserState(a.user_id, "suspended", now);
+    expect(db.getEffectiveState(b.user_id)).toBe("suspended");
+    expect(db.getEffectiveState(c.user_id)).toBe("suspended");
+
+    // Restoring A is one UPDATE on A's row alone.
+    db.setUserState(a.user_id, "active", now);
+    expect(db.getEffectiveState(a.user_id)).toBe("active");
+    // B had no explicit state of its own — it reverts to active automatically.
+    expect(db.getEffectiveState(b.user_id)).toBe("active");
+    expect(db.getUser(b.user_id)?.state).toBe("active");
+    // C's own explicit suspension survives A's restore untouched — the
+    // cascade never touched C's row, restoring A didn't either.
+    expect(db.getEffectiveState(c.user_id)).toBe("suspended");
+    expect(db.getUser(c.user_id)?.state).toBe("suspended");
+  });
+
+  it("revoke is worse than suspend on the same path", () => {
+    const now = Date.now();
+    const root = db.createUser({ authorizedBy: null, caps: ["sync", "admin"] }, now);
+    const a = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, now);
+    db.setUserState(a.user_id, "suspended", now);
+    db.setUserState(root.user_id, "revoked", now);
+    // revoked (root) outranks suspended (a) as the worst state on the path.
+    expect(db.getEffectiveState(a.user_id)).toBe("revoked");
+  });
+
+  it("depth-caps the walk defensively (does not hang on a very deep chain)", () => {
+    const now = Date.now();
+    let parent: string | null = null;
+    let leaf = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    parent = leaf.user_id;
+    for (let i = 0; i < 20; i++) {
+      leaf = db.createUser({ authorizedBy: parent, caps: ["sync"] }, now);
+      parent = leaf.user_id;
+    }
+    expect(db.getEffectiveState(leaf.user_id)).toBe("active");
+  });
+});
+
+describe("grants — attenuation", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("rejects a grant whose caps exceed the issuer's own caps", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    expect(() => db.createGrant({ kind: "invite", issuerUserId: issuer.user_id, caps: ["moderate"] }, now)).toThrow();
+  });
+
+  it("allows a grant whose caps are a subset of the issuer's own caps", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite", "moderate"] }, now);
+    expect(() => db.createGrant({ kind: "invite", issuerUserId: issuer.user_id, caps: ["invite"] }, now)).not.toThrow();
+  });
+
+  it("never allows admin via a grant, even from an admin issuer", () => {
+    const now = Date.now();
+    const root = db.bootstrapRootUser(now); // has admin
+    expect(root.caps).toContain("admin");
+    expect(() => db.createGrant({ kind: "invite", issuerUserId: root.user_id, caps: ["admin"] }, now)).toThrow(/admin/);
+  });
+
+  it("rejects issuing a grant from a non-active (effective) issuer", () => {
+    const now = Date.now();
+    const root = db.createUser({ authorizedBy: null, caps: ["sync", "invite", "admin"] }, now);
+    const child = db.createUser({ authorizedBy: root.user_id, caps: ["sync", "invite"] }, now);
+    db.setUserState(root.user_id, "suspended", now); // cascades to child
+    expect(() => db.createGrant({ kind: "invite", issuerUserId: child.user_id, caps: [] }, now)).toThrow();
+  });
+});
+
+describe("grants — redemption", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("redeems a single-use grant exactly once under repeated (simulated-concurrent) attempts", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "device", issuerUserId: issuer.user_id }, now);
+
+    // Two callers racing on the same grant+secret: only one may ever see
+    // changes===1, because the WHERE clause (uses_remaining > 0) is
+    // evaluated by SQLite as part of the same write, not against a
+    // previously-read snapshot.
+    const first = db.attemptRedeemGrant(grantId, secret, now);
+    const second = db.attemptRedeemGrant(grantId, secret, now);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.reason).toBe("used");
+  });
+
+  it("rejects redemption of an expired grant", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "device", issuerUserId: issuer.user_id, expiresAt: now + 1000 }, now);
+    const result = db.attemptRedeemGrant(grantId, secret, now + 2000);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("expired");
+  });
+
+  it("rejects a wrong secret without consuming the use", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "device", issuerUserId: issuer.user_id }, now);
+    const wrong = db.attemptRedeemGrant(grantId, secret + "x", now);
+    expect(wrong.ok).toBe(false);
+    if (!wrong.ok) expect(wrong.reason).toBe("bad_secret");
+    // The real secret still works afterwards.
+    const right = db.attemptRedeemGrant(grantId, secret, now);
+    expect(right.ok).toBe(true);
+  });
+
+  it("burns the grant after repeated failed attempts, even against the correct secret", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "device", issuerUserId: issuer.user_id }, now);
+
+    for (let i = 0; i < 10; i++) {
+      const attempt = db.attemptRedeemGrant(grantId, "wrong-secret", now);
+      expect(attempt.ok).toBe(false);
+    }
+    // Burned — even the real secret is now refused.
+    const result = db.attemptRedeemGrant(grantId, secret, now);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("burned");
+  });
+
+  it("redeemGrant(invite) creates a new child user and registers the client", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "invite", issuerUserId: issuer.user_id, caps: ["sync"] }, now);
+
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "client-1", pubkeyJwk: "{}", label: "phone" }, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.user.authorized_by).toBe(issuer.user_id);
+    expect(outcome.result.user.caps).toEqual(["sync"]);
+    expect(outcome.result.user.provisional).toBe(false);
+    expect(outcome.result.client?.client_id).toBe("client-1");
+
+    const looked = db.getUserForClient("client-1");
+    expect(looked?.user.user_id).toBe(outcome.result.user.user_id);
+    expect(looked?.effectiveState).toBe("active");
+  });
+
+  it("redeemGrant(device) attaches the client to the issuer's EXISTING user, no new user", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "device", issuerUserId: issuer.user_id }, now);
+
+    const before = db.listAllUsers().length;
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "client-2", pubkeyJwk: "{}" }, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.user.user_id).toBe(issuer.user_id);
+    expect(db.listAllUsers().length).toBe(before); // no identity effect beyond the client
+  });
+
+  it("redeemGrant(share) hands over a sync key with no identity effect", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const recipient = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "share", issuerUserId: issuer.user_id, payload: "shopping-list-key" }, now);
+
+    const before = db.listAllUsers().length;
+    const outcome = db.redeemGrant(grantId, secret, { existingUserId: recipient.user_id }, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.syncKey).toBe("shopping-list-key");
+    expect(db.listAllUsers().length).toBe(before); // no new user, no new client
+    expect(db.getUserKeys(recipient.user_id)).toEqual([{ key: "shopping-list-key", name: null }]);
+  });
+
+  it("guest grants create a provisional user with caps=['sync'] only — no invite cap, by construction", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    // Even if a caller tried to smuggle extra caps through, guest ignores
+    // caller-supplied caps entirely (§7.4) — createGrant hardcodes ['sync'].
+    const { grantId, secret } = db.createGrant(
+      { kind: "guest", issuerUserId: issuer.user_id, payload: "shopping-list-key", greeting: "Dad's shopping list" },
+      now,
+    );
+
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "sons-phone", pubkeyJwk: "{}" }, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.user.provisional).toBe(true);
+    expect(outcome.result.user.caps).toEqual(["sync"]);
+    expect(outcome.result.user.caps).not.toContain("invite");
+    expect(outcome.result.syncKey).toBe("shopping-list-key");
+    expect(db.getUserKeys(outcome.result.user.user_id)).toEqual([{ key: "shopping-list-key", name: null }]);
+  });
+
+  it("promote clears provisional and can add caps, without re-creating the user", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "guest", issuerUserId: issuer.user_id, payload: "k" }, now);
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "c", pubkeyJwk: "{}" }, now);
+    if (!outcome.ok) throw new Error("setup failed");
+    const guestId = outcome.result.user.user_id;
+    const homeKeyBefore = outcome.result.user.home_key;
+
+    const promoted = db.promoteProvisionalUser(guestId, ["invite"], now);
+    expect(promoted.provisional).toBe(false);
+    expect(promoted.caps.sort()).toEqual(["invite", "sync"]);
+    expect(promoted.user_id).toBe(guestId);
+    expect(promoted.home_key).toBe(homeKeyBefore); // same identity, not re-created
+  });
+});
+
+describe("clients", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("getUserForClient returns the user's effective state, reflecting a cascaded suspension", () => {
+    const now = Date.now();
+    const root = db.createUser({ authorizedBy: null, caps: ["sync", "invite", "admin"] }, now);
+    const child = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, now);
+    db.registerClient({ clientId: "device-x", userId: child.user_id, pubkeyJwk: "{}" }, now);
+
+    expect(db.getUserForClient("device-x")?.effectiveState).toBe("active");
+    db.setUserState(root.user_id, "suspended", now);
+    expect(db.getUserForClient("device-x")?.effectiveState).toBe("suspended");
+  });
+
+  it("returns null for an unknown client_id", () => {
+    expect(db.getUserForClient("nonexistent")).toBeNull();
+  });
+});
+
+describe("auth_events — append-only audit", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("logs grant issuance, redemption, and state changes", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "device", issuerUserId: issuer.user_id }, now);
+    db.redeemGrant(grantId, secret, { clientId: "c", pubkeyJwk: "{}" }, now);
+    db.setUserState(issuer.user_id, "suspended", now);
+
+    const kinds = db.listAuthEvents().map((e) => e.kind);
+    expect(kinds).toContain("grant_issued_device");
+    expect(kinds).toContain("grant_redeemed");
+    expect(kinds).toContain("grant_effect_device");
+    expect(kinds).toContain("state_set_suspended");
+  });
+});
+
+describe("reset-server-id", () => {
+  it("overwrites server_id and getServerId reflects it", () => {
+    const db = openDb(":memory:");
+    const before = db.getServerId();
+    const after = db.resetServerId();
+    expect(after).not.toBe(before);
+    expect(db.getServerId()).toBe(after);
+
+    const fixed = db.resetServerId("my-fixed-id");
+    expect(fixed).toBe("my-fixed-id");
+    expect(db.getServerId()).toBe("my-fixed-id");
   });
 });
