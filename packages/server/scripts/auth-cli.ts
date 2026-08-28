@@ -25,13 +25,17 @@
  *
  *   issue-grant --issuer=<user_id> --kind=<invite|device|share|guest>
  *               [--caps=cap1,cap2] [--payload=<sync_key>] [--greeting=text]
- *               [--ttl-ms=<n>] [--uses=<n>]
- *       Create a grant and print the redemption secret ONCE — the server
+ *               [--ttl-ms=<n>] [--uses=<n>] [--app-url=<url>]
+ *       Create a grant and print both the redemption secret and a ready-to-use
+ *       join link ONCE — the server
  *       never stores it in recoverable form (only its SHA-256), so this is
  *       the only chance to see it. --caps applies to `invite` only (subject
  *       to the attenuation check against the issuer's own caps); `guest`
  *       always gets caps=[sync] regardless of --caps; `payload` is the
- *       sync_key to hand over for `share`/`guest`.
+ *       sync_key to hand over for `share`/`guest`. --app-url is where the
+ *       *client app* is served (default ${DEFAULT_APP_URL}), not the sync
+ *       server — pass e.g. --app-url=https://localhost:3000/ when testing
+ *       against a local Vite instance.
  *
  *   set-state --user=<user_id> --state=<active|suspended|revoked>
  *       One UPDATE on one row (§5.3). Suspending/revoking cuts off the
@@ -61,8 +65,32 @@
  *       hand edit here (auth-design.md §3.3); this makes it a supported
  *       operation instead.
  */
+import { createHash } from "node:crypto";
 import { parseScriptArgs } from "./cli.js";
 import { openDb, ALL_CAPS, type Cap, type GrantKind, type UserState } from "../src/db.js";
+
+// Join-link construction (§7.3a-bis). Deliberately a reimplementation of the
+// client's `hashServerId`/`buildJoinUrl` (packages/client/src/sync/joinLink.ts)
+// rather than an import: packages/server does not depend on packages/client,
+// and this is the same call made for authCrypto.ts's thumbprint. Both sides
+// must agree exactly — the recipient's client compares this hash against its
+// own — so the two are pinned together by SERVER_HASH_LENGTH and the shared
+// test vector in auth-cli.test.ts.
+const SERVER_HASH_LENGTH = 6;
+
+function hashServerId(serverId: string): string {
+  return createHash("sha256").update(serverId, "utf8").digest("base64url").slice(0, SERVER_HASH_LENGTH);
+}
+
+/** Where the *app* is served — not the sync server. The link carries only the
+ * server's identity hash, so the recipient resolves the route themselves; this
+ * base just has to be a page that loads the client. */
+const DEFAULT_APP_URL = "https://listr.aapx.org/";
+
+function buildJoinUrl(appUrl: string, serverId: string, grantId: string, secret: string): string {
+  const base = appUrl.split("#")[0];
+  return `${base}#/join/${hashServerId(serverId)}/${grantId}.${secret}`;
+}
 
 function parseNamedArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -100,7 +128,14 @@ function main(): void {
     process.exit(1);
   }
 
-  const { dbPath, apply } = parseScriptArgs(`auth-cli ${command}`);
+  // Routine administration, not a one-off migration: issuing a grant is a
+  // single INSERT, so copying the whole database for it is pure cost. Back up
+  // only when this run will actually migrate the schema — except for
+  // reset-server-id, which orphans every client's trust-on-first-use record
+  // and is the one command here worth a rollback point.
+  const { dbPath, apply } = parseScriptArgs(`auth-cli ${command}`, {
+    backup: command === "reset-server-id" ? "always" : "schema-change",
+  });
   const named = parseNamedArgs(process.argv.slice(3));
   const db = openDb(dbPath);
   const now = Date.now();
@@ -205,6 +240,8 @@ function runCommand(
         );
         console.log(`[auth-cli] grant issued: id=${grantId}`);
         console.log(`[auth-cli] secret (shown once, not recoverable — hand this to the recipient): ${secret}`);
+        console.log(`[auth-cli] join link (shown once — the secret is in it):`);
+        console.log(`  ${buildJoinUrl(named["app-url"] ?? DEFAULT_APP_URL, db.getServerId(), grantId, secret)}`);
         break;
       }
 

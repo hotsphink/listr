@@ -7,6 +7,7 @@ import ListView from "./pages/ListView.js";
 import AdminPage from "./pages/AdminPage.js";
 import TestRunner from "./pages/TestRunner.js";
 import ReceivePage from "./pages/ReceivePage.js";
+import JoinPage from "./pages/JoinPage.js";
 import { db } from "./db/database.js";
 import { healLegacyItems } from "./db/operations.js";
 import { syncClient } from "./sync/SyncClient.js";
@@ -122,6 +123,7 @@ const App: Component = () => (
     <Route path="/board/:id" component={ListView} />
     <Route path="/admin" component={AdminPage} />
     <Route path="/receive/:token" component={ReceivePage} />
+    <Route path="/join/:hash/:credentials" component={JoinPage} />
     <Route path="/test" component={TestRunner} />
   </HashRouter>
 );

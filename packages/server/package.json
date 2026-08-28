@@ -7,6 +7,7 @@
     "start": "tsx src/index.ts",
     "dev": "env LISTR_VARIANT=dev tsx watch src/index.ts",
     "prod": "tsx src/index.ts",
+    "auth": "tsx scripts/auth-cli.ts",
     "test": "vitest run"
   },
   "dependencies": {

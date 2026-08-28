@@ -44,20 +44,34 @@ export async function clearDatabase(page: Page) {
   await page.waitForSelector(".sidebar");
 }
 
-/** Set the device's default sync key directly in IndexedDB (bypassing the Admin page UI). */
+/**
+ * Give this device a home key directly in IndexedDB, bypassing both the
+ * Admin page UI and an actual server registration (there is no sync server
+ * in the e2e harness — see helpers.ts's module doc). "Does this device have
+ * a default sync key" used to mean a hand-typed sync_config.sync_key; job 3
+ * rewired that concept to server_identity.home_key (§3.1/§8.1), a
+ * server-assigned field that normally only arrives via a real handshake. This
+ * fakes just enough of a `server_identity` row — one server, `state: "active"`
+ * — for Sidebar's "My Boards" gating to behave as if registration had
+ * happened, without needing a live server.
+ */
 export async function setDefaultSyncKey(page: Page, key: string) {
-  await page.evaluate((syncKey) => {
+  await page.evaluate((homeKey) => {
     return new Promise<void>((resolve, reject) => {
       const req = indexedDB.open("listr2");
       req.onsuccess = () => {
         const db = req.result;
-        const tx = db.transaction("sync_config", "readwrite");
-        const store = tx.objectStore("sync_config");
-        const getReq = store.get("default");
-        getReq.onsuccess = () => {
-          const existing = getReq.result ?? { id: "default", sync_url: "", client_id: crypto.randomUUID(), enabled: false, last_sync_at: 0 };
-          store.put({ ...existing, sync_key: syncKey });
-        };
+        const tx = db.transaction("server_identity", "readwrite");
+        const store = tx.objectStore("server_identity");
+        store.put({
+          server_id: "e2e-fake-server",
+          state: "active",
+          user_id: "e2e-fake-user",
+          home_key: homeKey,
+          caps: ["sync"],
+          display_name: null,
+          updated_at: Date.now(),
+        });
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);
       };

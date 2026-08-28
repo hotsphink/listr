@@ -1,7 +1,7 @@
 import { type Component, For, Show, createSignal, createEffect, onCleanup } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
-import { db, type SyncConfig, type SyncEndpoint } from "../db/database.js";
+import { db, type ServerIdentity, type SyncEndpoint } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { PROTOCOL_VERSION } from "../sync/protocol.js";
 import { syncStatus } from "../sync/syncStore.js";
@@ -11,6 +11,8 @@ import { setSidebarOpen } from "../store/sidebarStore.js";
 import { exportAllData } from "../db/exportImport.js";
 import { triggerDownload } from "../utils/download.js";
 import ImportModal from "../components/ImportModal.js";
+import GrantModal from "../components/GrantModal.js";
+import RedeemGrantModal from "../components/RedeemGrantModal.js";
 
 const PHASE_LABELS: Record<string, string> = {
   disabled: "Disabled",
@@ -113,19 +115,18 @@ const ForceUpdateButton: Component = () => {
 
 const AdminPage: Component = () => {
   const navigate = useNavigate();
-  const [config, setConfig] = createSignal<SyncConfig | undefined>();
   const [endpoints, setEndpoints] = createSignal<SyncEndpoint[]>([]);
-  const [syncKey, setSyncKey] = createSignal("");
-  const [keyDirty, setKeyDirty] = createSignal(false);
+  const [identities, setIdentities] = createSignal<ServerIdentity[]>([]);
   const [showImport, setShowImport] = createSignal(false);
-
-  createEffect(() => {
-    const sub = liveQuery(() => db.sync_config.get("default")).subscribe((cfg) => {
-      setConfig(cfg);
-      if (!keyDirty()) setSyncKey(cfg?.sync_key ?? "");
-    });
-    onCleanup(() => sub.unsubscribe());
-  });
+  const [showGrantModal, setShowGrantModal] = createSignal(false);
+  const [joiningEndpointId, setJoiningEndpointId] = createSignal<string | null>(null);
+  const [devices, setDevices] = createSignal<{ client_id: string; label: string | null; last_seen: number | null }[]>([]);
+  const [displayNameInput, setDisplayNameInput] = createSignal("");
+  const [displayNameDirty, setDisplayNameDirty] = createSignal(false);
+  const [displayNameError, setDisplayNameError] = createSignal<string | null>(null);
+  const [renamingClientId, setRenamingClientId] = createSignal<string | null>(null);
+  const [renameInput, setRenameInput] = createSignal("");
+  const [deviceError, setDeviceError] = createSignal<string | null>(null);
 
   createEffect(() => {
     const sub = liveQuery(() => db.sync_endpoints.orderBy("position").toArray()).subscribe((eps) => {
@@ -134,23 +135,116 @@ const AdminPage: Component = () => {
     onCleanup(() => sub.unsubscribe());
   });
 
-  const saveKey = async () => {
-    const k = syncKey().trim();
-    const existing = config();
-    const clientId = existing?.client_id ?? crypto.randomUUID();
-    if (existing) {
-      await db.sync_config.update("default", { sync_key: k });
-    } else {
-      await db.sync_config.put({
-        id: "default",
-        sync_url: "",
-        sync_key: k,
-        client_id: clientId,
-        enabled: true,
-        last_sync_at: 0,
-      });
+  // Per-server registration state (§8.1) — this is what replaces the old
+  // free-text Sync Key input: identity now comes from the server (ok.*),
+  // never from something typed here.
+  createEffect(() => {
+    const sub = liveQuery(() => db.server_identity.toArray()).subscribe(setIdentities);
+    onCleanup(() => sub.unsubscribe());
+  });
+
+  // The endpoint id currently reaching whichever server the active identity
+  // is on — needed because identity is keyed by server_id but the wire calls
+  // (createGrant/listClients/setDisplayName) are made against a connection,
+  // which is keyed by endpoint id. Arbitrarily the first ready endpoint on
+  // that server, same "pick one" convention SyncClient.getPrimaryServerId
+  // uses for the (non-goal) multi-server case.
+  const primaryIdentity = () => identities().find((i) => i.state === "active") ?? null;
+
+  // Must be an endpoint we can SEND on right now, not merely one associated
+  // with this server. Two earlier sources of truth were both wrong for that:
+  // `sync_endpoints.last_server_id` is persisted and keeps naming a server
+  // long after the socket dropped, and an EndpointStatus keeps its `serverId`
+  // from the last handshake even once the phase has gone to "error" (the close
+  // handler sets phase + message only). Either could hand back a dead endpoint,
+  // and every wire call here — setDisplayName, listClients, createGrant —
+  // throws "no open connection" on one. Requiring phase === "ready" is both
+  // correct and still reactive, since `statuses()` updates on connect/close.
+  const primaryEndpointId = (): string | null => {
+    const serverId = primaryIdentity()?.server_id;
+    if (!serverId) return null;
+    for (const ep of endpoints()) {
+      const status = statuses()[ep.id] as EndpointStatus | undefined;
+      if (status?.phase === "ready" && status.serverId === serverId) return ep.id;
     }
-    setKeyDirty(false);
+    return null;
+  };
+
+  const needsGrantEndpoints = () =>
+    endpoints().filter((ep) => ((statuses()[ep.id] as EndpointStatus | undefined)?.phase ?? (ep.enabled ? "connecting" : "disabled")) === "needs_grant");
+
+  createEffect(() => {
+    if (!displayNameDirty()) setDisplayNameInput(primaryIdentity()?.display_name ?? "");
+  });
+
+  // "ready" can still go stale between the check and the send, and an
+  // exception thrown out of a createEffect stops that effect re-running for
+  // the rest of the page's life — which is how a transient reconnect could
+  // permanently kill the device list.
+  const requestDevices = (epId: string) => {
+    try {
+      syncClient.listClients(epId);
+    } catch (err) {
+      console.warn("listClients skipped:", err);
+    }
+  };
+
+  const refreshDevices = () => {
+    const epId = primaryEndpointId();
+    if (epId) requestDevices(epId);
+  };
+
+  // The server answers set_client_label with the refreshed `clients` list, so
+  // the existing onGrantReply handler updates the list — nothing to do here
+  // beyond closing the editor.
+  const saveClientLabel = (targetClientId: string) => {
+    setDeviceError(null);
+    const epId = primaryEndpointId();
+    if (!epId) {
+      setDeviceError("Not connected to a server right now — try again once sync is connected.");
+      return;
+    }
+    try {
+      syncClient.setClientLabel(epId, targetClientId, renameInput().trim() || null);
+      setRenamingClientId(null);
+    } catch (err) {
+      setDeviceError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  createEffect(() => {
+    const epId = primaryEndpointId();
+    if (!epId) return;
+    const unsubscribe = syncClient.onGrantReply(epId, (msg) => {
+      if (msg.type === "clients") { setDevices(msg.clients ?? []); setDeviceError(null); }
+      else if (msg.type === "error" && msg.reason === "bad_request") setDeviceError(msg.message ?? "That device couldn't be renamed.");
+      else if (msg.type === "display_name_set") {
+        setDisplayNameDirty(false);
+        setDisplayNameError(null);
+      }
+    });
+    onCleanup(unsubscribe);
+    requestDevices(epId);
+  });
+
+  // Both failure modes here used to be silent, which is exactly what makes a
+  // stuck Save button so confusing: the flag that hides the button is only
+  // cleared by the server's `display_name_set` reply, so anything that stops
+  // the request going out leaves the button sitting there with no explanation.
+  const saveDisplayName = () => {
+    setDisplayNameError(null);
+    const epId = primaryEndpointId();
+    if (!epId) {
+      setDisplayNameError("Not connected to a server right now — try again once sync is connected.");
+      return;
+    }
+    try {
+      syncClient.setDisplayName(epId, displayNameInput().trim() || null);
+    } catch (err) {
+      // setDisplayName throws when that endpoint has no open socket (e.g. the
+      // identity resolved to an endpoint that has since dropped).
+      setDisplayNameError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const addEndpoint = async () => {
@@ -195,7 +289,13 @@ const AdminPage: Component = () => {
   };
 
   const statuses = endpointStatuses;
-  const clientId = () => config()?.client_id ?? "";
+  const [clientId, setClientId] = createSignal("");
+  createEffect(() => {
+    const sub = liveQuery(() => db.client_identity.get("default")).subscribe((identity) => {
+      setClientId(identity?.client_id ?? "");
+    });
+    onCleanup(() => sub.unsubscribe());
+  });
   const connectedServerId = () => {
     for (const s of Object.values(statuses())) {
       if (s?.phase === "ready" && s.serverId) return shortId(s.serverId);
@@ -216,28 +316,129 @@ const AdminPage: Component = () => {
 
       <div class="admin-content">
         <div class="admin-section">
-          <h2>Sync credentials</h2>
-          <div class="admin-field">
-            <label class="field-label">Sync Key</label>
-            <div class="admin-input-row">
-              <input
-                class="input"
-                type="text"
-                value={syncKey()}
-                onInput={(e) => { setSyncKey(e.currentTarget.value); setKeyDirty(true); }}
-                placeholder="shared secret — same on all devices"
-              />
-              <Show when={keyDirty()}>
-                <button class="btn btn-primary" type="button" onClick={saveKey}>Save</button>
-              </Show>
-            </div>
-            <div class="field-hint">All devices with the same sync key share data.</div>
-          </div>
+          <h2>Identity</h2>
+          <Show
+            when={primaryIdentity()}
+            fallback={<div class="admin-empty">Not registered with any server yet.</div>}
+          >
+            {(identity) => (
+              <>
+                {/* One box: the nickname IS the identity as far as a person is
+                    concerned, so it leads. The user id and caps are machine
+                    facts you occasionally need to read out, not things to lead
+                    with, so they sit underneath as hints. */}
+                <div class="admin-field">
+                  <label class="field-label">You are</label>
+                    <span class="field-hint inline-note">
+                      User ID: <code>{shortId(identity().user_id ?? undefined) || "(no id on any server yet)"}</code>
+                    </span>
+                  <div class="admin-input-row">
+                    <input
+                      class="input"
+                      type="text"
+                      value={displayNameInput()}
+                      onInput={(e) => { setDisplayNameInput(e.currentTarget.value); setDisplayNameDirty(true); }}
+                      placeholder="a nickname — not your real name if you'd rather not"
+                    />
+                    <Show when={displayNameDirty()}>
+                      <button class="btn btn-primary" type="button" onClick={saveDisplayName}>Save</button>
+                    </Show>
+                  </div>
+                  <Show when={displayNameError()}>
+                    <div class="field-hint field-hint-error">{displayNameError()}</div>
+                  </Show>
+                  <div class="field-hint">Shown to people you invite or share with.</div>
+                  <div class="field-hint admin-identity-facts">
+                    Capabilities: {(identity().caps ?? []).join(", ") || "none"}
+                  </div>
+                </div>
+                <div class="admin-field">
+                  <div class="admin-field-label-row admin-label-inline">
+                    <label class="field-label">Your devices</label>
+                    <button
+                      class="btn-icon-sm"
+                      type="button"
+                      onClick={refreshDevices}
+                      title="Refresh device list"
+                      aria-label="Refresh device list"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                        <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z" />
+                        <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z" />
+                      </svg>
+                    </button>
+                  </div>
+                  <For each={devices()}>
+                    {(c) => (
+                      <div class="admin-device-row">
+                        <Show
+                          when={renamingClientId() === c.client_id}
+                          fallback={
+                            <>
+                              <div class="admin-client-id">
+                                {c.label ?? "(unnamed device)"} — {shortId(c.client_id)}
+                                <Show when={c.client_id === clientId()}>
+                                  <span class="admin-device-self"> · this device</span>
+                                </Show>
+                              </div>
+                              <button
+                                class="btn-icon-sm"
+                                type="button"
+                                onClick={() => { setRenameInput(c.label ?? ""); setRenamingClientId(c.client_id); }}
+                                title={`Rename ${c.label ?? "this device"}`}
+                                aria-label={`Rename ${c.label ?? "this device"}`}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                                  <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
+                                </svg>
+                              </button>
+                            </>
+                          }
+                        >
+                          <input
+                            class="input"
+                            type="text"
+                            autofocus
+                            value={renameInput()}
+                            onInput={(e) => setRenameInput(e.currentTarget.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveClientLabel(c.client_id);
+                              else if (e.key === "Escape") setRenamingClientId(null);
+                            }}
+                            placeholder="e.g. phone, laptop"
+                          />
+                          <button class="btn btn-primary btn-xs" type="button" onClick={() => saveClientLabel(c.client_id)}>Save</button>
+                          <button class="btn btn-xs" type="button" onClick={() => setRenamingClientId(null)}>Cancel</button>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                  <Show when={deviceError()}>
+                    <div class="field-hint field-hint-error">{deviceError()}</div>
+                  </Show>
+                  <Show when={devices().length === 0}>
+                    <div class="field-hint">No devices found — click Refresh.</div>
+                  </Show>
+                </div>
+                <div class="admin-input-row">
+                  <button class="btn btn-primary" type="button" onClick={() => setShowGrantModal(true)}>+ Create join link</button>
+                </div>
+              </>
+            )}
+          </Show>
+          <For each={needsGrantEndpoints()}>
+            {(ep) => (
+              <div class="admin-field" style="margin-top: 12px">
+                <div class="field-hint">Not registered on {ep.host || "this server"} yet.</div>
+                <button class="btn btn-primary" type="button" onClick={() => setJoiningEndpointId(ep.id)}>Join</button>
+              </div>
+            )}
+          </For>
           <Show when={clientId()}>
-            <div class="admin-field">
+            <div class="admin-field" style="margin-top: 12px">
               <label class="field-label">Client ID</label>
               <div class="admin-client-id">{clientId()}</div>
-              <div class="field-hint">Identifies this device. Assigned automatically.</div>
+              <div class="field-hint">Identifies this device's keypair. Assigned automatically, shared across every server it registers with.</div>
             </div>
           </Show>
           <div class="admin-input-row">
@@ -426,6 +627,23 @@ const AdminPage: Component = () => {
         </div>
       </div>
       <ImportModal open={showImport()} onClose={() => setShowImport(false)} scope={{ type: "global" }} />
+      <Show when={primaryEndpointId() && primaryIdentity()}>
+        <GrantModal
+          open={showGrantModal()}
+          onClose={() => setShowGrantModal(false)}
+          endpointId={primaryEndpointId()!}
+          serverId={primaryIdentity()!.server_id}
+          myCaps={primaryIdentity()!.caps}
+          myDisplayName={primaryIdentity()!.display_name}
+        />
+      </Show>
+      <Show when={joiningEndpointId()}>
+        <RedeemGrantModal
+          open={joiningEndpointId() !== null}
+          onClose={() => setJoiningEndpointId(null)}
+          endpointId={joiningEndpointId()!}
+        />
+      </Show>
     </div>
   );
 };

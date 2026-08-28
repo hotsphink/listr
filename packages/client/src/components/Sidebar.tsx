@@ -28,8 +28,14 @@ const Sidebar: Component<Props> = (props) => {
 
   const boards = from(liveQuery(() => db.boards.orderBy("position").toArray()));
   const lists = from(liveQuery(() => db.lists.orderBy("position").toArray()));
-  const syncConfig = from(liveQuery(() => db.sync_config.get("default")));
-  const defaultSyncKey = () => syncConfig()?.sync_key;
+  // "My Boards"'s key used to be the hand-typed sync_config.sync_key; now
+  // it's the server-assigned home key of whichever server this device is
+  // actively registered with (§3.1/§8.1) — sync_config.sync_key is retired.
+  // Arbitrarily the first active registration if there's more than one
+  // (§3.3.1's stated non-goal multi-server case), same "pick one" convention
+  // SyncClient.getPrimaryServerId uses.
+  const serverIdentities = from(liveQuery(() => db.server_identity.toArray()));
+  const defaultSyncKey = () => serverIdentities()?.find((i) => i.state === "active" && i.home_key)?.home_key ?? undefined;
   const groupMeta = from(liveQuery(() => db.board_groups.toArray()));
 
   const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; board: Board } | null>(null);

@@ -7,6 +7,7 @@
     "preview": "pnpm build && pnpm --filter @listr/client preview",
     "server:dev": "pnpm --filter @listr/server dev",
     "server:prod": "pnpm --filter @listr/server prod",
+    "server:auth": "pnpm --filter @listr/server auth",
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter @listr/client test:e2e",
     "configure": "cp packages/server/systemd/listr-sync.service ~/.config/systemd/user && systemctl --user daemon-reload && systemctl --user restart listr-sync",

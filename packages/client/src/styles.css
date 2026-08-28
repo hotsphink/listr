@@ -1000,6 +1000,39 @@ tbody tr {
   margin-top: 3px;
 }
 
+.field-hint-error {
+  color: var(--danger, #d93025);
+}
+
+.inline-note {
+  margin-left: 2em;
+  opacity: 0.85;
+}
+.admin-identity-facts {
+  margin-top: 6px;
+  opacity: 0.85;
+}
+
+.admin-identity-sep {
+  opacity: 0.5;
+}
+
+.admin-device-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.admin-device-row .admin-client-id {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-device-self {
+  color: var(--text-dim);
+}
+
 .field-hint code {
   font-family: monospace;
   color: var(--text-muted);
@@ -1927,6 +1960,40 @@ tr.inline-add-item td:last-child {
   margin-bottom: 6px;
 }
 
+/* Label-row variant where the action belongs WITH the label rather than
+   opposite it — an icon button reads as part of the heading, so the default
+   space-between would strand it across the panel. */
+.admin-label-inline {
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+/* Small transparent icon button (refresh, rename, …). One class rather than
+   one per icon: they differ only in the glyph, which lives in the markup. */
+.btn-icon-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 3px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  /* --text-dim (#555 on a #1a1a1a surface) is for hover-revealed affordances
+     like the sidebar share icon; a standing button needs --text-muted to be
+     legible at rest in both themes. */
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-icon-sm:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .admin-input-row {
   display: flex;
   gap: 8px;
@@ -1941,7 +2008,9 @@ tr.inline-add-item td:last-child {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 6px 10px;
-  word-break: break-all;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .admin-empty {

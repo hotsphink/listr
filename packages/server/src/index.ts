@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { getProductionDb } from "./db.js";
-import type { EntityType, createDbApi, UserRow } from "./db.js";
+import type { EntityType, createDbApi, UserRow, Cap, GrantKind } from "./db.js";
 import { config } from "./config.js";
 import type { IntegrationServerConfig } from "./config.js";
 import { extractFromImage } from "./gemini.js";
@@ -21,6 +21,25 @@ import type { Item } from "@listr/shared";
 // challenge round trip (including the crypto) while still being short
 // enough that a captured nonce is useless shortly after issuance.
 const NONCE_TTL_MS = 60_000;
+
+// ── §11.1 basic limits ───────────────────────────────────────────────────────
+// Four cheap, accounting-free limits against casual/accidental DoS — not the
+// full quota system §11.1 explicitly defers. The accidental case is the one
+// that matters most: a client bug that pushes in a loop looks exactly like an
+// attack and will happily saturate the server on the user's own behalf.
+const MAX_WS_PAYLOAD_BYTES = 1 * 1024 * 1024; // ~1MB — one giant push can't wedge the server
+// Per-connection message limiting as a token bucket rather than a fixed
+// per-second window. A fixed window cannot tell a legitimate initial sync from
+// a runaway loop: `doInitialSync` sends one push_entity PER ENTITY, so any
+// client with more than the window's worth of local data trips it on its very
+// first sync, gets closed mid-push, retries, and loops forever — which is what
+// a 50/sec window did in practice. The bucket separates the two cases: `BURST`
+// covers a full initial push in one go, while `REFILL_PER_SEC` is the only
+// rate sustainable indefinitely, so a client stuck in a push loop still trips.
+const MSG_BURST = 5000; // matches MAX_PULL_ENTITIES — one full sync's worth
+const MSG_REFILL_PER_SEC = 200;
+const MAX_CONNECTIONS_PER_IP = 20; // trivial socket-exhaustion guard
+const MAX_PULL_ENTITIES = 5000; // bounds the server's own per-pull work
 
 type DbApi = ReturnType<typeof createDbApi>;
 
@@ -149,16 +168,35 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
   // any future CLI/native client use), which this check has nothing to say
   // about; it exists to stop an unexpected *browser* origin, not to require
   // one.
+  // §11.1: connections currently open per remote IP, checked at upgrade time
+  // (before the handshake does any crypto — an unauthenticated handshake
+  // still costs a signature verification, so this is an amplification
+  // target worth gating before accepting the socket at all). Incremented
+  // here in verifyClient rather than in the "connection" handler so a burst
+  // of concurrent upgrades from one IP can't all pass the check before any
+  // of them is counted.
+  const connectionsPerIp = new Map<string, number>();
+  const ipOf = (req: IncomingMessage): string => req.socket.remoteAddress ?? "unknown";
+
   const wss = new WebSocketServer({
     server: httpServer,
+    maxPayload: MAX_WS_PAYLOAD_BYTES,
     verifyClient: (info, callback) => {
       const origin = info.origin;
-      if (!origin || ALLOWED_ORIGINS.has(origin)) {
-        callback(true);
+      if (origin && !ALLOWED_ORIGINS.has(origin)) {
+        console.warn(`[ws] ${ts()} rejected upgrade from disallowed origin: ${origin}`);
+        callback(false, 403, "Origin not allowed");
         return;
       }
-      console.warn(`[ws] ${ts()} rejected upgrade from disallowed origin: ${origin}`);
-      callback(false, 403, "Origin not allowed");
+      const ip = ipOf(info.req);
+      const count = connectionsPerIp.get(ip) ?? 0;
+      if (count >= MAX_CONNECTIONS_PER_IP) {
+        console.warn(`[ws] ${ts()} rejected upgrade from ${ip}: ${count} connections already open (limit ${MAX_CONNECTIONS_PER_IP})`);
+        callback(false, 429, "Too many connections");
+        return;
+      }
+      connectionsPerIp.set(ip, count + 1);
+      callback(true);
     },
   });
 
@@ -204,10 +242,40 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     }
   }
 
+  /**
+   * Push the current device list to every open connection of one user.
+   *
+   * `list_clients` is request/response, so a device added or renamed on one
+   * machine left every other machine's list silently stale until someone hit
+   * Refresh. This is the same fan-out `notifyUserKeyChange` uses, and it
+   * deliberately includes the sender: after a `redeem_grant` the joining
+   * device wants the list too, and after a rename the reply IS this message.
+   */
+  function notifyClientsChanged(homeKey: string, userId: string): void {
+    const conns = homeKeyToClients.get(homeKey);
+    if (!conns || conns.size === 0) return;
+    const clients = dbApi.getClientsForUser(userId).map((c) => ({
+      client_id: c.client_id,
+      label: c.label,
+      created_at: c.created_at,
+      last_seen: c.last_seen,
+    }));
+    const json = JSON.stringify({ type: "clients", clients });
+    for (const client of conns) {
+      if (client.readyState === WebSocket.OPEN) client.send(json);
+    }
+  }
+
   const integrationRunner = new IntegrationRunner(dbApi, INTEGRATIONS, opts.integrations ?? {}, broadcast);
   integrationRunner.startPeriodicRefresh();
 
-  wss.on("connection", (ws: WebSocket) => {
+  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+    const connIp = ipOf(req);
+    // §11.1: per-connection message-rate limiting — a fixed-size sliding
+    // window reset every second. Checked before JSON.parse so the cost is
+    // bounded regardless of what the client sends.
+    let msgTokens = MSG_BURST;
+    let msgTokensRefilledAt = Date.now();
     let syncKeys: string[] = [];
     let homeKey: string | null = null; // this connection's authenticated home key, once ok/needs_grant is resolved
     let userId: string | null = null; // set once this connection is authenticated (post-ok, or post-redeem_grant)
@@ -272,6 +340,23 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     }
 
     ws.on("message", (raw: Buffer) => {
+      // §11.1 rate limit, checked before parsing anything: the highest-value
+      // of the four limits, because it catches both a curious script AND an
+      // honest client bug looping on push (arguably the more likely case —
+      // it looks exactly like an attack and will happily saturate the server
+      // on the user's own behalf).
+      const nowMs = Date.now();
+      msgTokens = Math.min(MSG_BURST, msgTokens + ((nowMs - msgTokensRefilledAt) / 1000) * MSG_REFILL_PER_SEC);
+      msgTokensRefilledAt = nowMs;
+      if (msgTokens < 1) {
+        console.warn(
+          `[ws] ${ts()} closing ip=${connIp} client=${clientId?.slice(0, 8) ?? "?"}: sustained rate above ${MSG_REFILL_PER_SEC} msg/sec (burst ${MSG_BURST} exhausted)`,
+        );
+        ws.close(1008, "Rate limit exceeded");
+        return;
+      }
+      msgTokens--;
+
       let msg: any;
       try {
         msg = JSON.parse(raw.toString());
@@ -432,6 +517,41 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
           return;
         }
         completeAuthentication(result.result.user);
+        // A `device` grant just added a machine to this user's account, so the
+        // user's OTHER open connections have a stale device list. Called after
+        // completeAuthentication so this connection is already in the fan-out
+        // set and gets the list too. For invite/guest the redeemer is a brand
+        // new user, so this reaches only their own single connection — right
+        // by construction, since the issuer's own device list is unchanged.
+        notifyClientsChanged(result.result.user.home_key, result.result.user.user_id);
+        return;
+      }
+
+      // ── peek_grant (§7.4/§8.2 job 3): read-only preview ──────────────────
+      // The join screen must say plainly what's about to happen — the
+      // grant's greeting and the voucher's display name — BEFORE the account
+      // is created, and redemption is single-use so it can't double as a
+      // preview. Works unauthenticated (same as redeem_grant) since a
+      // brand-new client parked in needs_grant is exactly who needs this.
+      if (msg.type === "peek_grant") {
+        const grantId = typeof msg.grant_id === "string" ? msg.grant_id : "";
+        const secret = typeof msg.secret === "string" ? msg.secret : "";
+        if (!grantId || !secret) {
+          ws.send(JSON.stringify({ type: "error", message: "peek_grant requires grant_id and secret" }));
+          return;
+        }
+        const peek = dbApi.peekGrant(grantId, secret, Date.now());
+        if (!peek.ok) {
+          ws.send(JSON.stringify({ type: "error", message: `Grant lookup failed: ${peek.reason}`, reason: peek.reason }));
+          return;
+        }
+        ws.send(JSON.stringify({
+          type: "grant_info",
+          kind: peek.grant.kind,
+          greeting: peek.grant.greeting,
+          issuer_display_name: peek.issuerDisplayName,
+          expires_at: peek.grant.expires_at,
+        }));
         return;
       }
 
@@ -464,13 +584,37 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         const serverTimes: Record<string, number> = {};
         const now = Date.now();
 
+        // §11.1: bound the server's own per-pull work. A key whose result
+        // would push the total over budget is skipped WHOLESALE rather than
+        // truncated — its entities are left out of the response and its
+        // entry is left out of `server_times` entirely, so the client's
+        // existing since-cursor for that key (in key_sync_state) is
+        // untouched and it picks the whole key back up on its next pull
+        // (next reconnect, or a forced resync). Silently truncating instead
+        // and still stamping server_times[key] = now would permanently lose
+        // whatever didn't fit.
+        let pulledTotal = 0;
         for (const { key, since } of keysSince) {
-          allBoards.push(...dbApi.getEntitiesSince("board", key, since));
-          allLists.push(...dbApi.getEntitiesSince("list", key, since));
-          allItems.push(...dbApi.getEntitiesSince("item", key, since));
-          for (const a of dbApi.getEntitiesSince("asset", key, since) as { id: string }[]) assetsById.set(a.id, a);
-          allTombstones.push(...dbApi.getTombstonesSince(key, since));
-          allIntegrationResults.push(...dbApi.getIntegrationResultsSince(key, since));
+          const boards = dbApi.getEntitiesSince("board", key, since);
+          const lists = dbApi.getEntitiesSince("list", key, since);
+          const items = dbApi.getEntitiesSince("item", key, since);
+          const assets = dbApi.getEntitiesSince("asset", key, since) as { id: string }[];
+          const tombstones = dbApi.getTombstonesSince(key, since);
+          const integrationResults = dbApi.getIntegrationResultsSince(key, since);
+          const count = boards.length + lists.length + items.length + assets.length + tombstones.length + integrationResults.length;
+
+          if (pulledTotal + count > MAX_PULL_ENTITIES) {
+            console.warn(`[sync] ${ts()} pull budget exceeded for key ${key.slice(0, 6)} (${count} entities, ${pulledTotal} already queued) — deferred to next pull`);
+            continue;
+          }
+          pulledTotal += count;
+
+          allBoards.push(...boards);
+          allLists.push(...lists);
+          allItems.push(...items);
+          for (const a of assets) assetsById.set(a.id, a);
+          allTombstones.push(...tombstones);
+          allIntegrationResults.push(...integrationResults);
           serverTimes[key] = now;
         }
 
@@ -562,9 +706,93 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         }
         return;
       }
+
+      // ── create_grant (§6, §8.2 scope B): grant-creation UI plumbing ──────
+      // Issuer is always this connection's own authenticated identity — there
+      // is no issuer_user_id field on the wire to spoof, same pattern as
+      // associate_key/leave_key. Cap/attenuation enforcement (§5.2) lives in
+      // dbApi.createGrant itself, not here, so it can't be bypassed by a
+      // client that skips the UI's own `invite`-cap gate.
+      if (msg.type === "create_grant") {
+        const kind = typeof msg.kind === "string" ? (msg.kind as GrantKind) : null;
+        if (!kind || !["invite", "device", "share", "guest"].includes(kind)) {
+          ws.send(JSON.stringify({ type: "error", message: "create_grant requires a valid kind" }));
+          return;
+        }
+        const caps: Cap[] | undefined = Array.isArray(msg.caps)
+          ? (msg.caps.filter((c: unknown) => typeof c === "string") as Cap[])
+          : undefined;
+        const payload = typeof msg.payload === "string" && msg.payload ? msg.payload : undefined;
+        const greeting = typeof msg.greeting === "string" && msg.greeting ? msg.greeting : null;
+        const expiresAt = typeof msg.expires_at === "number" ? msg.expires_at : undefined;
+        const usesRemaining = typeof msg.uses_remaining === "number" ? msg.uses_remaining : undefined;
+
+        try {
+          const { grantId, secret } = dbApi.createGrant(
+            { kind, issuerUserId: userId!, caps, payload, greeting, expiresAt, usesRemaining },
+            Date.now(),
+          );
+          const grant = dbApi.getGrant(grantId)!;
+          ws.send(JSON.stringify({
+            type: "grant_created",
+            grant_id: grantId,
+            secret,
+            kind,
+            greeting: grant.greeting,
+            expires_at: grant.expires_at,
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "error", message: err instanceof Error ? err.message : String(err), reason: "cap_denied" }));
+        }
+        return;
+      }
+
+      // ── set_display_name (§9.2/§7.4): self-set nickname, never validated ─
+      if (msg.type === "set_display_name") {
+        const displayName = typeof msg.display_name === "string" && msg.display_name.trim() ? msg.display_name.trim() : null;
+        const updated = dbApi.setUserDisplayName(userId!, displayName, Date.now());
+        ws.send(JSON.stringify({ type: "display_name_set", display_name: updated.display_name }));
+        return;
+      }
+
+      // ── set_client_label (§8.2 scope C): name one of your own devices ────
+      // The label was previously only settable at redeem_grant time, and no UI
+      // ever passed one — so every device showed as "(unnamed device)" with no
+      // way to fix it. Ownership is enforced inside setClientLabel's WHERE.
+      if (msg.type === "set_client_label") {
+        const targetClientId = typeof msg.client_id === "string" ? msg.client_id.trim() : "";
+        const label = typeof msg.label === "string" && msg.label.trim() ? msg.label.trim() : null;
+        if (!targetClientId) {
+          ws.send(JSON.stringify({ type: "error", message: "set_client_label requires client_id", reason: "bad_request" }));
+          return;
+        }
+        if (!dbApi.setClientLabel(targetClientId, userId!, label)) {
+          ws.send(JSON.stringify({ type: "error", message: "No such device on this account", reason: "bad_request" }));
+          return;
+        }
+        // Fan out rather than reply: every one of this user's devices shows
+        // the same list, so a rename on one leaves the others stale. This
+        // includes the sender, so it doubles as the reply.
+        notifyClientsChanged(homeKey!, userId!);
+        return;
+      }
+
+      // ── list_clients (§8.2 scope C): "your devices" ──────────────────────
+      if (msg.type === "list_clients") {
+        const clients = dbApi.getClientsForUser(userId!).map((c) => ({
+          client_id: c.client_id,
+          label: c.label,
+          created_at: c.created_at,
+          last_seen: c.last_seen,
+        }));
+        ws.send(JSON.stringify({ type: "clients", clients }));
+        return;
+      }
     });
 
     ws.on("close", () => {
+      const remaining = (connectionsPerIp.get(connIp) ?? 1) - 1;
+      if (remaining <= 0) connectionsPerIp.delete(connIp); else connectionsPerIp.set(connIp, remaining);
       if (homeKey) {
         const set = homeKeyToClients.get(homeKey);
         if (set) {

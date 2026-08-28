@@ -527,6 +527,36 @@ const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] =
   { version: 5, run: migrateV5RekeyUserKeysToUserId },
 ];
 
+/** Highest schema version this build knows how to migrate a database to. */
+export const LATEST_SCHEMA_VERSION: number = MIGRATIONS[MIGRATIONS.length - 1].version;
+
+/**
+ * Read a database's `schema_version` WITHOUT opening it for writes and without
+ * running migrations.
+ *
+ * `openDb` migrates unconditionally, including for read-only commands, so by
+ * the time a caller holds a db handle the schema has *already* changed. This
+ * lets a maintenance script find out beforehand whether this run is about to
+ * mutate the schema, and so whether it is worth the cost of a backup — see
+ * scripts/cli.ts's "schema-change" backup policy.
+ */
+export function peekSchemaVersion(dbPath: string): number {
+  let sql: Database.Database | null = null;
+  try {
+    sql = new Database(dbPath, { readonly: true });
+    const row = sql.prepare(`SELECT value FROM server_config WHERE key = 'schema_version'`).get() as
+      | { value: string }
+      | undefined;
+    return row ? Number(row.value) : 0;
+  } catch {
+    // No server_config table at all (a pre-versioning or otherwise unfamiliar
+    // file). Treat as version 0 — i.e. migrations pending, back it up.
+    return 0;
+  } finally {
+    sql?.close();
+  }
+}
+
 function applyMigrations(sql: Database.Database): void {
   const current = readSchemaVersion(sql);
   for (const { version, run } of MIGRATIONS) {
@@ -944,6 +974,16 @@ export function createDbApi(sql: Database.Database) {
     sql.prepare(`UPDATE users SET note = ? WHERE user_id = ?`).run(note, userId);
   }
 
+  // §9.2/§7.4: a user's own display_name, self-set (unlike `note`, which is
+  // written by the authorizer about them). Optional, mutable, a nickname —
+  // never validated against anything, per §9's "nickname, not your name".
+  function setUserDisplayName(userId: string, displayName: string | null, now: number): UserRow {
+    const result = sql.prepare(`UPDATE users SET display_name = ? WHERE user_id = ?`).run(displayName, userId);
+    if (result.changes === 0) throw new Error(`setUserDisplayName: no such user ${userId}`);
+    logAuthEvent({ kind: "display_name_set", actorUserId: userId, subjectUserId: userId, detail: null }, now);
+    return getUser(userId)!;
+  }
+
   // Cascade suspend/revoke — and restore — are each exactly this one UPDATE on
   // this one row (§5.3). Descendants are never touched: their EXPLICIT state
   // is unchanged, and getEffectiveState recomputes the worst state on the
@@ -1083,6 +1123,29 @@ export function createDbApi(sql: Database.Database) {
     return row ? rowToClient(row) : null;
   }
 
+  // For AdminPage's identity section (§8.2 scope C: "your devices").
+  function getClientsForUser(userId: string): ClientRow[] {
+    return (
+      sql.prepare(`SELECT * FROM clients WHERE user_id = ? ORDER BY created_at`).all(userId) as Parameters<
+        typeof rowToClient
+      >[0][]
+    ).map(rowToClient);
+  }
+
+  /**
+   * Rename one of `userId`'s own devices. `user_id` is part of the WHERE
+   * clause rather than a separate ownership check, so a client cannot relabel
+   * a device belonging to anyone else even if it guesses a client_id — the
+   * authorization and the update are one statement. Returns false when the
+   * client does not exist or is not this user's.
+   */
+  function setClientLabel(clientId: string, userId: string, label: string | null): boolean {
+    const result = sql
+      .prepare(`UPDATE clients SET label = ? WHERE client_id = ? AND user_id = ?`)
+      .run(label, clientId, userId);
+    return result.changes === 1;
+  }
+
   function registerClient(
     params: { clientId: string; userId: string; pubkeyJwk: string; label?: string | null },
     now: number,
@@ -1191,6 +1254,16 @@ export function createDbApi(sql: Database.Database) {
       throw new Error(`createGrant: issuer is not active (effective state: ${effectiveState})`);
     }
 
+    // §5.2: 'invite' is itself an authority bit, not just a ceiling on what
+    // gets handed to the new user — an issuer without it must not be able to
+    // mint child users at all, even by requesting caps=[] (which would
+    // otherwise pass assertCapsAttenuated's subset check trivially, since the
+    // empty set is a subset of anything). Caught here rather than relying on
+    // the UI gate (§8.2 hides the button, but the server must not trust that).
+    if ((params.kind === "invite" || params.kind === "guest") && !issuer.caps.includes("invite")) {
+      throw new Error(`createGrant: issuer lacks the 'invite' capability required to create a '${params.kind}' grant`);
+    }
+
     let caps: Cap[] | null = null;
     if (params.kind === "invite") {
       caps = params.caps ?? [];
@@ -1230,7 +1303,7 @@ export function createDbApi(sql: Database.Database) {
     return { grantId, secret };
   }
 
-  type RedeemFailureReason = "not_found" | "burned" | "bad_secret" | "expired" | "used";
+  type RedeemFailureReason = "not_found" | "burned" | "bad_secret" | "expired" | "used" | "already_registered";
 
   // The single-use guarantee (§6), verbatim: one atomic UPDATE, checked by
   // `changes === 1`. This is correct under concurrent attempts with no extra
@@ -1277,6 +1350,43 @@ export function createDbApi(sql: Database.Database) {
     if (before.expires_at <= now) return { ok: false, reason: "expired" };
     if (before.uses_remaining <= 0) return { ok: false, reason: "used" };
     return { ok: false, reason: "bad_secret" };
+  }
+
+  // Read-only counterpart to attemptRedeemGrant (§7.4/§8.2 job 3: the join
+  // screen must say plainly what's happening — greeting + voucher's name —
+  // BEFORE the account is created, and redemption is single-use so it can't
+  // be used as a preview). Never touches uses_remaining. A wrong secret DOES
+  // still count against the same `attempts` budget attemptRedeemGrant uses,
+  // for the reason §6.6 gives: the attempt counter, not the secret's entropy,
+  // is the real defense, and a side-effect-free peek must not become a free
+  // oracle for grinding the secret outside that budget.
+  function peekGrant(
+    grantId: string,
+    secret: string,
+    now: number,
+  ): { ok: true; grant: GrantRow; issuerDisplayName: string | null } | { ok: false; reason: RedeemFailureReason } {
+    const grant = getGrant(grantId);
+    if (!grant) return { ok: false, reason: "not_found" };
+    if (grant.attempts >= MAX_GRANT_ATTEMPTS) return { ok: false, reason: "burned" };
+    if (grant.expires_at <= now) return { ok: false, reason: "expired" };
+    if (grant.uses_remaining <= 0) return { ok: false, reason: "used" };
+
+    // GrantRow (getGrant's return type) deliberately omits secret_hash — it's
+    // never meant to leave this module as data — so it's read directly here,
+    // the same way attemptRedeemGrant's WHERE clause checks it without ever
+    // materializing it onto a row object.
+    const hashRow = sql.prepare(`SELECT secret_hash FROM grants WHERE id = ?`).get(grantId) as { secret_hash: string };
+    if (hashSecret(secret) !== hashRow.secret_hash) {
+      sql.prepare(`UPDATE grants SET attempts = attempts + 1 WHERE id = ?`).run(grantId);
+      const after = getGrant(grantId)!;
+      if (after.attempts >= MAX_GRANT_ATTEMPTS && after.uses_remaining > 0) {
+        sql.prepare(`UPDATE grants SET uses_remaining = 0 WHERE id = ?`).run(grantId); // burn
+      }
+      return { ok: false, reason: "bad_secret" };
+    }
+
+    const issuer = getUser(grant.issuer_user_id);
+    return { ok: true, grant, issuerDisplayName: issuer?.display_name ?? null };
   }
 
   interface RedeemEffectParams {
@@ -1362,6 +1472,26 @@ export function createDbApi(sql: Database.Database) {
     // param, say) rolls back the decrement too, rather than burning a grant
     // for which no user/client/key ever actually got created.
     const run = sql.transaction(() => {
+      // Defect fix (job 3, found by job 2): reject invite/guest redemption
+      // from a client that already has an identity on THIS server, before
+      // the atomic decrement. Without this check, applyGrantEffect still
+      // runs createUser() unconditionally — registerClient's
+      // ON CONFLICT(client_id) never reassigns user_id (identity can't be
+      // hijacked), so the client stays attached to its real user, but the
+      // freshly-minted user row is left with no client ever attached to it:
+      // a permanent orphan, invisible to pruning-by-`provisional` for the
+      // 'invite' kind specifically (createUser only sets provisional for
+      // 'guest'). Meanwhile the single-use grant is burned anyway, denying
+      // whoever the link was actually meant for. Checked here (before
+      // attemptRedeemGrant) rather than after, so a misdirected tap costs
+      // nothing. device/share redemption from a known client stay legal —
+      // both act on the caller's own existing identity, not a new one.
+      if (effect.clientId) {
+        const grantPeek = getGrant(grantId);
+        if (grantPeek && (grantPeek.kind === "invite" || grantPeek.kind === "guest") && getClientById(effect.clientId)) {
+          return { ok: false as const, reason: "already_registered" as const };
+        }
+      }
       const attempt = attemptRedeemGrant(grantId, secret, now);
       if (!attempt.ok) return attempt;
       const result = applyGrantEffect(attempt.grant, effect, now);
@@ -1399,10 +1529,10 @@ export function createDbApi(sql: Database.Database) {
     getEntityById, upsertIntegrationResult, getIntegrationResultsSince, getIntegrationResultsForRefresh,
     associateUserKey, removeUserKey, getUserKeys, getOrCreateUserByHomeKey, getSchemaVersion: getSchemaVersionApi, close,
     // Identity & authorization (auth-design.md §12.1, Phase 1 job 1):
-    getUser, findRootUser, createUser, listChildren, listAllUsers, setUserCaps, setUserNote,
+    getUser, findRootUser, createUser, listChildren, listAllUsers, setUserCaps, setUserNote, setUserDisplayName,
     setUserState, getEffectiveState, promoteProvisionalUser, setAuthorizedBy, bootstrapRootUser, grantAdminCap,
-    getClientById, registerClient, touchClientLastSeen, getUserForClient,
-    createGrant, getGrant, attemptRedeemGrant, applyGrantEffect, redeemGrant,
+    getClientById, getClientsForUser, setClientLabel, registerClient, touchClientLastSeen, getUserForClient,
+    createGrant, getGrant, attemptRedeemGrant, peekGrant, applyGrantEffect, redeemGrant,
     logAuthEvent, listAuthEvents, resetServerId,
   };
 }

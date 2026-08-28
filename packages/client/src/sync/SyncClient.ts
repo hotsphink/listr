@@ -10,6 +10,7 @@ import { connectionsForPush, type PushRoutingConnection } from "./pushRouting.js
 import { buildAuthPayload } from "./clientIdentity.js";
 import { exportPublicJwk, getOrCreateClientIdentity, signAuthPayload } from "./clientKeys.js";
 import { assetToSync, assetFromSync, registerAsset } from "./assetStore.js";
+import { GRANT_FAILURE_REASONS } from "./grantReasons.js";
 import {
   setEndpointStatus,
   removeEndpointStatus,
@@ -212,14 +213,24 @@ class EndpointConnection {
 
         if (msg.type === "error" && this.currentPhase !== "ready") {
           const reason = typeof msg.reason === "string" ? msg.reason : undefined;
-          this.setPhase({
-            phase: "error",
-            message: msg.message ?? "Server rejected connection",
-            serverId: this.challengeServerId ?? undefined,
-            authReason: reason,
-          });
-          ws.close();
-          return;
+          // A grant operation's failure (job 3: peek_grant/redeem_grant while
+          // parked in "needs_grant") is recoverable and must NOT tear the
+          // connection down — the entire point of SyncClient.redeemGrant
+          // reaching this connection via allSenders is that the join UI can
+          // show the error and let the user retry on the same connection.
+          // Everything else reaching this branch (protocol/bad_signature/
+          // suspended/revoked, or an unrecognized reason) keeps the original
+          // connection-fatal behavior.
+          if (!reason || !GRANT_FAILURE_REASONS.has(reason)) {
+            this.setPhase({
+              phase: "error",
+              message: msg.message ?? "Server rejected connection",
+              serverId: this.challengeServerId ?? undefined,
+              authReason: reason,
+            });
+            ws.close();
+            return;
+          }
         }
 
         this.callbacks.onMessage(msg);
@@ -342,6 +353,23 @@ class SyncClient {
   // without re-resolving. Covers every ready connection, primary or standby;
   // `primaries` above only covers the ones actually pushing.
   private resolvedHomeKeyByEndpoint = new Map<string, string>();
+  // Job 3 (§6/§7.4/§8.2): at most one listener per endpoint, registered by
+  // the join/grant UI while a peek_grant/redeem_grant/create_grant/
+  // list_clients reply is in flight on that connection. `redeem_grant`'s
+  // success path doesn't need this — it arrives as an ordinary `ok`, already
+  // handled by onReady/upsertServerIdentity, observable reactively via
+  // db.server_identity. This covers everything else: peek results, grant
+  // creation results, the device list, and grant-operation failures (see
+  // GRANT_FAILURE_REASONS — those no longer tear the connection down, so
+  // something has to receive them).
+  // A SET per endpoint, not a single listener: AdminPage keeps a long-lived
+  // listener (device list, display-name confirmation) while GrantModal,
+  // RedeemGrantModal and JoinPage each register their own while open. With a
+  // single slot the modal silently replaced AdminPage's listener on open and
+  // removed it on close, so AdminPage stopped receiving replies for the rest
+  // of its life — its own effect never re-runs, since the endpoint id it
+  // depends on never changed.
+  private grantReplyListeners = new Map<string, Set<(msg: any) => void>>();
   private statusPhases = new Map<string, EndpointPhase>();
   private currentEndpoints: SyncEndpointConfig[] = [];
 
@@ -484,6 +512,92 @@ class SyncClient {
     send({ type: "redeem_grant", grant_id: grantId, secret, label: label ?? null });
   }
 
+  /**
+   * Register interest in the next grant-related reply (peek/create/redeem
+   * failure/clients list) on `endpointId`'s connection. Returns an
+   * unsubscribe function. At most one listener per endpoint — the join/grant
+   * UI only ever has one such operation in flight at a time on a given
+   * connection, so a later registration simply replaces an earlier one
+   * rather than queuing.
+   */
+  onGrantReply(endpointId: string, listener: (msg: any) => void): () => void {
+    let listeners = this.grantReplyListeners.get(endpointId);
+    if (!listeners) {
+      listeners = new Set();
+      this.grantReplyListeners.set(endpointId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      const current = this.grantReplyListeners.get(endpointId);
+      if (!current) return;
+      current.delete(listener);
+      if (current.size === 0) this.grantReplyListeners.delete(endpointId);
+    };
+  }
+
+  /** Read-only preview of a grant (§7.4/§8.2): greeting + voucher's display
+   * name, without consuming a use. Works on a connection parked in
+   * "needs_grant" — see redeemGrant's doc comment on why `allSenders` (not
+   * just `primaries`) is the right map to reach through. */
+  peekGrant(endpointId: string, grantId: string, secret: string): void {
+    const send = this.allSenders.get(endpointId);
+    if (!send) throw new Error(`peekGrant: endpoint ${endpointId} has no open connection`);
+    send({ type: "peek_grant", grant_id: grantId, secret });
+  }
+
+  /** Create a grant (§6, §8.2 scope B) on behalf of the current user of
+   * `endpointId`'s connection — that connection must already be
+   * authenticated (`ready`), since the issuer is implicit in who you are.
+   * Cap/attenuation enforcement happens server-side regardless of what the
+   * UI gates on. */
+  createGrant(
+    endpointId: string,
+    params: {
+      kind: "invite" | "device" | "share" | "guest";
+      caps?: string[];
+      payload?: string;
+      greeting?: string | null;
+      expiresAt?: number;
+      usesRemaining?: number;
+    },
+  ): void {
+    const send = this.allSenders.get(endpointId);
+    if (!send) throw new Error(`createGrant: endpoint ${endpointId} has no open connection`);
+    send({
+      type: "create_grant",
+      kind: params.kind,
+      caps: params.caps,
+      payload: params.payload,
+      greeting: params.greeting ?? null,
+      expires_at: params.expiresAt,
+      uses_remaining: params.usesRemaining,
+    });
+  }
+
+  /** Rename one of this user's own devices (§8.2 scope C). The server replies
+   * with the refreshed `clients` list, so callers need not re-request it. */
+  setClientLabel(endpointId: string, clientId: string, label: string | null): void {
+    const send = this.allSenders.get(endpointId);
+    if (!send) throw new Error(`setClientLabel: endpoint ${endpointId} has no open connection`);
+    send({ type: "set_client_label", client_id: clientId, label });
+  }
+
+  /** Set this user's own display_name (§9.2/§7.4) — a self-chosen nickname,
+   * never validated. */
+  setDisplayName(endpointId: string, displayName: string | null): void {
+    const send = this.allSenders.get(endpointId);
+    if (!send) throw new Error(`setDisplayName: endpoint ${endpointId} has no open connection`);
+    send({ type: "set_display_name", display_name: displayName });
+  }
+
+  /** Ask the server for this user's registered clients ("your devices",
+   * §8.2 scope C). Reply arrives via onGrantReply as `{type:"clients",...}`. */
+  listClients(endpointId: string): void {
+    const send = this.allSenders.get(endpointId);
+    if (!send) throw new Error(`listClients: endpoint ${endpointId} has no open connection`);
+    send({ type: "list_clients" });
+  }
+
   pushEntity(entityType: EntityType, data: unknown): void {
     const d = data as any;
     // Update routing caches so future pushDelete calls can find the key
@@ -595,6 +709,17 @@ class SyncClient {
       display_name: fields.displayName,
       updated_at: Date.now(),
     }).catch(console.error);
+  }
+
+  /** Patch just the display name on an existing server_identity row, leaving
+   * the rest of the handshake-derived fields alone. Separate from
+   * `upsertServerIdentity` because that one writes a whole row, which is right
+   * for the handshake and wrong for a single self-service edit. */
+  private updateServerIdentityDisplayName(serverId: string | null, displayName: string | null): void {
+    if (!serverId) return;
+    db.server_identity
+      .update(serverId, { display_name: displayName, updated_at: Date.now() })
+      .catch(console.error);
   }
 
   // `homeKey` is a parameter, not a single client-wide field, so callers can
@@ -1069,8 +1194,26 @@ class SyncClient {
       this.adoptUserKeys([{ key: msg.key, name: msg.name ?? null }], this.readyServerId.get(epId) ?? null);
     } else if (msg.type === "user_key_removed") {
       removeKeyLocal(msg.key).catch(console.error);
+    } else if (msg.type === "grant_info" || msg.type === "grant_created" || msg.type === "clients" || msg.type === "display_name_set") {
+      // The server is authoritative for the stored name, so record it before
+      // notifying anyone. Without this, server_identity keeps the pre-save
+      // value until the next handshake, and any UI that re-derives its input
+      // from server_identity snaps back to the old name right after saving.
+      if (msg.type === "display_name_set") {
+        this.updateServerIdentityDisplayName(this.readyServerId.get(epId) ?? null, msg.display_name ?? null);
+      }
+      for (const listener of this.grantReplyListeners.get(epId) ?? []) listener(msg);
     } else if (msg.type === "error") {
-      console.error("Sync error:", msg.message);
+      // A grant-operation failure (job 3) reaches here rather than closing
+      // the connection — see EndpointConnection's GRANT_FAILURE_REASONS
+      // check. Forward it to whichever UI is waiting on this endpoint;
+      // anything else (no listener registered) just logs, as before.
+      const reason = typeof msg.reason === "string" ? msg.reason : undefined;
+      if (reason && GRANT_FAILURE_REASONS.has(reason) && this.grantReplyListeners.has(epId)) {
+        for (const listener of this.grantReplyListeners.get(epId) ?? []) listener(msg);
+      } else {
+        console.error("Sync error:", msg.message);
+      }
     }
   }
 

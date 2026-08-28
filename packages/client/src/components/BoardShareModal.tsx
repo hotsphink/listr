@@ -54,8 +54,11 @@ const BoardShareModal: Component<Props> = (props) => {
         payload = { v: 1, sk: key, bid: board.id, bn: board.name };
 
         // Count other boards riding along under this same key so the dialog
-        // can be honest about what `sk` actually hands over (§7.6).
-        const homeKey = (await db.sync_config.get("default"))?.sync_key ?? "";
+        // can be honest about what `sk` actually hands over (§7.6). The
+        // fallback key for an unkeyed board is now the server-assigned home
+        // key (§3.1/§8.1) — sync_config.sync_key is retired.
+        const identities = await db.server_identity.toArray();
+        const homeKey = identities.find((i) => i.state === "active" && i.home_key)?.home_key ?? "";
         const allBoards = await db.boards.toArray();
         const others = allBoards.filter((b) => b.id !== board.id && (b.sync_key ?? homeKey) === key);
         if (!cancelled) setOtherBoardCount(others.length);

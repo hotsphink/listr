@@ -113,6 +113,105 @@ describe("sync server — WS integration", () => {
     return result;
   }
 
+  // Regression: set_display_name / list_clients shipped with no coverage at
+  // all, so nothing caught whether the server actually answers them.
+  // The point of the fan-out: a second device of the SAME user learns about a
+  // device-list change without asking. Previously list_clients was strictly
+  // request/response, so every other machine stayed stale until someone hit
+  // Refresh.
+  it("pushes the refreshed device list to a user's other open connections", async () => {
+    const clientA = await makeTestClient();
+    const wsA = connect();
+    const ok = await registerAndConnect(wsA, clientA);
+
+    // A second device on the SAME user, connected concurrently.
+    const clientB = await makeTestClient();
+    db.registerClient(
+      { clientId: clientB.clientId, userId: ok.user_id, pubkeyJwk: JSON.stringify(clientB.pubkeyJwk) },
+      Date.now(),
+    );
+    const wsB = connect();
+    await handshake(wsB, clientB);
+
+    // A renames a device; B should be told without having asked.
+    const pushedToB = waitForMessage(wsB);
+    wsA.send(JSON.stringify({ type: "set_client_label", client_id: clientA.clientId, label: "desktop" }));
+    const msg = await pushedToB;
+
+    expect(msg.type).toBe("clients");
+    expect(msg.clients.find((c: any) => c.client_id === clientA.clientId).label).toBe("desktop");
+
+    wsA.close();
+    wsB.close();
+  });
+
+  it("set_client_label renames the device and replies with the refreshed list", async () => {
+    const client = await makeTestClient();
+    const ws = connect();
+    await registerAndConnect(ws, client);
+
+    const replyPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "set_client_label", client_id: client.clientId, label: "  desktop  " }));
+    const reply = await replyPromise;
+
+    expect(reply.type).toBe("clients");
+    expect(reply.clients).toHaveLength(1);
+    expect(reply.clients[0].label).toBe("desktop");
+    ws.close();
+  });
+
+  // The ownership check lives in setClientLabel's WHERE clause; this is what
+  // proves it, since the wire message carries an arbitrary client_id.
+  it("set_client_label cannot rename a device belonging to another user", async () => {
+    const client = await makeTestClient();
+    const ws = connect();
+    await registerAndConnect(ws, client);
+
+    // A second user with their own device, untouched by this connection.
+    const otherUser = db.createUser({ authorizedBy: null, caps: ["sync"] }, Date.now());
+    db.registerClient(
+      { clientId: "victim-client-id", userId: otherUser.user_id, pubkeyJwk: "{}", label: "victim laptop" },
+      Date.now(),
+    );
+
+    const replyPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "set_client_label", client_id: "victim-client-id", label: "pwned" }));
+    const reply = await replyPromise;
+
+    expect(reply.type).toBe("error");
+    expect(reply.reason).toBe("bad_request");
+    expect(db.getClientById("victim-client-id")?.label).toBe("victim laptop");
+    ws.close();
+  });
+
+  it("set_display_name persists the name and replies display_name_set", async () => {
+    const client = await makeTestClient();
+    const ws = connect();
+    await registerAndConnect(ws, client);
+
+    const replyPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "set_display_name", display_name: "  Steve  " }));
+    const reply = await replyPromise;
+
+    expect(reply.type).toBe("display_name_set");
+    expect(reply.display_name).toBe("Steve");
+    ws.close();
+  });
+
+  it("set_display_name with a blank string clears the name", async () => {
+    const client = await makeTestClient();
+    const ws = connect();
+    await registerAndConnect(ws, client);
+
+    const replyPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "set_display_name", display_name: "   " }));
+    const reply = await replyPromise;
+
+    expect(reply.type).toBe("display_name_set");
+    expect(reply.display_name).toBeNull();
+    ws.close();
+  });
+
   it("completes a hello/challenge/auth handshake for a registered client and returns ok", async () => {
     const client = await makeTestClient();
     const ws = connect();
@@ -439,6 +538,21 @@ describe("redeem_grant (§6, §7.2) — registration plumbing", () => {
     expect(reply.type).toBe("needs_grant");
   }
 
+  // Registers a brand-new client as a fresh root-authorized user, then
+  // completes its handshake — mirrors the outer describe block's helper of
+  // the same name, duplicated locally since this block has its own
+  // db/port/connect fixtures.
+  async function registerAndConnect(ws: WebSocket, client: TestClient): Promise<any> {
+    const root = db.bootstrapRootUser(Date.now());
+    const user = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
+    db.registerClient({ clientId: client.clientId, userId: user.user_id, pubkeyJwk: JSON.stringify(client.pubkeyJwk) }, Date.now());
+    const challenge = await sendHello(ws, client);
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const p = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    return p;
+  }
+
   it("an invite grant registers a brand-new client and returns ok on the same connection", async () => {
     const root = db.bootstrapRootUser(Date.now());
     const { grantId, secret } = db.createGrant({ kind: "invite", issuerUserId: root.user_id, caps: ["sync"] }, Date.now());
@@ -494,6 +608,318 @@ describe("redeem_grant (§6, §7.2) — registration plumbing", () => {
     const redeemed = await redeemPromise;
     expect(redeemed.type).toBe("ok");
     expect(db.getUserKeys(alice.user_id).map((k) => k.key)).toContain("shared-board-key");
+    ws.close();
+  });
+
+  // Defect fix (job 3, found by job 2): see db.test.ts for the db-layer
+  // coverage of the fix itself. This exercises it over the real WS wire path,
+  // where the "already has an identity" client is a full second live
+  // connection that has already completed its own handshake — the shape a
+  // misdirected tap would actually take.
+  it("rejects an invite grant redeemed by an already-registered client over the wire, without burning it", async () => {
+    const root = db.bootstrapRootUser(Date.now());
+    const { grantId, secret } = db.createGrant({ kind: "invite", issuerUserId: root.user_id, caps: ["sync"] }, Date.now());
+
+    // Someone already has an account on this server (unrelated to the grant).
+    const already = await makeTestClient();
+    const wsAlready = connect();
+    await registerAndConnect(wsAlready, already);
+
+    // That same client mistakenly taps an invite link meant for someone else.
+    const errPromise = waitForMessage(wsAlready);
+    wsAlready.send(JSON.stringify({ type: "redeem_grant", grant_id: grantId, secret }));
+    const err = await errPromise;
+    expect(err.type).toBe("error");
+    expect(err.reason).toBe("already_registered");
+    wsAlready.close();
+
+    // The grant is untouched — the intended recipient can still use it.
+    const recipient = await makeTestClient();
+    const wsRecipient = connect();
+    await getToNeedsGrant(wsRecipient, recipient);
+    const okPromise = waitForMessage(wsRecipient);
+    wsRecipient.send(JSON.stringify({ type: "redeem_grant", grant_id: grantId, secret }));
+    const ok = await okPromise;
+    expect(ok.type).toBe("ok");
+    wsRecipient.close();
+  });
+});
+
+describe("peek_grant / create_grant (§7.4/§8.2 job 3)", () => {
+  let db: DbApi;
+  let handle: SyncServerHandle;
+  let port: number;
+
+  beforeEach(async () => {
+    db = openDb(":memory:");
+    handle = createSyncServer(db, { tls: false });
+    await new Promise<void>((resolve) => handle.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    port = (handle.httpServer.address() as AddressInfo).port;
+  });
+
+  afterEach(() => {
+    handle.stop();
+  });
+
+  function connect(): WebSocket {
+    return new WebSocket(`ws://127.0.0.1:${port}/sync`);
+  }
+
+  it("peek_grant reveals the greeting and voucher's display name without consuming the grant", async () => {
+    const root = db.bootstrapRootUser(Date.now());
+    db.setUserDisplayName(root.user_id, "Steve", Date.now());
+    const { grantId, secret } = db.createGrant(
+      { kind: "guest", issuerUserId: root.user_id, payload: "shopping-key", greeting: "Groceries" },
+      Date.now(),
+    );
+
+    const client = await makeTestClient();
+    const ws = connect();
+    await waitForOpen(ws);
+    const infoPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "peek_grant", grant_id: grantId, secret }));
+    const info = await infoPromise;
+    expect(info.type).toBe("grant_info");
+    expect(info.greeting).toBe("Groceries");
+    expect(info.issuer_display_name).toBe("Steve");
+
+    // Still fully redeemable — peeking is not a consuming action.
+    const challengePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({
+      type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys: [],
+    }));
+    const challenge = await challengePromise;
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const needsGrantPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    const needsGrant = await needsGrantPromise;
+    expect(needsGrant.type).toBe("needs_grant");
+    const redeemResultPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "redeem_grant", grant_id: grantId, secret }));
+    const result = await redeemResultPromise;
+    expect(result.type).toBe("ok");
+    ws.close();
+  });
+
+  it("create_grant is rejected for a user lacking the 'invite' cap", async () => {
+    const root = db.bootstrapRootUser(Date.now());
+    const syncOnly = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
+    const client = await makeTestClient();
+    db.registerClient({ clientId: client.clientId, userId: syncOnly.user_id, pubkeyJwk: JSON.stringify(client.pubkeyJwk) }, Date.now());
+
+    const ws = connect();
+    await waitForOpen(ws);
+    const challengePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys: [] }));
+    const challenge = await challengePromise;
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const okPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    const ok = await okPromise;
+    expect(ok.type).toBe("ok");
+
+    const errPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "create_grant", kind: "invite", caps: ["sync"] }));
+    const err = await errPromise;
+    expect(err.type).toBe("error");
+    ws.close();
+  });
+
+  it("create_grant succeeds for a user with 'invite' and the resulting grant is redeemable", async () => {
+    const root = db.bootstrapRootUser(Date.now());
+    const client = await makeTestClient();
+    db.registerClient({ clientId: client.clientId, userId: root.user_id, pubkeyJwk: JSON.stringify(client.pubkeyJwk) }, Date.now());
+
+    const ws = connect();
+    await waitForOpen(ws);
+    const challengePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys: [] }));
+    const challenge = await challengePromise;
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const okPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    await okPromise;
+
+    const createdPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "create_grant", kind: "invite", caps: ["sync"], greeting: "Welcome!" }));
+    const created = await createdPromise;
+    expect(created.type).toBe("grant_created");
+    expect(created.greeting).toBe("Welcome!");
+    ws.close();
+
+    const redeemer = await makeTestClient();
+    const wsRedeem = connect();
+    await getToNeedsGrantLocal(wsRedeem, redeemer);
+    const redeemPromise = waitForMessage(wsRedeem);
+    wsRedeem.send(JSON.stringify({ type: "redeem_grant", grant_id: created.grant_id, secret: created.secret }));
+    const redeemed = await redeemPromise;
+    expect(redeemed.type).toBe("ok");
+    wsRedeem.close();
+
+    async function getToNeedsGrantLocal(sock: WebSocket, c: TestClient): Promise<void> {
+      await waitForOpen(sock);
+      const chPromise = waitForMessage(sock);
+      sock.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: c.clientId, pubkey_jwk: c.pubkeyJwk, keys: [] }));
+      const ch = await chPromise;
+      const s = await signFor(c, ch.server_id, ch.nonce);
+      const p = waitForMessage(sock);
+      sock.send(JSON.stringify({ type: "auth", sig: s }));
+      const reply = await p;
+      expect(reply.type).toBe("needs_grant");
+    }
+  });
+});
+
+describe("§11.1 basic limits (job 3)", () => {
+  let db: DbApi;
+  let handle: SyncServerHandle;
+  let port: number;
+
+  beforeEach(async () => {
+    db = openDb(":memory:");
+    handle = createSyncServer(db, { tls: false });
+    await new Promise<void>((resolve) => handle.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    port = (handle.httpServer.address() as AddressInfo).port;
+  });
+
+  afterEach(() => {
+    handle.stop();
+  });
+
+  function connect(): WebSocket {
+    return new WebSocket(`ws://127.0.0.1:${port}/sync`);
+  }
+
+  it("closes a connection that sends an oversized frame (maxPayload, ~1MB)", async () => {
+    const ws = connect();
+    await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
+    const closePromise = new Promise<number>((resolve) => ws.once("close", (code: number) => resolve(code)));
+    // A hello whose pubkey_jwk carries a > 1MB junk field — still valid JSON,
+    // so this exercises maxPayload rather than the JSON-parse error path.
+    const huge = "x".repeat(2 * 1024 * 1024);
+    ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: "c", pubkey_jwk: { junk: huge }, keys: [] }));
+    const code = await closePromise;
+    // `ws` terminates the connection abnormally when maxPayload is exceeded.
+    expect(code).not.toBe(1000);
+  });
+
+  it("closes a connection that exceeds the per-connection message rate limit", async () => {
+    const client = await makeTestClient();
+    const ws = connect();
+    const root = db.bootstrapRootUser(Date.now());
+    const user = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
+    db.registerClient({ clientId: client.clientId, userId: user.user_id, pubkeyJwk: JSON.stringify(client.pubkeyJwk) }, Date.now());
+
+    await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
+    const challengePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys: [] }));
+    const challenge = await challengePromise;
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const okPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    await okPromise;
+
+    const closePromise = new Promise<number>((resolve) => ws.once("close", (code: number) => resolve(code)));
+    // Drain the burst allowance. Unrecognized types fall through the handler
+    // chain without a reply, but are still counted — the limiter runs before
+    // anything is parsed — so this stays cheap.
+    for (let i = 0; i < 5200; i++) {
+      ws.send(JSON.stringify({ type: "noop" }));
+    }
+    const code = await closePromise;
+    expect(code).toBe(1008);
+  });
+
+  // The regression that motivated the token bucket: doInitialSync sends one
+  // push_entity PER ENTITY, so a fixed per-second window closed the socket
+  // mid-sync for any client with more than a window's worth of local data —
+  // which then retried and looped forever.
+  it("allows an initial-sync-sized burst without closing the connection", async () => {
+    const client = await makeTestClient();
+    const ws = connect();
+    const root = db.bootstrapRootUser(Date.now());
+    const user = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
+    db.registerClient({ clientId: client.clientId, userId: user.user_id, pubkeyJwk: JSON.stringify(client.pubkeyJwk) }, Date.now());
+
+    await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
+    const challengePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys: [] }));
+    const challenge = await challengePromise;
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const okPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    await okPromise;
+
+    let closed = false;
+    ws.once("close", () => { closed = true; });
+    for (let i = 0; i < 1000; i++) {
+      ws.send(JSON.stringify({
+        type: "push_entity",
+        entity_type: "board",
+        sync_key: "burst-key",
+        data: { id: `b${i}`, updated_at: Date.now(), name: `Board ${i}` },
+      }));
+    }
+    await sleep(300);
+    expect(closed).toBe(false);
+    ws.close();
+  });
+
+  it("rejects a new connection from an IP already at the per-IP connection limit", async () => {
+    const sockets: WebSocket[] = [];
+    try {
+      for (let i = 0; i < 20; i++) {
+        const ws = connect();
+        await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
+        sockets.push(ws);
+      }
+      const overflow = new WebSocket(`ws://127.0.0.1:${port}/sync`);
+      const rejected = await new Promise<boolean>((resolve) => {
+        overflow.once("unexpected-response", (_req, res) => resolve(res.statusCode === 429));
+        overflow.once("open", () => resolve(false));
+        overflow.once("error", () => resolve(true));
+      });
+      expect(rejected).toBe(true);
+    } finally {
+      for (const ws of sockets) ws.close();
+    }
+  });
+
+  it("pull response omits a key that would exceed the total entity budget, leaving its since-cursor untouched", async () => {
+    const client = await makeTestClient();
+    const root = db.bootstrapRootUser(Date.now());
+    const user = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
+    db.registerClient({ clientId: client.clientId, userId: user.user_id, pubkeyJwk: JSON.stringify(client.pubkeyJwk) }, Date.now());
+
+    // One key with more entities than the whole per-pull budget allows...
+    const bigKey = "big-key";
+    for (let i = 0; i < 5001; i++) {
+      db.upsertEntity("board", { id: `b${i}`, updated_at: Date.now(), name: "x" }, bigKey);
+    }
+    // ...and a second, small key that should be unaffected.
+    const smallKey = "small-key";
+    db.upsertEntity("board", { id: "s1", updated_at: Date.now(), name: "small" }, smallKey);
+
+    const ws = connect();
+    await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
+    const challengePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys: [bigKey, smallKey] }));
+    const challenge = await challengePromise;
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const okPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    await okPromise;
+
+    const snapshotPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "pull", keys: [{ key: bigKey, since: 0 }, { key: smallKey, since: 0 }] }));
+    const snapshot = await snapshotPromise;
+    expect(snapshot.type).toBe("snapshot");
+    // The big key was skipped wholesale rather than truncated.
+    expect(snapshot.boards.some((b: any) => b.id.startsWith("b"))).toBe(false);
+    expect(snapshot.server_times[bigKey]).toBeUndefined();
+    // The small key came through untouched.
+    expect(snapshot.boards.some((b: any) => b.id === "s1")).toBe(true);
+    expect(snapshot.server_times[smallKey]).toBeDefined();
     ws.close();
   });
 });

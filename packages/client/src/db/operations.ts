@@ -343,6 +343,47 @@ export async function removeByKey(syncKey: string): Promise<void> {
 }
 
 /**
+ * Count of local boards the join screen's keep-or-discard prompt (§8.2/§7.4)
+ * would remove if the user chooses "discard" — boards this device made
+ * before ever registering with a server: no sync_key of their own, and never
+ * bound to any server. A board with a custom sync_key (something this device
+ * is SUBSCRIBED to via a share link) or already bound elsewhere isn't "what
+ * they made offline" — it's someone else's namespace this device merely
+ * joined, and discard must never touch it. Used to decide whether to show
+ * the prompt at all (nothing to ask about if this is 0).
+ */
+export async function countUnboundLocalBoards(): Promise<number> {
+  const [boards, bindings] = await Promise.all([db.boards.toArray(), db.board_server_binding.toArray()]);
+  const boundIds = new Set(bindings.filter((b) => b.server_id !== null).map((b) => b.board_id));
+  return boards.filter((b) => !b.sync_key && !boundIds.has(b.id)).length;
+}
+
+/**
+ * The "discard" half of the join screen's keep-or-discard prompt. Wipes
+ * exactly the boards countUnboundLocalBoards counts — no tombstones, no
+ * sync pushes, since these boards were never shared with anyone and there is
+ * nothing to reconcile. ("Keep" is the absence of this call: an unbound
+ * board is picked up automatically by the normal first-sync path once the
+ * new home key exists, via SyncClient.bindUnboundBoards.)
+ */
+export async function discardUnboundLocalBoards(): Promise<void> {
+  const [boards, bindings] = await Promise.all([db.boards.toArray(), db.board_server_binding.toArray()]);
+  const boundIds = new Set(bindings.filter((b) => b.server_id !== null).map((b) => b.board_id));
+  const toDelete = boards.filter((b) => !b.sync_key && !boundIds.has(b.id));
+  const ids = toDelete.map((b) => b.id);
+  if (!ids.length) return;
+
+  const lists = await db.lists.where("board_id").anyOf(ids).toArray();
+  const listIds = lists.map((l) => l.id);
+  await db.transaction("rw", [db.boards, db.lists, db.items, db.board_server_binding], async () => {
+    if (listIds.length) await db.items.where("list_id").anyOf(listIds).delete();
+    if (listIds.length) await db.lists.bulkDelete(listIds);
+    await db.boards.bulkDelete(ids);
+    await db.board_server_binding.bulkDelete(ids);
+  });
+}
+
+/**
  * Label a sync_key as a deliberate board group (as opposed to an ordinary
  * individually-shared board), so the sidebar gives it its own group heading.
  * Also tells the server so the name/association follows the user's other devices.

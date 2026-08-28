@@ -731,6 +731,24 @@ describe("grants — attenuation", () => {
     db.setUserState(root.user_id, "suspended", now); // cascades to child
     expect(() => db.createGrant({ kind: "invite", issuerUserId: child.user_id, caps: [] }, now)).toThrow();
   });
+
+  // A user without 'invite' requesting caps=[] would otherwise sail through
+  // assertCapsAttenuated's subset check (the empty set is a subset of
+  // anything) — 'invite' is itself the authority bit that must be checked,
+  // not just a ceiling on what the new user receives.
+  it("rejects an invite/guest grant from an issuer who lacks the 'invite' cap, even requesting caps=[]", () => {
+    const now = Date.now();
+    const syncOnly = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    expect(() => db.createGrant({ kind: "invite", issuerUserId: syncOnly.user_id, caps: [] }, now)).toThrow(/invite/);
+    expect(() => db.createGrant({ kind: "guest", issuerUserId: syncOnly.user_id, payload: "k" }, now)).toThrow(/invite/);
+  });
+
+  it("allows device/share grants from an issuer with only 'sync'", () => {
+    const now = Date.now();
+    const syncOnly = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    expect(() => db.createGrant({ kind: "device", issuerUserId: syncOnly.user_id }, now)).not.toThrow();
+    expect(() => db.createGrant({ kind: "share", issuerUserId: syncOnly.user_id, payload: "k" }, now)).not.toThrow();
+  });
 });
 
 describe("grants — redemption", () => {
@@ -855,6 +873,62 @@ describe("grants — redemption", () => {
     expect(db.getUserKeys(outcome.result.user.user_id)).toEqual([{ key: "shopping-list-key", name: null }]);
   });
 
+  // Defect fix (job 3, found by job 2): an already-registered client redeeming
+  // a foreign invite/guest grant used to still burn the single use AND leave
+  // an orphaned, unparented-by-nobody user row behind (registerClient's
+  // ON CONFLICT never reassigns user_id, so the new user just never gets a
+  // client attached). Both must now be prevented.
+  it("rejects invite redemption from a client that already has an identity, without consuming the grant or creating an orphan", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const alreadyUserId = db.createUser({ authorizedBy: null, caps: ["sync"] }, now).user_id;
+    db.registerClient({ clientId: "already-registered-client", userId: alreadyUserId, pubkeyJwk: "{}" }, now);
+
+    const { grantId, secret } = db.createGrant({ kind: "invite", issuerUserId: issuer.user_id, caps: ["sync"] }, now);
+    const usersBefore = db.listAllUsers().length;
+
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "already-registered-client", pubkeyJwk: "{}" }, now);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toBe("already_registered");
+
+    // No orphan user was created.
+    expect(db.listAllUsers().length).toBe(usersBefore);
+    // The identity wasn't hijacked — the client is still attached to its own user.
+    expect(db.getUserForClient("already-registered-client")?.user.user_id).toBe(alreadyUserId);
+    // The grant is NOT burned — the intended recipient can still use it.
+    const retry = db.redeemGrant(grantId, secret, { clientId: "fresh-client", pubkeyJwk: "{}" }, now);
+    expect(retry.ok).toBe(true);
+  });
+
+  it("rejects guest redemption from a client that already has an identity, the same as invite", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const alreadyUserId = db.createUser({ authorizedBy: null, caps: ["sync"] }, now).user_id;
+    db.registerClient({ clientId: "already-registered", userId: alreadyUserId, pubkeyJwk: "{}" }, now);
+    const { grantId, secret } = db.createGrant({ kind: "guest", issuerUserId: issuer.user_id, payload: "k" }, now);
+
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "already-registered", pubkeyJwk: "{}" }, now);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toBe("already_registered");
+  });
+
+  it("device/share redemption from an already-registered client stays legal", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const alreadyUserId = db.createUser({ authorizedBy: null, caps: ["sync"] }, now).user_id;
+    db.registerClient({ clientId: "known-client", userId: alreadyUserId, pubkeyJwk: "{}" }, now);
+
+    const deviceGrant = db.createGrant({ kind: "device", issuerUserId: issuer.user_id }, now);
+    const deviceOutcome = db.redeemGrant(deviceGrant.grantId, deviceGrant.secret, { clientId: "known-client", pubkeyJwk: "{}" }, now);
+    expect(deviceOutcome.ok).toBe(true);
+
+    const shareGrant = db.createGrant({ kind: "share", issuerUserId: issuer.user_id, payload: "k" }, now);
+    const shareOutcome = db.redeemGrant(shareGrant.grantId, shareGrant.secret, { existingUserId: alreadyUserId }, now);
+    expect(shareOutcome.ok).toBe(true);
+  });
+
   it("promote clears provisional and can add caps, without re-creating the user", () => {
     const now = Date.now();
     const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
@@ -872,9 +946,62 @@ describe("grants — redemption", () => {
   });
 });
 
+describe("peekGrant — read-only preview (§7.4/§8.2 job 3)", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("reveals the greeting and issuer's display name without consuming a use", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"], displayName: "Steve" }, now);
+    const { grantId, secret } = db.createGrant(
+      { kind: "guest", issuerUserId: issuer.user_id, payload: "k", greeting: "Dad's shopping list" },
+      now,
+    );
+
+    const peek = db.peekGrant(grantId, secret, now);
+    expect(peek.ok).toBe(true);
+    if (!peek.ok) return;
+    expect(peek.grant.greeting).toBe("Dad's shopping list");
+    expect(peek.issuerDisplayName).toBe("Steve");
+
+    // Still fully redeemable afterward — peek didn't touch uses_remaining.
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "c", pubkeyJwk: "{}" }, now);
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("shares the same attempt budget as attemptRedeemGrant — cannot be used as a free brute-force oracle", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "guest", issuerUserId: issuer.user_id, payload: "k" }, now);
+
+    for (let i = 0; i < 10; i++) {
+      const attempt = db.peekGrant(grantId, "wrong", now);
+      expect(attempt.ok).toBe(false);
+    }
+    // Burned — even the real secret is now refused, via peek or redemption.
+    const peek = db.peekGrant(grantId, secret, now);
+    expect(peek.ok).toBe(false);
+    if (!peek.ok) expect(peek.reason).toBe("burned");
+    const redeem = db.attemptRedeemGrant(grantId, secret, now);
+    expect(redeem.ok).toBe(false);
+  });
+});
+
 describe("clients", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
+
+  it("getClientsForUser lists only that user's own clients", () => {
+    const now = Date.now();
+    const alice = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const bob = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    db.registerClient({ clientId: "alice-phone", userId: alice.user_id, pubkeyJwk: "{}", label: "phone" }, now);
+    db.registerClient({ clientId: "alice-laptop", userId: alice.user_id, pubkeyJwk: "{}" }, now);
+    db.registerClient({ clientId: "bobs-tablet", userId: bob.user_id, pubkeyJwk: "{}" }, now);
+
+    const aliceClients = db.getClientsForUser(alice.user_id).map((c) => c.client_id).sort();
+    expect(aliceClients).toEqual(["alice-laptop", "alice-phone"]);
+  });
 
   it("getUserForClient returns the user's effective state, reflecting a cascaded suspension", () => {
     const now = Date.now();
@@ -889,6 +1016,20 @@ describe("clients", () => {
 
   it("returns null for an unknown client_id", () => {
     expect(db.getUserForClient("nonexistent")).toBeNull();
+  });
+});
+
+describe("users — self-set display name", () => {
+  let db: DbApi;
+  beforeEach(() => { db = openDb(":memory:"); });
+
+  it("sets and reads back a user's own display_name", () => {
+    const now = Date.now();
+    const user = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    expect(user.display_name).toBeNull();
+    const updated = db.setUserDisplayName(user.user_id, "Steve", now);
+    expect(updated.display_name).toBe("Steve");
+    expect(db.getUser(user.user_id)?.display_name).toBe("Steve");
   });
 });
 

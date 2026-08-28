@@ -1,9 +1,9 @@
-import { type Component, createSignal, createEffect, onCleanup, Show } from "solid-js";
-import jsQR from "jsqr";
+import { type Component, createSignal, createEffect, Show } from "solid-js";
 import Modal from "./Modal.js";
 import { db } from "../db/database.js";
 import { markBoardGroup } from "../db/operations.js";
 import { parseShareInput, type SharePayload } from "../sync/shareToken.js";
+import { useQrScanner } from "../hooks/useQrScanner.js";
 
 interface Props {
   open: boolean;
@@ -14,11 +14,22 @@ const ScanShareModal: Component<Props> = (props) => {
   let videoRef!: HTMLVideoElement;
   let canvasRef!: HTMLCanvasElement;
 
-  const [cameraError, setCameraError] = createSignal<string | null>(null);
   const [scanned, setScanned] = createSignal<SharePayload | null>(null);
   const [manualKey, setManualKey] = createSignal("");
   const [manualError, setManualError] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
+
+  const scanner = useQrScanner({
+    videoRef: () => videoRef,
+    canvasRef: () => canvasRef,
+    onDecode: (text) => {
+      const payload = parseShareInput(text);
+      if (payload) {
+        scanner.stop();
+        setScanned(payload);
+      }
+    },
+  });
 
   // Use createEffect (not onMount) so we react every time props.open becomes true.
   // onMount fires once at component mount, but ScanShareModal is always in the tree,
@@ -27,60 +38,10 @@ const ScanShareModal: Component<Props> = (props) => {
     if (!props.open) return;
 
     // Reset state every time the modal opens
-    setCameraError(null);
     setScanned(null);
     setManualKey("");
     setManualError(null);
-    let active = true;
-    let localStream: MediaStream | null = null;
-
-    const scan = () => {
-      if (!active || !videoRef || videoRef.readyState < videoRef.HAVE_ENOUGH_DATA) {
-        if (active) requestAnimationFrame(scan);
-        return;
-      }
-      const ctx = canvasRef?.getContext("2d", { willReadFrequently: true });
-      if (!ctx) { if (active) requestAnimationFrame(scan); return; }
-      canvasRef.width = videoRef.videoWidth;
-      canvasRef.height = videoRef.videoHeight;
-      ctx.drawImage(videoRef, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvasRef.width, canvasRef.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height);
-      if (code) {
-        const payload = parseShareInput(code.data);
-        if (payload) {
-          active = false;
-          localStream?.getTracks().forEach((t) => t.stop());
-          localStream = null;
-          setScanned(payload);
-          return;
-        }
-      }
-      if (active) requestAnimationFrame(scan);
-    };
-
-    (async () => {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
-        if (!active) { localStream.getTracks().forEach((t) => t.stop()); return; }
-        videoRef.srcObject = localStream;
-        // Set muted as a DOM property — the HTML attribute alone is unreliable in Firefox.
-        videoRef.muted = true;
-        await videoRef.play();
-        requestAnimationFrame(scan);
-      } catch (e) {
-        if (active) {
-          active = false;
-          setCameraError(e instanceof Error ? e.message : String(e));
-        }
-      }
-    })();
-
-    onCleanup(() => {
-      active = false;
-      localStream?.getTracks().forEach((t) => t.stop());
-      if (videoRef) videoRef.srcObject = null;
-    });
+    scanner.start();
   });
 
   const acceptShare = async (payload: SharePayload) => {
@@ -105,40 +66,8 @@ const ScanShareModal: Component<Props> = (props) => {
     setManualKey("");
     setManualError(null);
     // Clearing scanned will re-render the camera section; the createEffect won't
-    // re-trigger (props.open hasn't changed), so we restart the camera manually.
-    setCameraError(null);
-    let active = true;
-    let localStream: MediaStream | null = null;
-    const scan = () => {
-      if (!active || !videoRef || videoRef.readyState < videoRef.HAVE_ENOUGH_DATA) {
-        if (active) requestAnimationFrame(scan);
-        return;
-      }
-      const ctx = canvasRef?.getContext("2d", { willReadFrequently: true });
-      if (!ctx) { if (active) requestAnimationFrame(scan); return; }
-      canvasRef.width = videoRef.videoWidth;
-      canvasRef.height = videoRef.videoHeight;
-      ctx.drawImage(videoRef, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvasRef.width, canvasRef.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height);
-      if (code) {
-        const payload = parseShareInput(code.data);
-        if (payload) { active = false; localStream?.getTracks().forEach(t => t.stop()); setScanned(payload); return; }
-      }
-      if (active) requestAnimationFrame(scan);
-    };
-    (async () => {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
-        if (!active) { localStream.getTracks().forEach(t => t.stop()); return; }
-        videoRef.srcObject = localStream;
-        videoRef.muted = true;
-        await videoRef.play();
-        requestAnimationFrame(scan);
-      } catch (e) {
-        if (active) { active = false; setCameraError(e instanceof Error ? e.message : String(e)); }
-      }
-    })();
+    // re-trigger (props.open hasn't changed), so restart the camera manually.
+    scanner.start();
   };
 
   return (
@@ -147,10 +76,10 @@ const ScanShareModal: Component<Props> = (props) => {
 
       <Show when={!scanned()}>
         <Show
-          when={!cameraError()}
+          when={!scanner.cameraError()}
           fallback={
             <div class="scan-no-camera field-hint">
-              Camera unavailable: {cameraError()}
+              Camera unavailable: {scanner.cameraError()}
             </div>
           }
         >
