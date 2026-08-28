@@ -257,7 +257,9 @@ export interface CreateBoardOptions {
   macros?: Record<string, string>;
   syncKey?: string;
   integrations?: Integration[];
-  /** Pass when this board is starting a new named board group, so the key is associated with the right name from the very first (and only) associate_key call. */
+  /** Pass when this board is starting a new named board group, so the key is
+   * associated with the right name from the first and only associate_key
+   * call. */
   groupName?: string;
 }
 
@@ -283,11 +285,11 @@ export async function createBoard(
     schema_version: ENTITY_SCHEMA_VERSION,
   };
   await db.boards.add(board);
-  // Bind this new board to whichever server is currently primary (§3.3.1
-  // item 4, second bullet: "a board created while a server is primary binds
-  // to that server"). If none is primary yet (offline, or still connecting),
-  // it's left unbound — placed on this board's first successful connect
-  // instead, via SyncClient.bindUnboundBoards.
+  // Bind this new board to whichever server is currently primary: a board
+  // created while a server is primary binds to that server. With none primary,
+  // because the client is offline or still connecting, the board stays unbound
+  // and SyncClient.bindUnboundBoards places it on its first successful
+  // connect.
   const primaryServerId = syncClient.getPrimaryServerId();
   if (primaryServerId) {
     await db.board_server_binding.put({ board_id: board.id, server_id: primaryServerId });
@@ -343,14 +345,14 @@ export async function removeByKey(syncKey: string): Promise<void> {
 }
 
 /**
- * Count of local boards the join screen's keep-or-discard prompt (§8.2/§7.4)
- * would remove if the user chooses "discard" — boards this device made
- * before ever registering with a server: no sync_key of their own, and never
- * bound to any server. A board with a custom sync_key (something this device
- * is SUBSCRIBED to via a share link) or already bound elsewhere isn't "what
- * they made offline" — it's someone else's namespace this device merely
- * joined, and discard must never touch it. Used to decide whether to show
- * the prompt at all (nothing to ask about if this is 0).
+ * Count of local boards the join screen's keep-or-discard prompt would remove
+ * if the user chooses "discard": boards this device made before registering
+ * with any server, having no sync_key of their own and no binding to a server.
+ * A board with a custom sync_key, meaning one this device is SUBSCRIBED to via
+ * a share link, or one already bound elsewhere, is not "what they made
+ * offline". It is someone else's namespace this device merely joined, and
+ * discard must never touch it. Also decides whether to show the prompt at all,
+ * since 0 means there is nothing to ask about.
  */
 export async function countUnboundLocalBoards(): Promise<number> {
   const [boards, bindings] = await Promise.all([db.boards.toArray(), db.board_server_binding.toArray()]);
@@ -360,11 +362,11 @@ export async function countUnboundLocalBoards(): Promise<number> {
 
 /**
  * The "discard" half of the join screen's keep-or-discard prompt. Wipes
- * exactly the boards countUnboundLocalBoards counts — no tombstones, no
+ * exactly the boards countUnboundLocalBoards counts, with no tombstones and no
  * sync pushes, since these boards were never shared with anyone and there is
- * nothing to reconcile. ("Keep" is the absence of this call: an unbound
- * board is picked up automatically by the normal first-sync path once the
- * new home key exists, via SyncClient.bindUnboundBoards.)
+ * nothing to reconcile. "Keep" is the absence of this call: the normal
+ * first-sync path picks an unbound board up automatically once the new home
+ * key exists, via SyncClient.bindUnboundBoards.
  */
 export async function discardUnboundLocalBoards(): Promise<void> {
   const [boards, bindings] = await Promise.all([db.boards.toArray(), db.board_server_binding.toArray()]);

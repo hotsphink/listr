@@ -6,11 +6,9 @@ export interface SharePayload {
 }
 
 /** Generate a fresh random sync key, suitable for a new individual share or board group.
- * 16 bytes (128 bits) — raised from 8 (auth-design.md §2.1 defect 4): a sync
- * key is a bearer capability sent in cleartext and checked only by the
- * server holding it, so 64 bits was acceptable-ish as an unguessable
- * namespace but too weak for anything auth-adjacent now that the server
- * treats it as part of a user's identity-scoped key set. */
+ * 16 bytes, or 128 bits. A sync key is a bearer capability sent in cleartext
+ * and checked only by the server holding it, and the server treats it as part
+ * of a user's identity-scoped key set, so anything narrower is too weak. */
 export function generateShareKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -62,7 +60,7 @@ export function parseShareInput(raw: string): SharePayload | null {
     if (obj.v === 1 && typeof obj.sk === "string" && obj.sk) return obj as SharePayload;
   } catch { /* not JSON */ }
 
-  // Bare hex sync key — synthesise a minimal payload
+  // Bare hex sync key: synthesise a minimal payload
   if (/^[a-f0-9]{8,}$/i.test(s)) return { v: 1, sk: s, bid: "", bn: "" };
 
   return null;

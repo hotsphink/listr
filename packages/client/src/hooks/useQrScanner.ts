@@ -2,29 +2,26 @@ import { createSignal, onCleanup } from "solid-js";
 import jsQR from "jsqr";
 
 /**
- * Shared camera + jsQR scanning loop (getUserMedia over a <video>, decoded
- * frame-by-frame onto a hidden <canvas>). Originally lived inline in
- * ScanShareModal.tsx (board/group share links); extracted so the join screen
- * (auth-design.md §7's guest-link flow) and any future QR consumer reuse the
- * same camera plumbing instead of a second copy of this loop (task explicitly
- * calls this out — ScanShareModal "already does jsqr over getUserMedia;
- * reuse it rather than writing a second scanner").
+ * Shared camera and jsQR scanning loop: getUserMedia over a <video>, decoded
+ * frame by frame onto a hidden <canvas>. Every QR consumer shares this one
+ * copy of the camera plumbing, so ScanShareModal (board and group share links)
+ * and the join screen's guest-link flow do not each carry their own scanner.
  *
- * Deliberately NOT tied to a Solid `createEffect` on some "open" prop the way
- * the original inline version was — start()/stop() are exposed instead, so
- * each caller decides when scanning should (re)start (e.g. ScanShareModal's
- * "Back" button restarts without the modal's `open` prop ever changing).
- * `videoRef`/`canvasRef` are accessor functions (not raw elements) because
- * Solid's `ref` callback populates its variable after the component body
- * runs, so the elements aren't available yet at hook-construction time.
+ * Deliberately NOT tied to a Solid `createEffect` on an "open" prop. start()
+ * and stop() are exposed instead, so each caller decides when scanning should
+ * restart, such as ScanShareModal's "Back" button restarting without the
+ * modal's `open` prop ever changing. `videoRef` and `canvasRef` are accessor
+ * functions rather than raw elements, because Solid's `ref` callback populates
+ * its variable after the component body runs, so the elements are not
+ * available at hook-construction time.
  */
 export function useQrScanner(opts: {
   videoRef: () => HTMLVideoElement | undefined;
   canvasRef: () => HTMLCanvasElement | undefined;
-  /** Called once per frame a QR code is decoded from, however many times
-   * that is (the same still-visible code every frame) — the caller decides
-   * whether that's an accepted match (and should call `stop()`) or noise to
-   * keep scanning through. */
+  /** Called once per frame a QR code is decoded from, however many times that
+   * is, since the same still-visible code decodes every frame. The caller
+   * decides whether that is an accepted match, and so should call `stop()`, or
+   * noise to keep scanning through. */
   onDecode: (text: string) => void;
 }) {
   const [cameraError, setCameraError] = createSignal<string | null>(null);
@@ -78,7 +75,7 @@ export function useQrScanner(opts: {
         const videoRef = opts.videoRef();
         if (!videoRef) return;
         videoRef.srcObject = stream;
-        // Set muted as a DOM property — the HTML attribute alone is unreliable in Firefox.
+        // Set muted as a DOM property; the HTML attribute alone is unreliable in Firefox.
         videoRef.muted = true;
         await videoRef.play();
         if (myGeneration !== generation) return;

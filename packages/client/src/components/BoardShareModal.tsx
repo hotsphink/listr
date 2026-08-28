@@ -9,12 +9,14 @@ import { makeShareUrl, generateShareKey, type SharePayload } from "../sync/share
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** Share one specific board — generates+persists a sync_key on it if it doesn't have one. */
+  /** Share one specific board, generating and persisting a sync_key on it if
+   * it does not have one. */
   board?: Board;
   /**
-   * Share a whole board group by its sync_key directly (no board id), so the set of
-   * boards under that key — and any future additions/removals — stays synced for
-   * whoever accepts. Used for e.g. sharing your entire "My Boards" group.
+   * Share a whole board group by its sync_key directly, with no board id, so
+   * the set of boards under that key, along with any later additions and
+   * removals, stays synced for whoever accepts. Used for sharing an entire
+   * group such as "My Boards".
    */
   group?: { key: string; name: string };
 }
@@ -23,9 +25,9 @@ const BoardShareModal: Component<Props> = (props) => {
   const [shareUrl, setShareUrl] = createSignal<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = createSignal<string | null>(null);
   const [urlCopied, setUrlCopied] = createSignal(false);
-  // Other boards that would ride along under the same sync key — null while
-  // still computing, so the warning doesn't flash a wrong number. See §7.6:
-  // `sk` conveys the whole namespace, not just the one board being shared.
+  // Other boards that would ride along under the same sync key. null while
+  // still computing, so the warning never flashes a wrong number. `sk` conveys
+  // the whole namespace, not just the one board being shared.
   const [otherBoardCount, setOtherBoardCount] = createSignal<number | null>(null);
   let urlCopyTimer: ReturnType<typeof setTimeout> | null = null;
   onCleanup(() => { if (urlCopyTimer) clearTimeout(urlCopyTimer); });
@@ -53,10 +55,9 @@ const BoardShareModal: Component<Props> = (props) => {
         }
         payload = { v: 1, sk: key, bid: board.id, bn: board.name };
 
-        // Count other boards riding along under this same key so the dialog
-        // can be honest about what `sk` actually hands over (§7.6). The
-        // fallback key for an unkeyed board is now the server-assigned home
-        // key (§3.1/§8.1) — sync_config.sync_key is retired.
+        // Count other boards riding along under this same key, so the dialog
+        // can be honest about what `sk` hands over. The fallback key for an
+        // unkeyed board is the server-assigned home key.
         const identities = await db.server_identity.toArray();
         const homeKey = identities.find((i) => i.state === "active" && i.home_key)?.home_key ?? "";
         const allBoards = await db.boards.toArray();

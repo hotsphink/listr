@@ -1,19 +1,18 @@
 /**
- * Server-scoped sync keys (§3.3.1 of work/auth-design.md).
+ * Server-scoped sync keys.
  *
- * Phase 0.5 scoped the `shared_keys` roster but left the home key and this
- * device's own board keys unconditional — sent to every configured endpoint
- * regardless of which server it actually is. This closes that [GAP]:
- * `keysForEndpoint` now returns only what actually belongs to the endpoint
- * being connected to, nothing unconditional.
+ * `keysForEndpoint` returns only what belongs to the endpoint being connected
+ * to, and nothing unconditional. Offering a key to every configured endpoint
+ * regardless of which server it is would volunteer one world's keys to
+ * another.
  *
  * - `homeKeyForServer` is the caller's resolved home key for this connection
- *   (see SyncClient.resolveConnectionKeys) — already specific to one
- *   connection by construction, so it needs no filtering here.
+ *   (see SyncClient.resolveConnectionKeys), already specific to one connection
+ *   by construction, so it needs no filtering here.
  * - `boardKeys` and `sharedKeyRoster` are both `ScopedKeyRow[]`: a nullable
  *   `server_id` where null means "not yet scoped to any server" (every
  *   pre-existing shared_keys row migrated to null, and every board not yet
- *   bound via board_server_binding is null too — see database.ts) and is
+ *   bound via board_server_binding is null too; see database.ts) and is
  *   offered to every endpoint, preserving prior behavior for anything not
  *   yet placed. Once a row is scoped to a real server_id, it's offered only
  *   to an endpoint already known (via `sync_endpoints.last_server_id`,
@@ -35,8 +34,8 @@ export interface ScopedKeyRow {
  * Returns exactly: `homeKeyForServer`, plus every `boardKeys` / `sharedKeyRoster`
  * row that's either unscoped (`server_id === null`) or scoped to this exact
  * endpoint's known server (`endpointServerId`). A row scoped to a *different*
- * server is withheld — that's the whole point: stop volunteering a key that
- * belongs to one world to a different one, for boards as much as for shares.
+ * server is withheld. That is the whole point: never volunteer a key
+ * belonging to one world to a different one, for boards as much as shares.
  */
 export function keysForEndpoint(
   homeKeyForServer: string,

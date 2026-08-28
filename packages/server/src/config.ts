@@ -64,16 +64,16 @@ function parseSimpleYaml(content: string): Record<string, unknown> {
 
 export function loadConfig(): Config {
   let raw: Record<string, unknown> = {};
-  // Which world this server belongs to (dev/prod/whatever) — used both to pick
-  // the config file below and, at the caller, advertised to clients in the
-  // `challenge` handshake message so a client built for one variant can refuse
-  // to sync with a server running another (§3.3 of work/auth-design.md).
+  // Which world this server belongs to (dev, prod, or another). Picks the
+  // config file below, and the caller advertises it to clients in the
+  // `challenge` handshake message, so a client built for one variant can
+  // refuse to sync with a server running another.
   const variant = process.env.LISTR_VARIANT ?? "prod";
   try {
     const path = process.env.LISTR_CONFIG_PATH ?? join(homedir(), ".config", "listr", variant + ".yaml");
     raw = parseSimpleYaml(readFileSync(path, "utf8"));
   } catch {
-    // no config file — use defaults
+    // no config file, so use defaults
   }
   const config: Config = { variant };
   if (typeof raw.gemini === "string") config.gemini = raw.gemini;

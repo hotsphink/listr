@@ -1961,15 +1961,16 @@ tr.inline-add-item td:last-child {
 }
 
 /* Label-row variant where the action belongs WITH the label rather than
-   opposite it — an icon button reads as part of the heading, so the default
+   opposite it. An icon button reads as part of the heading, so the default
    space-between would strand it across the panel. */
 .admin-label-inline {
   justify-content: flex-start;
   gap: 4px;
 }
 
-/* Small transparent icon button (refresh, rename, …). One class rather than
-   one per icon: they differ only in the glyph, which lives in the markup. */
+/* Small transparent icon button (refresh, rename, and so on). One class
+   rather than one per icon: they differ only in the glyph, which lives in the
+   markup. */
 .btn-icon-sm {
   display: inline-flex;
   align-items: center;

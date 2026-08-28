@@ -1,9 +1,9 @@
 import { createSignal } from "solid-js";
 
-// "needs_grant" (§4.2, §6): the handshake completed (signature verified) but
-// this client isn't registered on this server yet. Waiting for a grant to be
-// redeemed. Distinct from "error" because it isn't a failure to recover from by
-// retrying. The join UI uses it to decide whether to show a join screen.
+// "needs_grant": the handshake completed and the signature verified, but this
+// client is not registered on this server, so it waits for a grant to be
+// redeemed. Distinct from "error" because retrying does not recover from it.
+// The join UI uses it to decide whether to show a join screen.
 export type EndpointPhase = "disabled" | "connecting" | "handshaking" | "needs_grant" | "ready" | "error" | "conflict" | "variant_mismatch";
 
 export interface EndpointStatus {
@@ -12,15 +12,15 @@ export interface EndpointStatus {
   knownId?: string;
   newId?: string;
   message?: string;
-  /** Only set when phase is "variant_mismatch" — the server's declared world
-   * (e.g. "dev"/"prod") vs. this client's build. */
+  /** Only set when phase is "variant_mismatch": the server's declared world,
+   * such as "dev" or "prod", against this client's build. */
   serverVariant?: string;
   clientVariant?: string;
-  /** Only set on phase "error" when the server gave a structured reason (§4.2:
-   * "suspended" | "revoked" | "bad_signature" | "protocol" | a grant redemption
-   * failure reason). Lets SyncClient tell an account-state rejection apart from
-   * a transient connection failure and persist it to server_identity (§8.1)
-   * instead of just retrying blindly. */
+  /** Only set on phase "error" when the server gave a structured reason:
+   * "suspended", "revoked", "bad_signature", "protocol", or a grant redemption
+   * failure reason. Lets SyncClient tell an account-state rejection apart from
+   * a transient connection failure and persist it to server_identity instead
+   * of retrying blindly. */
   authReason?: string;
   /** Only meaningful when phase is "ready". False means another endpoint is
    * already connected to the same server_id and is handling push/pull. This

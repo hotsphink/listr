@@ -63,11 +63,11 @@ export default defineConfig(({ mode }) => {
       // Stamped at config-eval time: build time for production builds, dev-server
       // start time in development. Surfaced on the admin page.
       __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
-      // Which world this client is built for (dev/prod/…) — compared against
-      // the server's own `variant` in the sync handshake (§3.3 of
-      // work/auth-design.md) so a dev client refuses a prod server and vice
-      // versa. LISTR_VARIANT overrides; otherwise a production build is
-      // "prod" and everything else (dev server, unlabeled builds) is "dev".
+      // Which world this client is built for (dev, prod, or another). The
+      // sync handshake compares it against the server's own `variant`, so a
+      // dev client refuses a prod server and vice versa. LISTR_VARIANT
+      // overrides. Otherwise a production build is "prod" and everything
+      // else, including the dev server and unlabeled builds, is "dev".
       __VARIANT__: JSON.stringify(process.env.LISTR_VARIANT ?? (mode === "production" ? "prod" : "dev")),
     },
   };

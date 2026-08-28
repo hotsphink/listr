@@ -1,7 +1,7 @@
 /**
- * Client keypair generation, storage, and signing (auth-design.md §4.1, §8.1) —
- * the Dexie/WebCrypto-touching half of client identity. Kept separate from
- * clientIdentity.ts for unit testing without a Dexie/IndexedDB environment.
+ * Client keypair generation, storage, and signing: the Dexie and WebCrypto
+ * touching half of client identity. Kept separate from clientIdentity.ts so
+ * that file can be unit-tested without a Dexie or IndexedDB environment.
 */
 import { db, type ClientIdentity } from "../db/database.js";
 import { base64UrlFromBytes, jwkThumbprint } from "./clientIdentity.js";
@@ -14,12 +14,12 @@ let inFlight: Promise<ClientIdentity> | null = null;
  * fresh non-extractable P-256 keypair on first call. `privateKey` is created
  * with `extractable: false` and CryptoKey objects are structured-cloneable, so
  * Dexie stores them directly and the private key material is never accessible
- * to anything (§3.2, §4.1). `client_id` is the RFC 7638 thumbprint of the
- * public key, computed once here and cached on the row.
+ * to anything. `client_id` is the RFC 7638 thumbprint of the public key,
+ * computed once here and cached on the row.
  *
- * Memoized in-process (module-level `cached`/`inFlight`) in addition to Dexie
- * so concurrent callers (e.g. two endpoints connecting at once) can't race and
- * generate two keypairs before the first write lands.
+ * Memoized in-process, via the module-level `cached` and `inFlight`, on top of
+ * Dexie, so concurrent callers such as two endpoints connecting at once cannot
+ * race and generate two keypairs before the first write lands.
  */
 export async function getOrCreateClientIdentity(): Promise<ClientIdentity> {
   if (cached) return cached;
@@ -65,8 +65,8 @@ export async function exportPublicJwk(identity: ClientIdentity): Promise<Record<
   return (await crypto.subtle.exportKey("jwk", identity.publicKey)) as unknown as Record<string, unknown>;
 }
 
-/** Sign the v5 handshake's auth payload (§4.2) with this device's private
- * key, returning the signature as base64url, ready for the `auth` message. */
+/** Sign the handshake's auth payload with this device's private key,
+ * returning the signature as base64url, ready for the `auth` message. */
 export async function signAuthPayload(identity: ClientIdentity, payload: Uint8Array): Promise<string> {
   const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, identity.privateKey, payload as BufferSource);
   return base64UrlFromBytes(sig);

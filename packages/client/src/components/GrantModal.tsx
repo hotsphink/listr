@@ -9,7 +9,7 @@ interface Props {
   onClose: () => void;
   endpointId: string;
   serverId: string;
-  /** This user's own caps on this server — gates which grant kinds are offered. */
+  /** This user's own caps on this server, which gate the grant kinds offered. */
   myCaps: string[];
   myDisplayName: string | null;
 }
@@ -25,7 +25,7 @@ const KIND_LABELS: Record<GrantKind, string> = {
 
 const KIND_HINTS: Record<GrantKind, string> = {
   invite: "Creates a real account for them, as your child in the tree. They can invite others too if you allow it below.",
-  guest: "Creates a limited account for them — same as invite, but they can't invite anyone else (§7.4). Good for texting a shopping list.",
+  guest: "Creates a limited account for them — same as invite, but they can't invite anyone else. Good for texting a shopping list.",
   device: "Registers a new device (phone, laptop, …) to YOUR OWN existing account.",
   share: "Hands one more sync key to someone who already has an account here — no new identity involved.",
 };
@@ -41,11 +41,10 @@ const KIND_GREETING_PLACEHOLDERS: Record<GrantKind, string> = {
   share: "e.g. Our shopping list",
 };
 
-/** Grant creation UI (auth-design.md §6, §8.2 scope B). Gated by the caller
- * on the 'invite' cap for showing invite/guest at all — but the kind
- * selector itself also hides them if myCaps lacks 'invite', since a
- * component reused elsewhere shouldn't assume its caller always gates
- * correctly, and the server enforces it either way. */
+/** Grant creation UI. The caller gates on the 'invite' cap before showing
+ * invite and guest at all, and the kind selector hides them too when myCaps
+ * lacks 'invite', since a component reused elsewhere must not assume its
+ * caller gates correctly. The server enforces it either way. */
 const GrantModal: Component<Props> = (props) => {
   const [kind, setKind] = createSignal<GrantKind>("device");
   const [alsoInvite, setAlsoInvite] = createSignal(false);

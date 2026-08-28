@@ -13,14 +13,15 @@ import { LATEST_SCHEMA_VERSION, peekSchemaVersion } from "../src/db.js";
 /**
  * When to spend a full-file copy of the database.
  *
- * - `"always"` — the original behaviour, and correct for the one-off scripts
- *   here that rewrite every row: you run them once and want a rollback.
- * - `"schema-change"` — copy only when this run will actually migrate the
- *   schema. Right for a *routine* tool like auth-cli, where issuing a grant is
- *   a single INSERT and copying a multi-megabyte database for it is pure cost.
- *   Note this can trigger without `--apply`, because `openDb` migrates even for
- *   read-only commands — the schema mutation is the risky part, not the writes.
- * - `"never"` — for genuinely read-only work.
+ * - `"always"`: correct for the one-off scripts here that rewrite every row.
+ *   You run them once and want a rollback.
+ * - `"schema-change"`: copy only when this run will migrate the schema. Right
+ *   for a *routine* tool like auth-cli, where issuing a grant is a single
+ *   INSERT and copying a multi-megabyte database for it is pure cost. Note
+ *   this can trigger without `--apply`, because `openDb` migrates even for
+ *   read-only commands, and the schema mutation is the risky part rather than
+ *   the writes.
+ * - `"never"`: for genuinely read-only work.
  */
 export type BackupPolicy = "always" | "schema-change" | "never";
 
@@ -38,7 +39,7 @@ function pruneBackups(dbPath: string, label: string): void {
     try {
       unlinkSync(stale);
     } catch {
-      /* best effort — a backup we cannot delete is not worth failing the command over */
+      /* best effort; a backup we cannot delete is not worth failing the command over */
     }
   }
   if (backups.length > KEEP_BACKUPS) {
@@ -62,7 +63,7 @@ export function parseScriptArgs(
   }
 
   console.log(`[${label}] DB:   ${dbPath}`);
-  console.log(`[${label}] MODE: ${apply ? "APPLY (writing changes)" : "dry-run (no writes — pass --apply to write)"}`);
+  console.log(`[${label}] MODE: ${apply ? "APPLY (writing changes)" : "dry-run (no writes; pass --apply to write)"}`);
 
   const migrationPending = policy === "schema-change" && peekSchemaVersion(dbPath) < LATEST_SCHEMA_VERSION;
   const wantBackup = policy === "always" ? apply : migrationPending;
@@ -72,7 +73,7 @@ export function parseScriptArgs(
     copyFileSync(dbPath, bak);
     console.log(
       `[${label}] Backup: ${bak}` +
-        (migrationPending ? ` (schema v${peekSchemaVersion(dbPath)} → v${LATEST_SCHEMA_VERSION} pending)` : ""),
+        (migrationPending ? ` (schema v${peekSchemaVersion(dbPath)} -> v${LATEST_SCHEMA_VERSION} pending)` : ""),
     );
     pruneBackups(dbPath, label);
   }

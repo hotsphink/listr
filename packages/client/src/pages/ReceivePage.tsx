@@ -24,7 +24,7 @@ const ReceivePage: Component = () => {
     if (!accepted()) return;
     const p = payload();
     if (!p?.bid) {
-      // No board ID in payload (bare-key share) — just go home and let it appear
+      // No board ID in the payload, a bare-key share, so go home and let it appear
       setSidebarOpen(true);
       navigate("/");
       return;

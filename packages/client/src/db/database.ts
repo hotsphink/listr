@@ -42,11 +42,10 @@ export interface SharedKey {
   added_at: number;
   board_name?: string; // display hint from the share QR
   /**
-   * Which server this key is scoped to, or null if unscoped (offered to
-   * every configured endpoint — the behavior every key had before this
-   * column existed, and the state a freshly-accepted share starts in until
-   * its first successful connect tags it). See SyncClient's per-endpoint
-   * key scoping (§3.3.1 of work/auth-design.md) and keyScoping.ts.
+   * Which server this key is scoped to, or null if unscoped, meaning it is
+   * offered to every configured endpoint. A freshly accepted share starts
+   * unscoped until its first successful connect tags it. See SyncClient's
+   * per-endpoint key scoping and keyScoping.ts.
    */
   server_id: string | null;
 }
@@ -65,13 +64,13 @@ export interface BoardGroupMeta {
 
 
 /**
- * Local-only (never synced) board→server binding (§3.3.1 item 4). A board
- * with no row here, or `server_id: null`, is "not yet placed" — the same
- * null-means-unscoped convention shared_keys already uses (see keyScoping.ts)
- * — and is offered to every endpoint until it's bound on first successful
- * connect. Deliberately a separate table rather than a field on Board: Board
- * is a synced entity type shared with the wire protocol, and this must never
- * become a synced field.
+ * Local-only, never synced, board-to-server binding. A board with no row
+ * here, or `server_id: null`, is "not yet placed", the same
+ * null-means-unscoped convention shared_keys uses (see keyScoping.ts), and is
+ * offered to every endpoint until it binds on its first successful connect.
+ * Deliberately a separate table rather than a field on Board: Board is a
+ * synced entity type shared with the wire protocol, and this must never become
+ * a synced field.
  */
 export interface BoardServerBinding {
   board_id: string; // primary key
@@ -79,10 +78,10 @@ export interface BoardServerBinding {
 }
 
 /**
- * Client's own keypair (auth-design.md §4.1, §8.1), global to the browser
- * profile and created lazily on first server connection. Offline-only users do
- * not have a key. The same keypair may register independently with several
- * servers (§3.3). CryptoKey objects are structured-cloneable, so Dexie stores
+ * Client's own keypair, global to the browser profile and created lazily on
+ * the first server connection. Offline-only users do not have a key. The same
+ * keypair may register independently with several servers. CryptoKey objects
+ * are structured-cloneable, so Dexie stores
  * them directly and `privateKey`'s non-extractability survives reloads. The
  * private key is never serialized to anything else (see clientKeys.ts).
  *
@@ -97,7 +96,7 @@ export interface ClientIdentity {
 }
 
 /**
- * Per-server registration state (§8.1), keyed by `server_id`. `state` folds
+ * Per-server registration state, keyed by `server_id`. `state` folds
  * registration status and account status into one field: "needs_grant" means
  * this server has never seen this client's key (or has forgotten it) and is
  * waiting for a grant to be redeemed; the other three mirror the server's own
@@ -170,12 +169,12 @@ export class ListrDB extends Dexie {
       board_groups: "key",
     });
 
-    // shared_keys gains a nullable `server_id` (§3.3.1 — server-scoped sync
-    // keys). Not part of the index string below since nothing queries by it;
-    // the upgrade only needs to back-fill the field on existing rows so
-    // `row.server_id` is always present (never `undefined`) going forward.
-    // null means unscoped — every pre-existing row migrates to null, which
-    // preserves today's "send this key to every endpoint" behavior exactly.
+    // shared_keys gains a nullable `server_id`, for server-scoped sync keys.
+    // It is not part of the index string below, since nothing queries by it.
+    // The upgrade only needs to back-fill the field on existing rows so
+    // `row.server_id` is always present rather than `undefined`. null means
+    // unscoped, so every pre-existing row migrates to null, which preserves
+    // the "send this key to every endpoint" behavior exactly.
     this.version(2).stores({
       boards: "id, position, updated_at",
       lists: "id, board_id, position, updated_at",
@@ -194,17 +193,16 @@ export class ListrDB extends Dexie {
       });
     });
 
-    // board_server_binding (§3.3.1 item 4 — closing the rest of the [GAP]:
-    // a board syncs only to the server it belongs to). A new table only, so
-    // no store string changes for anything else. The upgrade binds every
-    // existing board to the one server this client already knows
-    // (sync_endpoints.last_server_id), so an existing single-server setup is
-    // completely unaffected.
+    // board_server_binding makes a board sync only to the server it belongs
+    // to. This adds a table only, so no store string changes for anything
+    // else. The upgrade binds every existing board to the one server this
+    // client already knows, via sync_endpoints.last_server_id, so a
+    // single-server setup is unaffected.
     //
-    // Only when there is exactly one distinct known server_id: zero or
-    // several is ambiguous (this client has never synced, or has talked to
-    // more than one server), so boards are left unbound (null) and get placed
-    // individually the next time each is pushed — see
+    // Bind only when there is exactly one distinct known server_id. Zero or
+    // several is ambiguous, meaning this client has never synced or has talked
+    // to more than one server, so those boards stay unbound (null) and are
+    // placed individually the next time each is pushed. See
     // SyncClient.bindUnboundBoards.
     this.version(3).stores({
       boards: "id, position, updated_at",
@@ -238,8 +236,7 @@ export class ListrDB extends Dexie {
       }
     });
 
-    // client_identity / server_identity (§8.1 — the v5 handshake's client-side
-    // state).
+    // client_identity / server_identity: the handshake's client-side state.
     this.version(4).stores({
       boards: "id, position, updated_at",
       lists: "id, board_id, position, updated_at",

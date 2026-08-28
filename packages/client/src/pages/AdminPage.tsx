@@ -36,9 +36,9 @@ const PHASE_COLORS: Record<string, string> = {
   variant_mismatch: "var(--danger)",
 };
 
-// A connection that's ready but lost the race for its server_id to another
-// endpoint (see SyncClient.claimOrDefer) — connected, but standing by rather
-// than actively pushing/pulling.
+// A connection that is ready but lost the race for its server_id to another
+// endpoint (see SyncClient.claimOrDefer). Connected, but standing by rather
+// than actively pushing and pulling.
 const STANDBY_COLOR = "#d4b106";
 
 function statusColor(status: EndpointStatus | undefined, phase: string): string {
@@ -79,8 +79,8 @@ const ForceUpdateButton: Component = () => {
     if (!navigator.onLine) return;
     setState("working");
     try {
-      // Probe the server before wiping the cache — if unreachable, bail without
-      // clearing anything so the app stays functional.
+      // Probe the server before wiping the cache. If it is unreachable, bail
+      // without clearing anything, so the app stays functional.
       await fetch(location.href, { method: "HEAD", cache: "no-store" });
       // Clear all SW caches so the next load fetches fresh assets.
       const keys = await caches.keys();
@@ -135,31 +135,31 @@ const AdminPage: Component = () => {
     onCleanup(() => sub.unsubscribe());
   });
 
-  // Per-server registration state (§8.1) — this is what replaces the old
-  // free-text Sync Key input: identity now comes from the server (ok.*),
-  // never from something typed here.
+  // Per-server registration state. Identity comes from the server, via the
+  // `ok` message's fields, and never from anything typed into this page.
   createEffect(() => {
     const sub = liveQuery(() => db.server_identity.toArray()).subscribe(setIdentities);
     onCleanup(() => sub.unsubscribe());
   });
 
   // The endpoint id currently reaching whichever server the active identity
-  // is on — needed because identity is keyed by server_id but the wire calls
-  // (createGrant/listClients/setDisplayName) are made against a connection,
-  // which is keyed by endpoint id. Arbitrarily the first ready endpoint on
-  // that server, same "pick one" convention SyncClient.getPrimaryServerId
-  // uses for the (non-goal) multi-server case.
+  // is on. Identity is keyed by server_id, while the wire calls
+  // (createGrant, listClients, setDisplayName) are made against a connection,
+  // which is keyed by endpoint id. This picks the first ready endpoint on that
+  // server, the same "pick one" convention SyncClient.getPrimaryServerId uses
+  // for the multi-server case.
   const primaryIdentity = () => identities().find((i) => i.state === "active") ?? null;
 
-  // Must be an endpoint we can SEND on right now, not merely one associated
-  // with this server. Two earlier sources of truth were both wrong for that:
-  // `sync_endpoints.last_server_id` is persisted and keeps naming a server
-  // long after the socket dropped, and an EndpointStatus keeps its `serverId`
-  // from the last handshake even once the phase has gone to "error" (the close
-  // handler sets phase + message only). Either could hand back a dead endpoint,
-  // and every wire call here — setDisplayName, listClients, createGrant —
-  // throws "no open connection" on one. Requiring phase === "ready" is both
-  // correct and still reactive, since `statuses()` updates on connect/close.
+  // Only a connection that can be sent on right now qualifies, not merely one
+  // associated with this server. Neither `sync_endpoints.last_server_id` nor
+  // `EndpointStatus.serverId` is sufficient on its own, since both survive a
+  // dropped socket: last_server_id is persisted, and an EndpointStatus keeps
+  // the serverId from its last handshake even once the phase has gone to
+  // "error", because the close handler sets only phase and message. Either
+  // could hand back a dead endpoint, and every wire call here
+  // (setDisplayName, listClients, createGrant) throws "no open connection" on
+  // one. Requiring phase === "ready" is what makes this accurate, and it stays
+  // reactive because `statuses()` updates on connect and close.
   const primaryEndpointId = (): string | null => {
     const serverId = primaryIdentity()?.server_id;
     if (!serverId) return null;
@@ -179,7 +179,7 @@ const AdminPage: Component = () => {
 
   // "ready" can still go stale between the check and the send, and an
   // exception thrown out of a createEffect stops that effect re-running for
-  // the rest of the page's life — which is how a transient reconnect could
+  // the rest of the page's life, so a transient reconnect could otherwise
   // permanently kill the device list.
   const requestDevices = (epId: string) => {
     try {
@@ -195,7 +195,7 @@ const AdminPage: Component = () => {
   };
 
   // The server answers set_client_label with the refreshed `clients` list, so
-  // the existing onGrantReply handler updates the list — nothing to do here
+  // the onGrantReply handler updates the list. There is nothing to do here
   // beyond closing the editor.
   const saveClientLabel = (targetClientId: string) => {
     setDeviceError(null);

@@ -7,7 +7,7 @@ import { createSyncServer, type SyncServerHandle } from "./index.js";
 import { MAX_PROTOCOL_VERSION } from "./protocol.js";
 import { jwkThumbprint, buildAuthPayload } from "./authCrypto.js";
 
-// Minimal in-process WS integration harness (§14): a real WebSocketServer on
+// Minimal in-process WS integration harness: a real WebSocketServer on
 // an ephemeral loopback port, backed by an in-memory db, driven with a real
 // `ws` client. index.ts has no other coverage, so this exercises the message
 // handler directly rather than through db.ts's exported functions.
@@ -35,7 +35,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 // A fresh ECDSA P-256 keypair + its RFC 7638 client_id, standing in for one
-// browser profile's client_identity (database.ts) — everything the v5
+// browser profile's client_identity (database.ts). This is everything the
 // handshake needs from "the client" in a test, without touching Dexie.
 interface TestClient {
   clientId: string;
@@ -56,7 +56,7 @@ async function signFor(client: TestClient, serverId: string, nonce: string): Pro
   return Buffer.from(sig).toString("base64url");
 }
 
-describe("sync server — WS integration", () => {
+describe("sync server: WS integration", () => {
   let db: DbApi;
   let handle: SyncServerHandle;
   let port: number;
@@ -102,9 +102,9 @@ describe("sync server — WS integration", () => {
   }
 
   /** Registers a brand-new client as a fresh root-authorized user via the
-   * CLI-equivalent db calls, then completes its handshake — the shortest
-   * path to "an active, registered client" for tests that don't care about
-   * the grant flow itself. */
+   * CLI-equivalent db calls, then completes its handshake. This is the
+   * shortest path to "an active, registered client" for tests that do not
+   * care about the grant flow itself. */
   async function registerAndConnect(ws: WebSocket, client: TestClient, keys: string[] = []): Promise<any> {
     const root = db.bootstrapRootUser(Date.now());
     const user = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
@@ -233,7 +233,7 @@ describe("sync server — WS integration", () => {
     ws.close();
   });
 
-  it("reports a non-default variant when the server is configured for one (§3.3 dev/prod guard)", async () => {
+  it("reports a non-default variant when the server is configured for one", async () => {
     const devHandle = createSyncServer(openDb(":memory:"), { tls: false, variant: "dev" });
     await new Promise<void>((resolve) => devHandle.httpServer.listen(0, "127.0.0.1", () => resolve()));
     const devPort = (devHandle.httpServer.address() as AddressInfo).port;
@@ -290,9 +290,9 @@ describe("sync server — WS integration", () => {
     ws.close();
   });
 
-  it("rejects a signature computed for a different server_id (cross-server replay, §3.3)", async () => {
-    // A second, independent server instance — a different in-memory db means
-    // a different (real, randomly generated) server_id.
+  it("rejects a signature computed for a different server_id (cross-server replay)", async () => {
+    // A second, independent server instance. A different in-memory db means
+    // a different, randomly generated server_id.
     const otherHandle = createSyncServer(openDb(":memory:"), { tls: false });
     await new Promise<void>((resolve) => otherHandle.httpServer.listen(0, "127.0.0.1", () => resolve()));
     const otherPort = (otherHandle.httpServer.address() as AddressInfo).port;
@@ -307,10 +307,10 @@ describe("sync server — WS integration", () => {
 
       // Present that signature to THIS server. Even in the vanishingly
       // unlikely event its own independently-generated nonce happened to
-      // read identically (128 random bits — it won't), the signature was
+      // read identically (128 random bits, so it will not), the signature was
       // computed against the other server's server_id and must not verify
       // here. In practice this also gets caught earlier, as an unrecognized
-      // nonce — see the comment on the dedicated crypto-layer test in
+      // nonce. See the comment on the dedicated crypto-layer test in
       // authCrypto.test.ts for why the server_id-binding property itself is
       // tested directly there rather than relying on an engineered
       // collision here.
@@ -328,15 +328,15 @@ describe("sync server — WS integration", () => {
     }
   });
 
-  it("rejects a replayed (already-consumed) nonce — auth is single-use per connection", async () => {
+  it("rejects a replayed (already-consumed) nonce: auth is single-use per connection", async () => {
     const client = await makeTestClient();
     const ws = connect();
     const challenge = await sendHello(ws, client);
     const sig = await signFor(client, challenge.server_id, challenge.nonce);
 
     // First use succeeds in the sense of being processed (this client is
-    // unregistered, so the substantive reply is needs_grant — that's fine,
-    // what matters is the nonce got consumed).
+    // unregistered, so the substantive reply is needs_grant, which is fine;
+    // what matters is that the nonce got consumed).
     const firstPromise = waitForMessage(ws);
     ws.send(JSON.stringify({ type: "auth", sig }));
     const first = await firstPromise;
@@ -403,7 +403,7 @@ describe("sync server — WS integration", () => {
     const errPromise = waitForMessage(ws).catch(() => null);
     try {
       ws.send(JSON.stringify({ type: "pull", keys: [{ key: user.home_key, since: 0 }] }));
-    } catch { /* socket already closed — also an acceptable outcome */ }
+    } catch { /* socket already closed, also an acceptable outcome */ }
     const reply = await Promise.race([errPromise, sleep(100).then(() => null)]);
     if (reply) expect(reply.type).toBe("error");
     ws.close();
@@ -440,10 +440,9 @@ describe("sync server — WS integration", () => {
     ws.close();
   });
 
-  // Regression for §2.1 defect 1, now structural rather than checked: there
-  // is no client-supplied identity field on associate_key/leave_key at all
-  // (identity comes entirely from the authenticated connection), so there is
-  // nothing left to spoof.
+  // associate_key and leave_key carry no client-supplied identity field at
+  // all, since identity comes entirely from the authenticated connection, so
+  // there is nothing to spoof.
   it("associate_key always acts on the authenticated connection's own user", async () => {
     const alice = await makeTestClient();
     const mallory = await makeTestClient();
@@ -483,7 +482,7 @@ describe("sync server — WS integration", () => {
     wsMallory.close();
   });
 
-  it("rejects a WebSocket upgrade from a disallowed Origin (§2.1 defect 3)", async () => {
+  it("rejects a WebSocket upgrade from a disallowed Origin", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/sync`, { headers: { origin: "https://evil.example" } });
     await new Promise<void>((resolve) => {
       ws.once("unexpected-response", (_req, res) => {
@@ -502,7 +501,7 @@ describe("sync server — WS integration", () => {
   });
 });
 
-describe("redeem_grant (§6, §7.2) — registration plumbing", () => {
+describe("redeem_grant: registration plumbing", () => {
   let db: DbApi;
   let handle: SyncServerHandle;
   let port: number;
@@ -539,9 +538,9 @@ describe("redeem_grant (§6, §7.2) — registration plumbing", () => {
   }
 
   // Registers a brand-new client as a fresh root-authorized user, then
-  // completes its handshake — mirrors the outer describe block's helper of
-  // the same name, duplicated locally since this block has its own
-  // db/port/connect fixtures.
+  // completes its handshake. Mirrors the outer describe block's helper of the
+  // same name, duplicated locally since this block has its own db, port, and
+  // connect fixtures.
   async function registerAndConnect(ws: WebSocket, client: TestClient): Promise<any> {
     const root = db.bootstrapRootUser(Date.now());
     const user = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
@@ -611,11 +610,10 @@ describe("redeem_grant (§6, §7.2) — registration plumbing", () => {
     ws.close();
   });
 
-  // Defect fix (job 3, found by job 2): see db.test.ts for the db-layer
-  // coverage of the fix itself. This exercises it over the real WS wire path,
-  // where the "already has an identity" client is a full second live
-  // connection that has already completed its own handshake — the shape a
-  // misdirected tap would actually take.
+  // db.test.ts covers this rejection at the db layer. This exercises it over
+  // the real WS wire path, where the "already has an identity" client is a
+  // full second live connection that has completed its own handshake, the
+  // shape a misdirected tap actually takes.
   it("rejects an invite grant redeemed by an already-registered client over the wire, without burning it", async () => {
     const root = db.bootstrapRootUser(Date.now());
     const { grantId, secret } = db.createGrant({ kind: "invite", issuerUserId: root.user_id, caps: ["sync"] }, Date.now());
@@ -633,7 +631,7 @@ describe("redeem_grant (§6, §7.2) — registration plumbing", () => {
     expect(err.reason).toBe("already_registered");
     wsAlready.close();
 
-    // The grant is untouched — the intended recipient can still use it.
+    // The grant is untouched, so the intended recipient can still use it.
     const recipient = await makeTestClient();
     const wsRecipient = connect();
     await getToNeedsGrant(wsRecipient, recipient);
@@ -645,7 +643,7 @@ describe("redeem_grant (§6, §7.2) — registration plumbing", () => {
   });
 });
 
-describe("peek_grant / create_grant (§7.4/§8.2 job 3)", () => {
+describe("peek_grant / create_grant", () => {
   let db: DbApi;
   let handle: SyncServerHandle;
   let port: number;
@@ -683,7 +681,7 @@ describe("peek_grant / create_grant (§7.4/§8.2 job 3)", () => {
     expect(info.greeting).toBe("Groceries");
     expect(info.issuer_display_name).toBe("Steve");
 
-    // Still fully redeemable — peeking is not a consuming action.
+    // Still fully redeemable, since peeking is not a consuming action.
     const challengePromise = waitForMessage(ws);
     ws.send(JSON.stringify({
       type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys: [],
@@ -770,7 +768,7 @@ describe("peek_grant / create_grant (§7.4/§8.2 job 3)", () => {
   });
 });
 
-describe("§11.1 basic limits (job 3)", () => {
+describe("basic limits", () => {
   let db: DbApi;
   let handle: SyncServerHandle;
   let port: number;
@@ -794,8 +792,9 @@ describe("§11.1 basic limits (job 3)", () => {
     const ws = connect();
     await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
     const closePromise = new Promise<number>((resolve) => ws.once("close", (code: number) => resolve(code)));
-    // A hello whose pubkey_jwk carries a > 1MB junk field — still valid JSON,
-    // so this exercises maxPayload rather than the JSON-parse error path.
+    // A hello whose pubkey_jwk carries a > 1MB junk field. It is still valid
+    // JSON, so this exercises maxPayload rather than the JSON-parse error
+    // path.
     const huge = "x".repeat(2 * 1024 * 1024);
     ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: "c", pubkey_jwk: { junk: huge }, keys: [] }));
     const code = await closePromise;
@@ -821,8 +820,8 @@ describe("§11.1 basic limits (job 3)", () => {
 
     const closePromise = new Promise<number>((resolve) => ws.once("close", (code: number) => resolve(code)));
     // Drain the burst allowance. Unrecognized types fall through the handler
-    // chain without a reply, but are still counted — the limiter runs before
-    // anything is parsed — so this stays cheap.
+    // chain without a reply, but are still counted, since the limiter runs
+    // before anything is parsed, so this stays cheap.
     for (let i = 0; i < 5200; i++) {
       ws.send(JSON.stringify({ type: "noop" }));
     }
@@ -830,10 +829,10 @@ describe("§11.1 basic limits (job 3)", () => {
     expect(code).toBe(1008);
   });
 
-  // The regression that motivated the token bucket: doInitialSync sends one
-  // push_entity PER ENTITY, so a fixed per-second window closed the socket
-  // mid-sync for any client with more than a window's worth of local data —
-  // which then retried and looped forever.
+  // doInitialSync sends one push_entity PER ENTITY, so a fixed per-second
+  // window would close the socket mid-sync for any client with more than a
+  // window's worth of local data, which then retries and loops forever. The
+  // token bucket has to let that burst through.
   it("allows an initial-sync-sized burst without closing the connection", async () => {
     const client = await makeTestClient();
     const ws = connect();

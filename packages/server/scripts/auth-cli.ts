@@ -1,14 +1,13 @@
 /**
- * Maintenance CLI for the identity/authorization tables (auth-design.md
- * §5.5, §15 Phase 1). One entry point, several subcommands — unlike the
- * other scripts in this directory, which are each a single one-off
- * operation, this one needs a handful of related, ongoing admin actions
- * (bootstrap, grant issuance, moderation), so a subcommand dispatch is a
- * better fit than one file per action.
+ * Maintenance CLI for the identity and authorization tables. One entry point
+ * with several subcommands. The other scripts in this directory are each a
+ * single one-off operation, but this one covers a handful of related, ongoing
+ * admin actions (bootstrap, grant issuance, moderation), so a subcommand
+ * dispatch fits better than one file per action.
  *
- * Same dry-run/--apply/auto-backup convention as every other script here
- * (see scripts/cli.ts) — --apply is required for anything that writes, and
- * a timestamped backup is taken first. Run with the sync server STOPPED.
+ * Same dry-run, --apply, and auto-backup convention as every other script here
+ * (see scripts/cli.ts): --apply is required for anything that writes, and a
+ * timestamped backup is taken first. Run with the sync server STOPPED.
  *
  * Usage:
  *   pnpm exec tsx packages/server/scripts/auth-cli.ts <command> [options] [--apply] [--db=/path]
@@ -16,7 +15,7 @@
  * Commands:
  *   bootstrap-root
  *       Create the root user (all caps including admin, authorized_by=null)
- *       if one does not already exist. Idempotent — safe to re-run.
+ *       if one does not already exist. Idempotent, so it is safe to re-run.
  *
  *   list-users [--tree]
  *       List every user. With --tree, indent by authorized_by and annotate
@@ -27,64 +26,64 @@
  *               [--caps=cap1,cap2] [--payload=<sync_key>] [--greeting=text]
  *               [--ttl-ms=<n>] [--uses=<n>] [--app-url=<url>]
  *       Create a grant and print both the redemption secret and a ready-to-use
- *       join link ONCE — the server
- *       never stores it in recoverable form (only its SHA-256), so this is
- *       the only chance to see it. --caps applies to `invite` only (subject
- *       to the attenuation check against the issuer's own caps); `guest`
- *       always gets caps=[sync] regardless of --caps; `payload` is the
- *       sync_key to hand over for `share`/`guest`. --app-url is where the
- *       *client app* is served (default ${DEFAULT_APP_URL}), not the sync
- *       server — pass e.g. --app-url=https://localhost:3000/ when testing
- *       against a local Vite instance.
+ *       join link ONCE. The server stores only the secret's SHA-256, never a
+ *       recoverable form, so this is the only chance to see it. --caps applies
+ *       to `invite` only, subject to the attenuation check against the
+ *       issuer's own caps. `guest` always gets caps=[sync] regardless of
+ *       --caps. `payload` is the sync_key to hand over for `share` and
+ *       `guest`. --app-url is where the *client app* is served (default
+ *       ${DEFAULT_APP_URL}), not the sync server, so pass something like
+ *       --app-url=https://localhost:3000/ when testing against a local Vite
+ *       instance.
  *
  *   set-state --user=<user_id> --state=<active|suspended|revoked>
- *       One UPDATE on one row (§5.3). Suspending/revoking cuts off the
- *       user's whole subtree in the same statement (effective state is
- *       computed at read time); restoring reverts descendants to their own
- *       explicit state automatically.
+ *       One UPDATE on one row. Suspending or revoking cuts off the user's
+ *       whole subtree in the same statement, since effective state is computed
+ *       at read time, and restoring reverts descendants to their own explicit
+ *       state automatically.
  *
  *   promote --user=<user_id> [--caps=cap1,cap2]
- *       Clear a guest's `provisional` flag and optionally add caps (§7.4).
+ *       Clear a guest's `provisional` flag and optionally add caps.
  *       Nothing is re-created; the user keeps their user_id and home_key.
  *
  *   grant-admin --user=<user_id>
- *       Break-glass: add the admin cap directly. The only way `admin` is
- *       ever granted — never reachable through the grants table.
+ *       Break-glass: add the admin cap directly. This is the only way `admin`
+ *       is ever granted, and it is never reachable through the grants table.
  *
  *   set-parent --user=<user_id> --parent=<user_id|none>
  *       Re-parent a user (set authorized_by). Needed because migration 5
  *       mints one unparented user per pre-existing home key when rekeying
- *       user_keys to user_id — §5.1 allows a forest of several unparented
- *       tips, but the operator will usually want to graft those onto the
- *       real tree by hand. `--parent=none` explicitly detaches (a second
- *       forest root); refused if it would create a cycle (the named parent
- *       is currently a descendant of --user).
+ *       user_keys to user_id. A forest of several unparented tips is legal,
+ *       but the operator will usually want to graft those onto the real tree
+ *       by hand. `--parent=none` explicitly detaches, making a second forest
+ *       root, and is refused if it would create a cycle, meaning the named
+ *       parent is currently a descendant of --user.
  *
  *   reset-server-id [--new=<uuid>]
- *       Overwrite server_config's server_id. Cloning a DB today requires a
- *       hand edit here (auth-design.md §3.3); this makes it a supported
- *       operation instead.
+ *       Overwrite server_config's server_id. A cloned database carries the
+ *       original's server_id, so this makes assigning a fresh one a supported
+ *       operation.
  */
 import { createHash } from "node:crypto";
 import { parseScriptArgs } from "./cli.js";
 import { openDb, ALL_CAPS, type Cap, type GrantKind, type UserState } from "../src/db.js";
 
-// Join-link construction (§7.3a-bis). Deliberately a reimplementation of the
-// client's `hashServerId`/`buildJoinUrl` (packages/client/src/sync/joinLink.ts)
-// rather than an import: packages/server does not depend on packages/client,
-// and this is the same call made for authCrypto.ts's thumbprint. Both sides
-// must agree exactly — the recipient's client compares this hash against its
-// own — so the two are pinned together by SERVER_HASH_LENGTH and the shared
-// test vector in auth-cli.test.ts.
+// Join-link construction. Deliberately a reimplementation of the client's
+// `hashServerId` and `buildJoinUrl` (packages/client/src/sync/joinLink.ts)
+// rather than an import, since packages/server does not depend on
+// packages/client, and the same call is made for authCrypto.ts's thumbprint.
+// Both sides must agree exactly, because the recipient's client compares this
+// hash against its own, so SERVER_HASH_LENGTH and the shared test vector in
+// auth-cli.test.ts pin the two together.
 const SERVER_HASH_LENGTH = 6;
 
 function hashServerId(serverId: string): string {
   return createHash("sha256").update(serverId, "utf8").digest("base64url").slice(0, SERVER_HASH_LENGTH);
 }
 
-/** Where the *app* is served — not the sync server. The link carries only the
- * server's identity hash, so the recipient resolves the route themselves; this
- * base just has to be a page that loads the client. */
+/** Where the *app* is served, not the sync server. The link carries only the
+ * server's identity hash, so the recipient resolves the route themselves, and
+ * this base just has to be a page that loads the client. */
 const DEFAULT_APP_URL = "https://listr.aapx.org/";
 
 function buildJoinUrl(appUrl: string, serverId: string, grantId: string, secret: string): string {
@@ -130,7 +129,7 @@ function main(): void {
 
   // Routine administration, not a one-off migration: issuing a grant is a
   // single INSERT, so copying the whole database for it is pure cost. Back up
-  // only when this run will actually migrate the schema — except for
+  // only when this run will migrate the schema. The exception is
   // reset-server-id, which orphans every client's trust-on-first-use record
   // and is the one command here worth a rollback point.
   const { dbPath, apply } = parseScriptArgs(`auth-cli ${command}`, {
@@ -176,7 +175,7 @@ function runCommand(
       case "list-users": {
         const users = db.listAllUsers();
         if (users.length === 0) {
-          console.log("[auth-cli] no users yet — run bootstrap-root first");
+          console.log("[auth-cli] no users yet; run bootstrap-root first");
           break;
         }
         if (named.tree !== undefined || process.argv.includes("--tree")) {
@@ -239,8 +238,8 @@ function runCommand(
           now,
         );
         console.log(`[auth-cli] grant issued: id=${grantId}`);
-        console.log(`[auth-cli] secret (shown once, not recoverable — hand this to the recipient): ${secret}`);
-        console.log(`[auth-cli] join link (shown once — the secret is in it):`);
+        console.log(`[auth-cli] secret (shown once, not recoverable; hand this to the recipient): ${secret}`);
+        console.log(`[auth-cli] join link (shown once; the secret is in it):`);
         console.log(`  ${buildJoinUrl(named["app-url"] ?? DEFAULT_APP_URL, db.getServerId(), grantId, secret)}`);
         break;
       }

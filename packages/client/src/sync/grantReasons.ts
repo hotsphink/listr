@@ -1,18 +1,17 @@
 /**
  * Failure `reason`s the server can send back for `peek_grant`/`redeem_grant`/
- * `create_grant` (auth-design.md §6, job 3 scope A/B/D) — shared between
- * SyncClient's two consumers of this list:
+ * `create_grant`, shared between SyncClient's two consumers of this list:
  *
  * - EndpointConnection's generic `error` handling normally tears the whole
- *   connection down (§4.2's suspended/revoked/protocol/bad_signature are
- *   genuinely connection-fatal). A grant operation's failure is not: the
- *   whole point of parking a connection in "needs_grant" (or, for `share`,
- *   staying "ready") is that the join/grant UI can retry on the SAME
- *   connection without a reconnect. Reasons in this set are therefore
- *   forwarded to the UI instead of closing the socket.
- * - SyncClient's message router uses the same set to recognize which
- *   `error` replies belong to a pending grant operation (vs. some other kind
- *   of error) and hands them to the matching onGrantReply listener.
+ *   connection down, since suspended, revoked, protocol, and bad_signature are
+ *   genuinely connection-fatal. A grant operation's failure is not: the whole
+ *   point of parking a connection in "needs_grant", or staying "ready" for a
+ *   `share`, is that the join/grant UI can retry on the SAME connection
+ *   without a reconnect. Reasons in this set are therefore forwarded to the UI
+ *   instead of closing the socket.
+ * - SyncClient's message router uses the same set to recognize which `error`
+ *   replies belong to a pending grant operation rather than to some other kind
+ *   of error, and hands those to the matching onGrantReply listener.
  *
  * Kept as one small shared list so the two call sites can't drift apart.
  */

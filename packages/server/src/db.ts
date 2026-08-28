@@ -8,14 +8,10 @@ import { config } from "./config.js";
 
 export type EntityType = "board" | "list" | "item" | "asset";
 
-// ── Identity & authorization (auth-design.md §3, §5, §6, §12.1) ─────────────
-// Phase 1, job 1 of 3: schema + pure db.ts logic + CLI only. No wire-protocol
-// or WebSocket-handler changes here — those are jobs 2 (handshake) and 3 (UI).
+// -- Identity & authorization ------------------------------------------------
 export type UserState = "active" | "suspended" | "revoked";
 export type Cap = "sync" | "invite" | "moderate" | "admin";
-// `triage` was in the original sketch and is deliberately NOT here — it was
-// never an authority bit, only a routing preference, and was killed once
-// request-access (its only consumer) was cut (§5.2, §16.2.9).
+// Every cap is an authority bit. Routing preferences do not belong here.
 export const ALL_CAPS: readonly Cap[] = ["sync", "invite", "moderate", "admin"];
 export type GrantKind = "invite" | "device" | "share" | "guest";
 export type AccessLevel = "rw" | "ro";
@@ -107,19 +103,16 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER NOT NULL
   );
-  -- Keyed by \`user_id\`, not \`home_key\` (migration 5 — rekeyed from the
-  -- home-key-keyed shape migration 3 produced). A home key is an ordinary,
-  -- mutable attribute of a user record (§3.1), not a stable identifier: it has
-  -- no FK to \`users\`, so a tombstoned user (§9.5 keeps user_id but deletes
-  -- other identifying info) would leave orphaned rows nothing could find, and
-  -- a future key rotation would silently orphan every association. Keying by
-  -- user_id also matches job 2's identity shape (client_id -> user_id), rather
-  -- than re-conflating the two things §3.1 exists to separate.
-  -- \`access\` is added by migration 4 (§7.5): 'rw'|'ro', defaulting to 'rw'.
-  -- Nothing sets 'ro' yet — read-only enforcement is Phase 3 — but the column
-  -- ships now because retrofitting an access level onto an established
-  -- user_keys table later is a protocol change, and an unused column today is
-  -- free.
+  -- Keyed by \`user_id\`, not \`home_key\`. A home key is an ordinary, mutable
+  -- attribute of a user record, not a stable identifier, and it carries no FK
+  -- to \`users\`: a tombstoned user keeps its user_id but loses its other
+  -- identifying info, so home-key-keyed rows would be orphans nothing could
+  -- find, and a key rotation would silently orphan every association. user_id
+  -- also matches the identity shape used elsewhere (client_id -> user_id).
+  -- \`access\` is 'rw' or 'ro', defaulting to 'rw'. Read-only enforcement is
+  -- unimplemented, so nothing sets 'ro'; keep the column anyway, since
+  -- retrofitting an access level onto an established user_keys table is a
+  -- protocol change and an unused column costs nothing.
   CREATE TABLE IF NOT EXISTS user_keys (
     user_id  TEXT NOT NULL REFERENCES users(user_id),
     key      TEXT NOT NULL,
@@ -128,19 +121,17 @@ const SCHEMA_SQL = `
     added_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, key)
   );
-  -- ── Identity tables (§12.1) ────────────────────────────────────────────────
-  -- users.user_id is an opaque random id (randomUUID — 122 bits of randomness,
-  -- comfortably close enough to the doc's "128-bit" figure). authorized_by is
-  -- the one edge that makes this a forest: every user but the root has exactly
-  -- one, and the root's is NULL. Cycles are impossible by construction because
-  -- a grant's issuer must already exist when the grant is created, but the
-  -- effective-state walk below still depth-caps defensively.
+  -- Identity tables ----------------------------------------------------------
+  -- users.user_id is an opaque random id (randomUUID, 122 bits of randomness).
+  -- authorized_by is the one edge that makes this a forest: every user but a
+  -- root has exactly one, and a root's is NULL. Cycles are impossible by
+  -- construction, since a grant's issuer must already exist when the grant is
+  -- created, but the effective-state walk below still depth-caps defensively.
   --
-  -- caps is a JSON array snapshotted at grant time and deliberately NEVER
-  -- recomputed from the tree (§5.3) — state cascades down the tree, caps do
-  -- not. state is the user's own EXPLICIT state; see getEffectiveState for the
-  -- worst-state-on-the-path computation that makes cascade suspend/restore a
-  -- single-row UPDATE.
+  -- caps is a JSON array snapshotted at grant time and NEVER recomputed from
+  -- the tree: state cascades down the tree, caps do not. state is the user's
+  -- own EXPLICIT state. See getEffectiveState for the worst-state-on-the-path
+  -- computation that makes cascade suspend/restore a single-row UPDATE.
   CREATE TABLE IF NOT EXISTS users (
     user_id       TEXT PRIMARY KEY,
     display_name  TEXT,
@@ -152,8 +143,8 @@ const SCHEMA_SQL = `
     provisional   INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL
   );
-  -- clients.client_id is the RFC 7638 JWK thumbprint (computed client-side by
-  -- job 2); this job only stores and looks it up, never computes it.
+  -- clients.client_id is the RFC 7638 JWK thumbprint, computed client-side.
+  -- The server only stores it and looks it up, never computes it.
   CREATE TABLE IF NOT EXISTS clients (
     client_id  TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL REFERENCES users(user_id),
@@ -162,12 +153,11 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL,
     last_seen  INTEGER
   );
-  -- One table backs all four grant kinds (invite/device/share/guest, §6) —
-  -- the field that varies is which of caps/payload is populated. The server
-  -- stores only secret_hash (sha256 of a 96-bit random secret); no KDF, because
-  -- the secret is high-entropy random rather than a password, and every check
-  -- against it is online-only (§6.4/§6.6). No \`mailboxes\` table — spoken
-  -- codes were cut (§6.5).
+  -- One table backs all four grant kinds (invite/device/share/guest). The
+  -- field that varies is which of caps/payload is populated. The server stores
+  -- only secret_hash (sha256 of a 96-bit random secret). No KDF is needed,
+  -- since the secret is high-entropy random rather than a password and every
+  -- check against it is online-only.
   CREATE TABLE IF NOT EXISTS grants (
     id             TEXT PRIMARY KEY,
     kind           TEXT NOT NULL,
@@ -181,9 +171,9 @@ const SCHEMA_SQL = `
     attempts       INTEGER NOT NULL DEFAULT 0,
     created_at     INTEGER NOT NULL
   );
-  -- Append-only audit trail of grant issuance/redemption and state changes
-  -- (§12.1). No foreign keys onto users beyond the loose actor/subject ids,
-  -- since a tombstoned user (§9.5) may still be a subject of old events.
+  -- Append-only audit trail of grant issuance/redemption and state changes.
+  -- No foreign keys onto users beyond the loose actor/subject ids, since a
+  -- tombstoned user may still be the subject of old events.
   CREATE TABLE IF NOT EXISTS auth_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     at              INTEGER NOT NULL,
@@ -193,11 +183,10 @@ const SCHEMA_SQL = `
     detail          TEXT
   );
   -- Many-to-many: the same content-addressed asset (Asset.id is a content
-  -- hash) can legitimately be pushed into more than one namespace — e.g. the
+  -- hash) can legitimately be pushed into more than one namespace, such as the
   -- same image used on two unrelated boards. A single sync_key column on
   -- \`assets\` would be first-writer-wins and silently break the other
-  -- namespace, so association lives in this join table instead. See
-  -- migration 2.
+  -- namespace, so association lives in this join table instead.
   CREATE TABLE IF NOT EXISTS asset_keys (
     asset_id TEXT NOT NULL,
     sync_key TEXT NOT NULL,
@@ -217,25 +206,22 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_grants_issuer ON grants(issuer_user_id);
   CREATE INDEX IF NOT EXISTS idx_auth_events_at ON auth_events(at);
 `;
-// idx_user_keys is NOT created above, deliberately — unlike the other new
-// indexes, user_keys' shape is migration-dependent: a pre-existing database
-// may still have the pre-migration-5 `home_key` column at the moment
-// SCHEMA_SQL runs (CREATE TABLE IF NOT EXISTS leaves an existing table's
-// columns untouched), so an unconditional `CREATE INDEX ... (user_id)` here
-// would throw "no such column" on exactly the databases migration 5 exists to
-// upgrade. Instead migration 5 (below) creates it unconditionally at the end
-// of its own run — reached on every open, whether or not that particular run
-// needed to do any rekeying — which is late enough that the column always
-// exists by then.
+// idx_user_keys is deliberately absent from SCHEMA_SQL. The shape of
+// user_keys is migration-dependent: a database on an older schema still has
+// the `home_key` column at the moment SCHEMA_SQL runs (CREATE TABLE IF NOT
+// EXISTS leaves an existing table's columns untouched), so an unconditional
+// `CREATE INDEX ... (user_id)` here would throw "no such column" on exactly
+// the databases migration 5 has to upgrade. Migration 5 creates the index at
+// the end of its own run instead, which happens on every open whether or not
+// that run rekeys anything, and by then the column always exists.
 
-// ── Schema versioning (§12.1) ────────────────────────────────────────────────
+// -- Schema versioning -------------------------------------------------------
 // A `schema_version` row in `server_config`, plus an ordered migration list
-// that `applyMigrations` walks. Every migration body is written to be a no-op
-// when its target shape already exists (same `hasColumn`-style guards the old
-// ad-hoc code used), so a brand-new database — where SCHEMA_SQL above already
-// creates the latest shape — and a pre-existing database that predates
-// schema_version entirely (no row at all, treated as version 0) take the
-// exact same path: baselining and upgrading are the same code.
+// that `applyMigrations` walks. Write every migration body to be a no-op when
+// its target shape already exists, guarded by `hasColumn` or an IF NOT EXISTS,
+// so that a brand-new database (where SCHEMA_SQL above already creates the
+// latest shape) and a database with no schema_version row at all (treated as
+// version 0) take the same path. Baselining and upgrading are the same code.
 
 function readSchemaVersion(sql: Database.Database): number {
   const row = sql.prepare(`SELECT value FROM server_config WHERE key = 'schema_version'`).get() as
@@ -258,10 +244,9 @@ function hasColumn(sql: Database.Database, table: string, col: string): boolean 
   return cols.some((c) => c.name === col);
 }
 
-// Migration 1: the columns that used to be added ad hoc via PRAGMA table_info
-// inspection on every server start. Folded into the migration list unchanged
-// (same idempotent hasColumn guards) so it becomes one versioned step instead
-// of code that ran unconditionally on every boot.
+// Migration 1: the baseline columns and indexes the rest of the code assumes
+// are present. Each step is guarded by hasColumn, so this is a no-op on a
+// database that already has them.
 function migrateV1LegacyColumnBaseline(sql: Database.Database): void {
   if (!hasColumn(sql, "boards", "created_at")) {
     sql.exec(`ALTER TABLE boards ADD COLUMN created_at INTEGER`);
@@ -302,19 +287,18 @@ function migrateV1LegacyColumnBaseline(sql: Database.Database): void {
   }
 }
 
-// Migration 2: the asset_keys join table that closes the global asset leak
-// (§2.1 defect 2) plus a one-time backfill for assets that predate it.
-// Existing assets have no recorded association; leaving them unassociated
-// would make them vanish for everyone, breaking images already in use.
-// Backfill by substring-matching each asset id against every board/list/item's
-// stored data — ids are 20 hex chars, so collisions aren't a practical
-// concern, and these databases are small enough that an O(assets × entities)
-// scan is fine. Assets matching nothing are genuinely orphaned; they're left
-// unassociated and counted in the log line below.
-// Assets are referenced from entity content as `hash://<20 hex>.<ext>` — the
-// same form the client scans for in extractReferencedAssetIds (exportImport.ts).
-// Pulling ids out of the JSON is O(references); matching against the whole
-// assets table would be O(assets) on every single push.
+// Migration 2: the asset_keys join table, which keeps an asset visible only to
+// the namespaces that reference it, plus a backfill for assets carrying no
+// recorded association. Leaving those unassociated would make them vanish for
+// everyone and break images already in use, so match each asset id against
+// every board/list/item's stored data. Ids are 20 hex chars, so collisions are
+// not a practical concern, and these databases are small enough that an
+// O(assets * entities) scan is fine. Assets matching nothing are genuinely
+// orphaned; they stay unassociated and are counted in the log line below.
+// Entity content references an asset as `hash://<20 hex>.<ext>`, the same form
+// the client scans for in extractReferencedAssetIds (exportImport.ts). Pulling
+// ids out of the JSON is O(references); matching against the whole assets
+// table would be O(assets) on every push.
 const ASSET_HASH_RE = /hash:\/\/([0-9a-f]{20})\.[a-z0-9]+/gi;
 
 function extractAssetIds(json: string): Set<string> {
@@ -333,9 +317,9 @@ function migrateV2AssetKeys(sql: Database.Database): void {
   );
   if (known.size === 0) return;
 
-  // One pass over each entity table, extracting references as we go. The
-  // previous shape ran a non-indexable `data LIKE '%id%'` scan per asset per
-  // table, which is O(assets x rows) at startup.
+  // One pass over each entity table, extracting references as we go. A
+  // `data LIKE '%id%'` scan per asset per table is not indexable and costs
+  // O(assets * rows) at startup.
   const insert = sql.prepare(`INSERT OR IGNORE INTO asset_keys (asset_id, sync_key) VALUES (?, ?)`);
   const associated = new Set<string>();
   for (const table of ["boards", "lists", "items"] as const) {
@@ -354,12 +338,11 @@ function migrateV2AssetKeys(sql: Database.Database): void {
   console.log(`[migrate] asset_keys backfill: associated ${associated.size}/${known.size} asset(s), ${known.size - associated.size} left orphaned (no referencing entity found)`);
 }
 
-// Migration 3: user_keys.user_key -> home_key (§12.1 — internal rename only) —
-// the home key is now server-assigned and arrives in `ok.home_key`. Superseded
-// by migration 5, which rekeys user_keys again, this time to user_id — so on a
-// brand-new database (SCHEMA_SQL already creates user_keys in the user_id shape
-// directly) neither the rename nor the home_key index below has anything to do;
-// both are guarded so this is a true no-op there.
+// Migration 3: rename user_keys.user_key to home_key. Migration 5 rekeys the
+// table again, this time to user_id, so on a brand-new database (SCHEMA_SQL
+// creates user_keys in the user_id shape directly) neither the rename nor the
+// home_key index below has anything to do. Both are guarded, so this is a true
+// no-op there.
 function migrateV3RenameHomeKey(sql: Database.Database): void {
   if (hasColumn(sql, "user_keys", "user_key")) {
     sql.exec(`ALTER TABLE user_keys RENAME COLUMN user_key TO home_key`);
@@ -369,11 +352,10 @@ function migrateV3RenameHomeKey(sql: Database.Database): void {
   }
 }
 
-// Migration 4 (§12.1): the identity tables — users, clients, grants,
-// auth_events — plus user_keys.access (§7.5). Same CREATE TABLE IF NOT EXISTS
-// bodies as SCHEMA_SQL, so a brand-new database (which already gets them from
-// SCHEMA_SQL) and a pre-v5 database (which does not) converge on the same
-// shape, per the module-level convention above.
+// Migration 4: the identity tables (users, clients, grants, auth_events) plus
+// user_keys.access. Same CREATE TABLE IF NOT EXISTS bodies as SCHEMA_SQL, so a
+// brand-new database, which gets them from SCHEMA_SQL, and an older one, which
+// does not, converge on the same shape per the module-level convention above.
 function migrateV4Identity(sql: Database.Database): void {
   sql.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -428,39 +410,30 @@ function migrateV4Identity(sql: Database.Database): void {
   }
 }
 
-// Migration 5: rekey user_keys from home_key to user_id. Reconsidered after
-// job 1 shipped keyed by home_key — a home key has no FK to `users` (a
-// tombstoned user, §9.5, would leave orphaned rows nothing could find), it's
-// an ordinary mutable attribute rather than a stable identifier (§3.1 — a
-// future rotation would silently orphan every association), and job 2 makes
-// identity client_id -> user_id, so keying associations by home_key would
-// re-conflate the two things §3.1 exists to keep separate.
+// Migration 5: rekey user_keys from home_key to user_id. See the user_keys
+// comment on SCHEMA_SQL above for why user_id is the right key to use.
 //
-// The hard part: a pre-v5 database's user_keys rows may reference home keys
-// with NO corresponding `users` row at all (the users table didn't exist
-// before migration 4). Per §13's migration procedure — "for each existing
-// distinct home key, mint a user and carry that key over as their home_key,
-// preserving their user_keys rows" — minting happens HERE rather than being
-// left to a forgotten CLI step, so no association can be silently dropped by
-// an upgrade that skips a manual command.
+// The hard part: an older database's user_keys rows may reference home keys
+// with NO corresponding `users` row at all, since the users table only arrives
+// in migration 4. So for each distinct home key, mint a user and carry that
+// key over as their home_key, preserving their user_keys rows. Mint HERE
+// rather than leaving it to a CLI step, so that an upgrade cannot silently
+// drop associations by skipping a manual command.
 //
 // Minted users are unparented (authorized_by=NULL). A forest with several
-// unparented users is structurally fine (§5.1) — getEffectiveState terminates
-// at each one regardless — but it does mean "unparented" can no longer be
-// used as a proxy for "the designated root" (see findRootUser/bootstrapRootUser
-// below, which were changed in this same pass to stop assuming that). The
-// operator re-parents minted users with `auth-cli.ts set-parent`. They are
-// deliberately NOT marked `provisional` — that flag means guest-link users
-// specifically (§7.4), and these are pre-existing account holders, not
-// guests picked up off a shared link.
+// unparented users is structurally fine, and getEffectiveState terminates at
+// each one regardless, but it does mean "unparented" is not a proxy for "the
+// designated root" (see findRootUser/bootstrapRootUser below). The operator
+// re-parents minted users with `auth-cli.ts set-parent`. They are deliberately
+// NOT marked `provisional`: that flag means guest-link users specifically, and
+// these are ordinary account holders, not guests picked up off a shared link.
 function migrateV5RekeyUserKeysToUserId(sql: Database.Database): void {
-  // Only the pre-migration-5 shape (home_key column present) needs the
-  // mint-and-rebuild below. A fresh database's user_keys is already in the
-  // user_id shape via SCHEMA_SQL and skips straight to the unconditional
-  // index creation at the end of this function — which is precisely why that
-  // index can't live in SCHEMA_SQL's unconditional block (see the comment
-  // there): it has to run AFTER this rebuild for upgrading databases, so it
-  // has to live here.
+  // Only the older shape (home_key column present) needs the mint-and-rebuild
+  // below. A fresh database's user_keys is already in the user_id shape via
+  // SCHEMA_SQL and skips straight to the unconditional index creation at the
+  // end of this function. That index cannot live in SCHEMA_SQL's unconditional
+  // block (see the comment there) because for an upgrading database it has to
+  // run AFTER this rebuild.
   if (hasColumn(sql, "user_keys", "home_key")) {
     const homeKeys = sql.prepare(`SELECT DISTINCT home_key FROM user_keys`).all() as { home_key: string }[];
     const userIdForHomeKey = new Map<string, string>();
@@ -480,9 +453,8 @@ function migrateV5RekeyUserKeysToUserId(sql: Database.Database): void {
         continue;
       }
       const userId = randomUUID();
-      // Approximate created_at from the earliest association we have for
-      // this home key, rather than "now" — a cosmetic nicety (there's no
-      // better signal available), not load-bearing anywhere.
+      // Approximate created_at from the earliest association for this home
+      // key rather than "now". Cosmetic, and nothing depends on it.
       const createdAt = (earliestAddedAt.get(home_key) as { min_added: number | null }).min_added ?? Date.now();
       insertMintedUser.run(userId, JSON.stringify(["sync"]), home_key, createdAt);
       userIdForHomeKey.set(home_key, userId);
@@ -537,7 +509,7 @@ export const LATEST_SCHEMA_VERSION: number = MIGRATIONS[MIGRATIONS.length - 1].v
  * `openDb` migrates unconditionally, including for read-only commands, so by
  * the time a caller holds a db handle the schema has *already* changed. This
  * lets a maintenance script find out beforehand whether this run is about to
- * mutate the schema, and so whether it is worth the cost of a backup — see
+ * mutate the schema, and so whether it is worth the cost of a backup. See
  * scripts/cli.ts's "schema-change" backup policy.
  */
 export function peekSchemaVersion(dbPath: string): number {
@@ -549,8 +521,9 @@ export function peekSchemaVersion(dbPath: string): number {
       | undefined;
     return row ? Number(row.value) : 0;
   } catch {
-    // No server_config table at all (a pre-versioning or otherwise unfamiliar
-    // file). Treat as version 0 — i.e. migrations pending, back it up.
+    // No server_config table at all (an unversioned or otherwise unfamiliar
+    // file). Treat as version 0, so migrations are pending and a backup is
+    // warranted.
     return 0;
   } finally {
     sql?.close();
@@ -567,12 +540,12 @@ function applyMigrations(sql: Database.Database): void {
   }
 }
 
-// ── Clock-skew clamp (§11.2.2) ──────────────────────────────────────────────
+// -- Clock-skew clamp --------------------------------------------------------
 // A bad or malicious client clock can otherwise write updated_at/deleted_at
-// far in the future; LWW then treats that version as permanently unbeatable —
-// every honest later edit loses forever, on every device. Clamp (don't
-// reject) to server time plus a small allowance, so an honestly-skewed clock
-// still gets its write accepted.
+// far in the future, and LWW then treats that version as permanently
+// unbeatable: every honest later edit loses forever, on every device. Clamp to
+// server time plus a small allowance rather than rejecting, so an honestly
+// skewed clock still gets its write accepted.
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function clampToServerTime(ts: number): number {
@@ -580,24 +553,20 @@ function clampToServerTime(ts: number): number {
   return ts > cap ? cap : ts;
 }
 
-// ── Auth constants ───────────────────────────────────────────────────────────
+// -- Auth constants ----------------------------------------------------------
 // The tree is a forest by construction (a grant's issuer must already exist),
-// so no cycle should ever occur — but getEffectiveState walks it with a depth
-// cap anyway, defensively, rather than trusting that invariant to hold forever.
+// so no cycle should ever occur, but getEffectiveState walks it with a depth
+// cap anyway rather than trusting that invariant to hold forever.
 const MAX_TREE_DEPTH = 200;
 
-// §7.3b: guest TTL is 24h, not the original 30 minutes — single-use redemption
-// does the security work, and a short TTL only strands the recipient. The doc
-// only pins guest's default explicitly; the other three kinds get the same
-// default here for lack of a stated reason to differ (a caller may always
-// pass an explicit expiresAt).
+// A day is generous for a grant because single-use redemption does the
+// security work; a short TTL only strands the recipient. All four kinds share
+// this default, and a caller may pass an explicit expiresAt instead.
 const DEFAULT_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 
-// §6.6 / §6/6.1: every grant secret is checked online-only, so the attempt
-// counter — not the secret's entropy — is the real defense. 10 wrong guesses
-// then burn (uses_remaining forced to 0); the doc specifies "an attempt
-// limit" without pinning the number, so this is a judgment call, not a
-// transcription of the design doc.
+// Every grant secret is checked online-only, so the attempt counter, not the
+// secret's entropy, is the real defense. 10 wrong guesses burn the grant
+// (uses_remaining forced to 0). The exact number is a judgment call.
 const MAX_GRANT_ATTEMPTS = 10;
 
 function tableFor(type: EntityType): string {
@@ -616,14 +585,12 @@ export function createDbApi(sql: Database.Database) {
     return id;
   }
 
-  // Any asset id (from the `assets` table) that appears as a substring of
-  // `dataJson` gets linked to `syncKey`. Same technique as the migration-2
-  // backfill above, run incrementally on every board/list/item push instead
-  // of once. This matters going forward, not just for old data: a freshly
-  // uploaded image is always pushed under the *uploader's* own key (the
-  // client has no board context at asset-push time — see SyncClient
-  // effectiveKeyForEntity), so without this, a new image added to a shared
-  // board would sync down for its uploader only, not the people it was
+  // Link every asset id referenced by `dataJson` to `syncKey`. Same technique
+  // as the migration-2 backfill above, run on every board/list/item push. A
+  // freshly uploaded image is always pushed under the uploader's own key,
+  // since the client has no board context at asset-push time (see SyncClient
+  // effectiveKeyForEntity), so without this a new image added to a shared
+  // board would sync down for its uploader alone and not for the people it is
   // shared with.
   function associateReferencedAssets(dataJson: string, syncKey: string): void {
     if (!syncKey) return;
@@ -645,8 +612,9 @@ export function createDbApi(sql: Database.Database) {
     // Format gate: refuse legacy/unversioned item blobs. The protocol version
     // gates the client BINARY, but a current client can still carry old-format
     // rows (the Dexie upgrade never touches sync-pulled data) and re-push them
-    // in its initial sync. Keyed on schema_version alone — never field-sniffing.
-    // Clients heal such rows to the current shape before their pushes are kept.
+    // in its initial sync. Key on schema_version alone, never on field
+    // sniffing. Clients heal such rows to the current shape before their
+    // pushes are kept.
     if (type === "item" && !isCurrentSchemaVersion(data.schema_version)) {
       console.warn(`[sync] rejected legacy item ${data.id} (schema_version=${data.schema_version ?? "missing"})`);
       return { accepted: false, previous: null };
@@ -677,8 +645,8 @@ export function createDbApi(sql: Database.Database) {
         .prepare(`INSERT INTO assets (id, created_at, updated_at, data) VALUES (?, ?, ?, ?)
                   ON CONFLICT(id) DO UPDATE SET created_at=excluded.created_at, updated_at=excluded.updated_at, data=excluded.data`)
         .run(data.id, data.created_at ?? null, data.updated_at, dataJson);
-      // Global leak fix (§2.1 defect 2): record which namespace pushed this
-      // asset instead of it being visible to every namespace on the server.
+      // Record which namespace pushed this asset, so that it is not visible
+      // to every namespace on the server.
       if (syncKey) {
         sql.prepare(`INSERT OR IGNORE INTO asset_keys (asset_id, sync_key) VALUES (?, ?)`).run(data.id, syncKey);
       }
@@ -764,8 +732,8 @@ export function createDbApi(sql: Database.Database) {
   function getEntitiesSince(type: EntityType, syncKey: string, since: number): unknown[] {
     const table = tableFor(type);
     if (type === "asset") {
-      // Joined through asset_keys instead of a plain sync_key column — see
-      // the asset_keys comment on SCHEMA_SQL above (§2.1 defect 2 fix).
+      // Join through asset_keys rather than a plain sync_key column. See the
+      // asset_keys comment on SCHEMA_SQL above.
       const rows = sql
         .prepare(`SELECT a.data FROM assets a JOIN asset_keys ak ON ak.asset_id = a.id WHERE ak.sync_key = ? AND a.updated_at > ?`)
         .all(syncKey, since) as { data: string }[];
@@ -803,12 +771,12 @@ export function createDbApi(sql: Database.Database) {
       .all(syncKey, since) as { entity_type: string; entity_id: string; deleted_at: number }[];
   }
 
-  // ── User/key associations ───────────────────────────────────────────────────
-  // Keyed by `user_id` (migration 5) — a home key is an ordinary, mutable
-  // attribute of a user record (§3.1), not a stable identifier, so it's the
-  // wrong thing to key an association table on. See the migration-5 comment
-  // above for the full reasoning. `key` here is never the user's own home key
-  // itself — callers filter that out before calling.
+  // -- User/key associations -------------------------------------------------
+  // Keyed by `user_id`. A home key is an ordinary, mutable attribute of a user
+  // record, not a stable identifier, so it is the wrong thing to key an
+  // association table on. See the user_keys comment on SCHEMA_SQL above for
+  // the full reasoning. `key` here is never the user's own home key: callers
+  // filter that out before calling.
 
   function associateUserKey(userId: string, key: string, name: string | null): void {
     sql
@@ -829,14 +797,12 @@ export function createDbApi(sql: Database.Database) {
       .all(userId) as { key: string; name: string | null }[];
   }
 
-  // Transitional bridge for the still-unauthenticated v4 wire protocol
-  // (job 2 replaces this with real client registration + handshake). A v4
-  // `hello` carries only a home key, no user_id — this resolves one from the
-  // other, minting a user on first sight so v4 clients keep working
-  // unchanged while the identity layer is introduced underneath them.
-  // Unparented and caps=['sync'], same as migration 5's minted legacy users,
-  // and for the same reason (these are ordinary pre-existing account holders,
-  // not guests — provisional stays false).
+  // An unauthenticated `hello` carries only a home key, no user_id, while user
+  // records are keyed by user_id. Resolve one from the other here, minting a
+  // user the first time a key is seen. Minted users are unparented with
+  // caps=['sync'], the same shape migration 5 mints and for the same reason:
+  // they are ordinary account holders rather than guests, so provisional
+  // stays false.
   function getOrCreateUserByHomeKey(homeKey: string): UserRow {
     const existing = sql.prepare(`SELECT * FROM users WHERE home_key = ? LIMIT 1`).get(homeKey) as
       | Parameters<typeof rowToUser>[0]
@@ -845,7 +811,7 @@ export function createDbApi(sql: Database.Database) {
     return createUser({ authorizedBy: null, caps: ["sync"], homeKey, provisional: false }, Date.now());
   }
 
-  // ── Append-only audit trail (§12.1) ─────────────────────────────────────────
+  // -- Append-only audit trail -----------------------------------------------
 
   function logAuthEvent(
     event: { kind: string; actorUserId: string | null; subjectUserId: string | null; detail?: string | null },
@@ -867,14 +833,11 @@ export function createDbApi(sql: Database.Database) {
     detail: string | null;
   }
 
-  // Not wired into the CLI in this job (not in the explicit scope), but the
-  // table is useless as an audit trail if nothing can ever read it back, so a
-  // minimal accessor ships alongside the writer.
   function listAuthEvents(limit = 100): AuthEventRow[] {
     return sql.prepare(`SELECT * FROM auth_events ORDER BY id DESC LIMIT ?`).all(limit) as AuthEventRow[];
   }
 
-  // ── Users (§3, §5, §9) ───────────────────────────────────────────────────────
+  // -- Users -----------------------------------------------------------------
 
   function rowToUser(row: {
     user_id: string; display_name: string | null; authorized_by: string | null; note: string | null;
@@ -898,15 +861,13 @@ export function createDbApi(sql: Database.Database) {
     return row ? rowToUser(row) : null;
   }
 
-  // The "designated root" is tracked explicitly in server_config, NOT inferred
-  // from `authorized_by IS NULL`. It used to be inferred — that was correct
-  // only as long as the root was the sole unparented user, which migration 5
-  // broke: a pre-v5 database's home keys get minted as unparented users too
-  // (§5.1 allows a forest of several), and until an operator re-parents them
-  // with `set-parent`, "authorized_by IS NULL" matches all of them, not just
-  // the one the CLI actually bootstrapped. An explicit marker is the only way
-  // bootstrap-root stays idempotent (and doesn't mistake a migrated legacy
-  // user for the root) once that forest can have more than one unparented tip.
+  // Track the "designated root" explicitly in server_config, NOT inferred from
+  // `authorized_by IS NULL`. The tree is a forest and can hold several
+  // unparented users: migration 5 mints one per pre-existing home key, and
+  // until an operator re-parents them with `set-parent`, "authorized_by IS
+  // NULL" matches all of them rather than just the one the CLI bootstrapped.
+  // Only an explicit marker keeps bootstrap-root idempotent and stops it
+  // mistaking a minted user for the root.
   const ROOT_USER_CONFIG_KEY = "root_user_id";
 
   function findRootUser(): UserRow | null {
@@ -928,8 +889,8 @@ export function createDbApi(sql: Database.Database) {
     },
     now: number,
   ): UserRow {
-    // home_key is server-generated (§3.1) — the user never types or sees a
-    // raw key at registration; it arrives later via ok.user_keys (job 2).
+    // home_key is server-generated. The user never types or sees a raw key at
+    // registration; it reaches them later via ok.user_keys.
     const userId = params.userId ?? randomUUID();
     const homeKey = params.homeKey ?? randomUUID();
     sql
@@ -974,9 +935,9 @@ export function createDbApi(sql: Database.Database) {
     sql.prepare(`UPDATE users SET note = ? WHERE user_id = ?`).run(note, userId);
   }
 
-  // §9.2/§7.4: a user's own display_name, self-set (unlike `note`, which is
-  // written by the authorizer about them). Optional, mutable, a nickname —
-  // never validated against anything, per §9's "nickname, not your name".
+  // A user's own self-chosen display_name, unlike `note`, which the authorizer
+  // writes about them. Optional, mutable, a nickname, and validated against
+  // nothing.
   function setUserDisplayName(userId: string, displayName: string | null, now: number): UserRow {
     const result = sql.prepare(`UPDATE users SET display_name = ? WHERE user_id = ?`).run(displayName, userId);
     if (result.changes === 0) throw new Error(`setUserDisplayName: no such user ${userId}`);
@@ -984,12 +945,12 @@ export function createDbApi(sql: Database.Database) {
     return getUser(userId)!;
   }
 
-  // Cascade suspend/revoke — and restore — are each exactly this one UPDATE on
-  // this one row (§5.3). Descendants are never touched: their EXPLICIT state
-  // is unchanged, and getEffectiveState recomputes the worst state on the
-  // path fresh on every read, so restoring a parent makes children revert
-  // automatically to whatever their own explicit state already was — there is
-  // no "which children did I cascade to" bookkeeping to get wrong.
+  // Cascade suspend, revoke, and restore are each exactly this one UPDATE on
+  // this one row. Descendants are never touched: their EXPLICIT state stands,
+  // and getEffectiveState recomputes the worst state on the path fresh on
+  // every read, so restoring a parent lets children revert automatically to
+  // whatever their own explicit state says. There is no "which children did I
+  // cascade to" bookkeeping to get wrong.
   function setUserState(userId: string, state: UserState, now: number, actorUserId?: string | null): UserRow {
     const result = sql.prepare(`UPDATE users SET state = ? WHERE user_id = ?`).run(state, userId);
     if (result.changes === 0) throw new Error(`setUserState: no such user ${userId}`);
@@ -997,12 +958,12 @@ export function createDbApi(sql: Database.Database) {
     return getUser(userId)!;
   }
 
-  // Effective state = the worst state on the path from root to `userId`,
-  // computed with a WITH RECURSIVE CTE walking authorized_by upward (§5.3).
-  // Depth-capped defensively even though the graph is a forest by
-  // construction (a grant's issuer must already exist, so no cycle can form
-  // through normal operation) — a corrupted or hand-edited DB should not be
-  // able to turn this into an infinite walk.
+  // Effective state is the worst state on the path from root to `userId`,
+  // computed with a WITH RECURSIVE CTE walking authorized_by upward.
+  // Depth-capped defensively even though the graph is a forest by construction
+  // (a grant's issuer must already exist, so no cycle can form through normal
+  // operation), because a corrupted or hand-edited DB must not be able to turn
+  // this into an infinite walk.
   function getEffectiveState(userId: string): UserState | null {
     const row = sql
       .prepare(
@@ -1021,10 +982,10 @@ export function createDbApi(sql: Database.Database) {
     return row?.state ?? null;
   }
 
-  // §7.4: "promote" clears provisional and (optionally) adds caps. Nothing is
-  // re-created — the user keeps their user_id, home_key, and anything they
-  // made as a guest, which is exactly what falls out of caps being
-  // snapshotted rather than derived.
+  // Promotion clears provisional and optionally adds caps. Nothing is
+  // re-created: the user keeps their user_id, home_key, and anything they made
+  // as a guest, which is exactly what falls out of caps being snapshotted
+  // rather than derived.
   function promoteProvisionalUser(userId: string, extraCaps: Cap[], now: number, actorUserId?: string | null): UserRow {
     const user = getUser(userId);
     if (!user) throw new Error(`promoteProvisionalUser: no such user ${userId}`);
@@ -1037,11 +998,11 @@ export function createDbApi(sql: Database.Database) {
     return getUser(userId)!;
   }
 
-  // §5.5: bootstrap is idempotent — calling it again after a root already
-  // exists just returns that root rather than erroring, so the CLI command
-  // is safe to re-run. Recorded in server_config (see ROOT_USER_CONFIG_KEY
-  // above) rather than inferred from authorized_by, so it stays correct even
-  // when migration 5 has minted other unparented users alongside it.
+  // Bootstrap is idempotent: calling it once a root exists returns that root
+  // rather than erroring, so the CLI command is safe to re-run. The root is
+  // recorded in server_config (see ROOT_USER_CONFIG_KEY above) rather than
+  // inferred from authorized_by, so it stays correct even when migration 5 has
+  // minted other unparented users alongside it.
   function bootstrapRootUser(now: number): UserRow {
     const existing = findRootUser();
     if (existing) return existing;
@@ -1074,11 +1035,10 @@ export function createDbApi(sql: Database.Database) {
     return false;
   }
 
-  // Re-parent a user — the CLI's `set-parent`, needed precisely because
-  // migration 5 can mint users with no authorized_by at all (§5.1's forest of
-  // unparented tips) and the operator needs a way to graft them onto the real
-  // tree afterward. `newParentId=null` explicitly detaches (a second forest
-  // root), which is allowed but not the common case.
+  // Re-parent a user, behind the CLI's `set-parent`. Migration 5 can mint
+  // users with no authorized_by at all, so an operator needs a way to graft
+  // them onto the real tree. `newParentId=null` explicitly detaches, making a
+  // second forest root, which is allowed but not the common case.
   function setAuthorizedBy(userId: string, newParentId: string | null, now: number, actorUserId?: string | null): UserRow {
     const user = getUser(userId);
     if (!user) throw new Error(`setAuthorizedBy: no such user ${userId}`);
@@ -1097,8 +1057,8 @@ export function createDbApi(sql: Database.Database) {
     return getUser(userId)!;
   }
 
-  // Break-glass admin grant (§5.5, §15) — CLI-only. Never reachable via the
-  // grants table; assertCapsAttenuated below rejects 'admin' unconditionally.
+  // Break-glass admin grant, CLI-only. Never reachable via the grants table,
+  // since assertCapsAttenuated below rejects 'admin' unconditionally.
   function grantAdminCap(userId: string, now: number, actorUserId?: string | null): UserRow {
     const user = getUser(userId);
     if (!user) throw new Error(`grantAdminCap: no such user ${userId}`);
@@ -1106,9 +1066,9 @@ export function createDbApi(sql: Database.Database) {
     return setUserCaps(userId, [...user.caps, "admin"], now, actorUserId ?? "cli-break-glass");
   }
 
-  // ── Clients (§3, §12.1 scope D) ──────────────────────────────────────────────
-  // client_id is the RFC 7638 JWK thumbprint, computed client-side (job 2).
-  // This layer only stores and looks it up.
+  // -- Clients ---------------------------------------------------------------
+  // client_id is the RFC 7638 JWK thumbprint, computed client-side. This layer
+  // only stores it and looks it up.
 
   function rowToClient(row: {
     client_id: string; user_id: string; pubkey_jwk: string; label: string | null; created_at: number; last_seen: number | null;
@@ -1123,7 +1083,7 @@ export function createDbApi(sql: Database.Database) {
     return row ? rowToClient(row) : null;
   }
 
-  // For AdminPage's identity section (§8.2 scope C: "your devices").
+  // Backs AdminPage's "your devices" list.
   function getClientsForUser(userId: string): ClientRow[] {
     return (
       sql.prepare(`SELECT * FROM clients WHERE user_id = ? ORDER BY created_at`).all(userId) as Parameters<
@@ -1134,10 +1094,10 @@ export function createDbApi(sql: Database.Database) {
 
   /**
    * Rename one of `userId`'s own devices. `user_id` is part of the WHERE
-   * clause rather than a separate ownership check, so a client cannot relabel
-   * a device belonging to anyone else even if it guesses a client_id — the
-   * authorization and the update are one statement. Returns false when the
-   * client does not exist or is not this user's.
+   * clause rather than a separate ownership check, so the authorization and
+   * the update are one statement and a client cannot relabel a device
+   * belonging to anyone else even if it guesses a client_id. Returns false
+   * when the client does not exist or is not this user's.
    */
   function setClientLabel(clientId: string, userId: string, label: string | null): boolean {
     const result = sql
@@ -1151,9 +1111,9 @@ export function createDbApi(sql: Database.Database) {
     now: number,
   ): ClientRow {
     // A conflicting client_id can only mean the same keypair redeeming again
-    // (retry) or reconnecting — user_id and pubkey_jwk are keyed by the
-    // thumbprint and cannot legitimately change, so only last_seen and label
-    // move on conflict.
+    // or reconnecting. user_id and pubkey_jwk are keyed by the thumbprint and
+    // cannot legitimately change, so only last_seen and label move on
+    // conflict.
     sql
       .prepare(
         `INSERT INTO clients (client_id, user_id, pubkey_jwk, label, created_at, last_seen)
@@ -1168,8 +1128,8 @@ export function createDbApi(sql: Database.Database) {
     sql.prepare(`UPDATE clients SET last_seen = ? WHERE client_id = ?`).run(now, clientId);
   }
 
-  // The lookup job 2's handshake needs: client -> user -> effective state, in
-  // one call, so the caller never has to remember to also check the tree.
+  // The lookup the handshake needs: client -> user -> effective state, in one
+  // call, so the caller never has to remember to also check the tree.
   function getUserForClient(clientId: string): { client: ClientRow; user: UserRow; effectiveState: UserState } | null {
     const client = getClientById(clientId);
     if (!client) return null;
@@ -1178,23 +1138,23 @@ export function createDbApi(sql: Database.Database) {
     return { client, user, effectiveState: getEffectiveState(user.user_id) ?? user.state };
   }
 
-  // ── Grants (§6) ──────────────────────────────────────────────────────────────
+  // -- Grants ----------------------------------------------------------------
 
   function hashSecret(secret: string): string {
     return createHash("sha256").update(secret).digest("hex");
   }
 
   function generateGrantSecret(): string {
-    // 96 bits (§7.3a-bis) — the secret is checkable only against this server
-    // (no offline grind possible), and single-use redemption plus the attempt
-    // limit below already does the real security work (§6.4/§6.6). 96 bits
-    // is overkill on top of that; it costs nothing to keep.
+    // 96 bits. The secret is checkable only against this server, so no
+    // offline grind is possible, and single-use redemption plus the attempt
+    // limit above does the real security work. 96 bits is overkill on top of
+    // that, and it costs nothing.
     return randomBytes(12).toString("base64url");
   }
 
-  // §5.2 attenuation rule: caps on a grant must be a subset of the issuer's
-  // OWN caps (never recomputed from the tree — see the users table comment
-  // above), and 'admin' is never grantable this way at all — only via config
+  // Attenuation rule: caps on a grant must be a subset of the issuer's OWN
+  // caps, which are never recomputed from the tree (see the users table
+  // comment above). 'admin' is not grantable this way at all, only via config
   // or the CLI's break-glass command.
   function assertCapsAttenuated(issuerCaps: Cap[], requestedCaps: Cap[]): void {
     if (requestedCaps.includes("admin")) {
@@ -1234,7 +1194,7 @@ export function createDbApi(sql: Database.Database) {
     params: {
       kind: GrantKind;
       issuerUserId: string;
-      caps?: Cap[]; // invite only — guest's caps are fixed below, not caller-supplied
+      caps?: Cap[]; // invite only; guest's caps are fixed below
       payload?: string; // share/guest only: the sync_key being handed over
       greeting?: string | null;
       expiresAt?: number;
@@ -1244,22 +1204,21 @@ export function createDbApi(sql: Database.Database) {
   ): { grantId: string; secret: string } {
     const issuer = getUser(params.issuerUserId);
     if (!issuer) throw new Error(`createGrant: no such issuer ${params.issuerUserId}`);
-    // Not spelled out verbatim in the doc, but a direct consequence of §5.3's
-    // cascade intent: a suspended/revoked issuer's `invite` cap exists
-    // precisely to admit new users, so honoring it for someone already cut
-    // off would let the tree keep growing through grants issued after the
-    // cutoff. Reject rather than silently allow.
+    // A suspended or revoked issuer's `invite` cap exists precisely to admit
+    // new users, so honoring it for someone already cut off would let the tree
+    // keep growing through grants issued after the cutoff. Reject rather than
+    // silently allow.
     const effectiveState = getEffectiveState(issuer.user_id);
     if (effectiveState !== "active") {
       throw new Error(`createGrant: issuer is not active (effective state: ${effectiveState})`);
     }
 
-    // §5.2: 'invite' is itself an authority bit, not just a ceiling on what
-    // gets handed to the new user — an issuer without it must not be able to
-    // mint child users at all, even by requesting caps=[] (which would
-    // otherwise pass assertCapsAttenuated's subset check trivially, since the
-    // empty set is a subset of anything). Caught here rather than relying on
-    // the UI gate (§8.2 hides the button, but the server must not trust that).
+    // 'invite' is itself an authority bit, not just a ceiling on what gets
+    // handed to the new user: an issuer without it must not be able to mint
+    // child users at all, not even by requesting caps=[], which would pass
+    // assertCapsAttenuated's subset check trivially since the empty set is a
+    // subset of anything. Catch it here. The UI hides the button, but the
+    // server must not trust that.
     if ((params.kind === "invite" || params.kind === "guest") && !issuer.caps.includes("invite")) {
       throw new Error(`createGrant: issuer lacks the 'invite' capability required to create a '${params.kind}' grant`);
     }
@@ -1269,13 +1228,14 @@ export function createDbApi(sql: Database.Database) {
       caps = params.caps ?? [];
       assertCapsAttenuated(issuer.caps, caps);
     } else if (params.kind === "guest") {
-      // §7.4: caps=['sync'] always — a guest cannot invite anyone. Fixed
-      // here rather than accepted from the caller, so there is no path that
-      // could accidentally attenuate-check its way to a broader guest grant.
+      // caps=['sync'] always, since a guest cannot invite anyone. Fixed here
+      // rather than accepted from the caller, so no path can accidentally
+      // attenuate-check its way to a broader guest grant.
       caps = ["sync"];
     }
-    // device/share: caps stays null — device attaches to the issuer's own
-    // existing caps (nothing new to attenuate), and share never touches caps.
+    // device/share: caps stays null. A device attaches to the issuer's own
+    // existing caps, with nothing new to attenuate, and share never touches
+    // caps at all.
 
     const grantId = randomUUID();
     const secret = generateGrantSecret();
@@ -1305,12 +1265,11 @@ export function createDbApi(sql: Database.Database) {
 
   type RedeemFailureReason = "not_found" | "burned" | "bad_secret" | "expired" | "used" | "already_registered";
 
-  // The single-use guarantee (§6), verbatim: one atomic UPDATE, checked by
-  // `changes === 1`. This is correct under concurrent attempts with no extra
-  // locking — the WHERE clause's conditions are evaluated by SQLite as part
-  // of the same statement that performs the write, never against a
-  // previously-read snapshot, so two racing callers can never both see
-  // changes===1 for the same grant.
+  // The single-use guarantee: one atomic UPDATE, checked by `changes === 1`.
+  // This is correct under concurrent attempts with no extra locking, because
+  // SQLite evaluates the WHERE clause as part of the same statement that
+  // performs the write, never against a previously-read snapshot, so two
+  // racing callers can never both see changes===1 for the same grant.
   function attemptRedeemGrant(
     grantId: string,
     secret: string,
@@ -1336,12 +1295,12 @@ export function createDbApi(sql: Database.Database) {
       return { ok: true, grant: before };
     }
 
-    // Failed — either the secret was wrong, or the grant was already spent
-    // or expired (in which case this isn't really a "guess" at all, but it's
-    // harmless to count it). Attempt bookkeeping is deliberately NOT part of
-    // the atomic statement above: that statement's only job is the single-use
-    // guarantee, which it already provides unconditionally; this is a
-    // separate, best-effort brute-force counter layered on top.
+    // Failure means either a wrong secret or a grant already spent or expired.
+    // The latter is not really a "guess", but counting it is harmless. Attempt
+    // bookkeeping is deliberately NOT part of the atomic statement above: that
+    // statement's only job is the single-use guarantee, which it provides
+    // unconditionally. This is a separate, best-effort brute-force counter
+    // layered on top.
     sql.prepare(`UPDATE grants SET attempts = attempts + 1 WHERE id = ?`).run(grantId);
     const after = getGrant(grantId)!;
     if (after.attempts >= MAX_GRANT_ATTEMPTS && after.uses_remaining > 0) {
@@ -1352,14 +1311,13 @@ export function createDbApi(sql: Database.Database) {
     return { ok: false, reason: "bad_secret" };
   }
 
-  // Read-only counterpart to attemptRedeemGrant (§7.4/§8.2 job 3: the join
-  // screen must say plainly what's happening — greeting + voucher's name —
-  // BEFORE the account is created, and redemption is single-use so it can't
-  // be used as a preview). Never touches uses_remaining. A wrong secret DOES
-  // still count against the same `attempts` budget attemptRedeemGrant uses,
-  // for the reason §6.6 gives: the attempt counter, not the secret's entropy,
-  // is the real defense, and a side-effect-free peek must not become a free
-  // oracle for grinding the secret outside that budget.
+  // Read-only counterpart to attemptRedeemGrant. The join screen shows the
+  // greeting and the voucher's name BEFORE creating an account, and redemption
+  // is single-use, so it cannot double as a preview. This never touches
+  // uses_remaining. A wrong secret DOES still count against the same
+  // `attempts` budget attemptRedeemGrant uses: the attempt counter, not the
+  // secret's entropy, is the real defense, so a side-effect-free peek must not
+  // become a free oracle for grinding the secret outside that budget.
   function peekGrant(
     grantId: string,
     secret: string,
@@ -1371,9 +1329,9 @@ export function createDbApi(sql: Database.Database) {
     if (grant.expires_at <= now) return { ok: false, reason: "expired" };
     if (grant.uses_remaining <= 0) return { ok: false, reason: "used" };
 
-    // GrantRow (getGrant's return type) deliberately omits secret_hash — it's
-    // never meant to leave this module as data — so it's read directly here,
-    // the same way attemptRedeemGrant's WHERE clause checks it without ever
+    // GrantRow (getGrant's return type) deliberately omits secret_hash, which
+    // is never meant to leave this module as data, so read it directly here.
+    // attemptRedeemGrant's WHERE clause checks it the same way, without ever
     // materializing it onto a row object.
     const hashRow = sql.prepare(`SELECT secret_hash FROM grants WHERE id = ?`).get(grantId) as { secret_hash: string };
     if (hashSecret(secret) !== hashRow.secret_hash) {
@@ -1402,10 +1360,10 @@ export function createDbApi(sql: Database.Database) {
     syncKey?: string; // share/guest
   }
 
-  // Effects per kind (§6): invite -> new child user; device -> attach a
-  // client to the issuer's existing user; share -> hand over a sync key, no
-  // identity effect; guest -> invite + share together, with provisional=1 and
-  // caps=['sync'] forced by createGrant already, not re-derived here.
+  // Effects per kind: invite -> new child user; device -> attach a client to
+  // the issuer's existing user; share -> hand over a sync key, with no
+  // identity effect; guest -> invite and share together, with provisional=1
+  // and caps=['sync'] already forced by createGrant, not re-derived here.
   function applyGrantEffect(grant: GrantRow, effect: RedeemEffectParams, now: number): RedeemEffectResult {
     if (grant.kind === "invite" || grant.kind === "guest") {
       if (!effect.clientId || !effect.pubkeyJwk) {
@@ -1472,20 +1430,19 @@ export function createDbApi(sql: Database.Database) {
     // param, say) rolls back the decrement too, rather than burning a grant
     // for which no user/client/key ever actually got created.
     const run = sql.transaction(() => {
-      // Defect fix (job 3, found by job 2): reject invite/guest redemption
-      // from a client that already has an identity on THIS server, before
-      // the atomic decrement. Without this check, applyGrantEffect still
-      // runs createUser() unconditionally — registerClient's
-      // ON CONFLICT(client_id) never reassigns user_id (identity can't be
-      // hijacked), so the client stays attached to its real user, but the
-      // freshly-minted user row is left with no client ever attached to it:
-      // a permanent orphan, invisible to pruning-by-`provisional` for the
-      // 'invite' kind specifically (createUser only sets provisional for
-      // 'guest'). Meanwhile the single-use grant is burned anyway, denying
-      // whoever the link was actually meant for. Checked here (before
-      // attemptRedeemGrant) rather than after, so a misdirected tap costs
-      // nothing. device/share redemption from a known client stay legal —
-      // both act on the caller's own existing identity, not a new one.
+      // Reject invite/guest redemption from a client that already has an
+      // identity on THIS server, before the atomic decrement. Without this
+      // check applyGrantEffect runs createUser() unconditionally.
+      // registerClient's ON CONFLICT(client_id) never reassigns user_id, so
+      // identity cannot be hijacked and the client stays attached to its real
+      // user, but the freshly minted user row ends up with no client attached
+      // to it: a permanent orphan, and for the 'invite' kind one that pruning
+      // by `provisional` cannot see, since createUser sets provisional only
+      // for 'guest'. The single-use grant would be burned anyway, denying
+      // whoever the link was meant for. Check before attemptRedeemGrant rather
+      // than after, so a misdirected tap costs nothing. device/share
+      // redemption from a known client stays legal, since both act on the
+      // caller's own existing identity rather than a new one.
       if (effect.clientId) {
         const grantPeek = getGrant(grantId);
         if (grantPeek && (grantPeek.kind === "invite" || grantPeek.kind === "guest") && getClientById(effect.clientId)) {
@@ -1500,11 +1457,11 @@ export function createDbApi(sql: Database.Database) {
     return run();
   }
 
-  // ── Server identity maintenance ──────────────────────────────────────────────
+  // -- Server identity maintenance -------------------------------------------
 
-  // Cloning a DB currently requires hand-editing server_id (auth-design.md
-  // §3.3 [sf3]); this makes it a supported operation. Also useful after a
-  // deliberate re-key of a compromised server.
+  // A cloned database carries the original's server_id, so give operators a
+  // supported way to assign a fresh one. Also useful after a deliberate re-key
+  // of a compromised server.
   function resetServerId(newId?: string): string {
     const id = newId ?? randomUUID();
     sql
@@ -1528,7 +1485,7 @@ export function createDbApi(sql: Database.Database) {
     getServerId, upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince,
     getEntityById, upsertIntegrationResult, getIntegrationResultsSince, getIntegrationResultsForRefresh,
     associateUserKey, removeUserKey, getUserKeys, getOrCreateUserByHomeKey, getSchemaVersion: getSchemaVersionApi, close,
-    // Identity & authorization (auth-design.md §12.1, Phase 1 job 1):
+    // Identity & authorization:
     getUser, findRootUser, createUser, listChildren, listAllUsers, setUserCaps, setUserNote, setUserDisplayName,
     setUserState, getEffectiveState, promoteProvisionalUser, setAuthorizedBy, bootstrapRootUser, grantAdminCap,
     getClientById, getClientsForUser, setClientLabel, registerClient, touchClientLastSeen, getUserForClient,
@@ -1545,13 +1502,13 @@ export function openDb(path: string): ReturnType<typeof createDbApi> {
   return createDbApi(sql);
 }
 
-// Production module-level instance — created lazily on first call rather than
-// at import time. This module is imported by test files (for `openDb`) and by
-// integration-runner.ts (type-only), and eager creation used to mean every
-// such import opened the real on-disk database as a side effect — harmless
-// against the disposable in-repo data/listr.db, but a real hazard against a
-// deployment whose config.db_path points at the actual (sandboxed read-only)
-// production database. Only index.ts's production entry point calls this.
+// Production module-level instance, created lazily on first call rather than
+// at import time. Test files import this module for `openDb` and
+// integration-runner.ts imports it for types, and eager creation would make
+// every such import open the real on-disk database as a side effect. That is
+// harmless against the disposable in-repo data/listr.db but a real hazard
+// against a deployment whose config.db_path points at the actual production
+// database. Only index.ts's production entry point calls this.
 let productionDb: ReturnType<typeof createDbApi> | null = null;
 
 export function getProductionDb(): ReturnType<typeof createDbApi> {

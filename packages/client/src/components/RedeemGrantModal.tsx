@@ -15,11 +15,10 @@ interface Props {
 
 type Step = "input" | "peeking" | "confirm" | "joining" | "done";
 
-/** AdminPage's "Join" flow (§6/§7.2/§8.2 scope C): the mirror image of
- * JoinPage — here the target server is already known (it's the endpoint
- * sitting in needs_grant), so this only has to accept a link/QR and confirm
- * its server hash names the same server, rather than resolving a route from
- * scratch. */
+/** AdminPage's "Join" flow, the mirror image of JoinPage. The target server is
+ * already known here, being the endpoint sitting in needs_grant, so this only
+ * has to accept a link or QR code and confirm its server hash names the same
+ * server, rather than resolving a route from scratch. */
 const RedeemGrantModal: Component<Props> = (props) => {
   const [pasted, setPasted] = createSignal("");
   const [step, setStep] = createSignal<Step>("input");

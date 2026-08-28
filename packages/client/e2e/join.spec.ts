@@ -1,14 +1,14 @@
 import { test, expect } from "@playwright/test";
 import { clearDatabase } from "./helpers.js";
 
-// The join screen (auth-design.md §7.2/§8.2 scope A) needs a live sync
-// server for everything past "resolve which endpoint" — peek_grant,
-// redeem_grant, and the resulting `ok` all require a real WebSocket round
-// trip, which this harness has no server for (see helpers.ts's module doc
-// and CLAUDE.md). What's covered here is what's genuinely client-only: a
-// malformed link is rejected before any connection is attempted at all.
+// The join screen needs a live sync server for everything past "resolve which
+// endpoint": peek_grant, redeem_grant, and the resulting `ok` all require a
+// real WebSocket round trip, and this harness runs no server (see helpers.ts's
+// module doc and CLAUDE.md). What is covered here is what is genuinely
+// client-only: a malformed link is rejected before any connection is
+// attempted.
 
-test.describe("join screen — client-only coverage", () => {
+test.describe("join screen: client-only coverage", () => {
   test.beforeEach(async ({ page }) => {
     await clearDatabase(page);
   });

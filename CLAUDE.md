@@ -9,16 +9,6 @@ Monorepo with pnpm workspaces:
 - `packages/client` — SolidJS + Vite frontend, Dexie.js for IndexedDB
 - `packages/server` — sync server (Node.js + WebSocket + SQLite)
 
-## Commands
-
-- `pnpm dev` — start Vite dev server on port 3000
-- `pnpm build` — production build
-- `pnpm test` — run all workspace tests (vitest)
-- `pnpm --filter @listr/shared test` — run shared package tests only
-- `pnpm test:e2e` — run Playwright e2e tests (from root)
-- Run Playwright from `packages/client` directory, not root
-- Sync server: `cd packages/server && pnpm install && pnpm dev` — listens on port 10000 (all interfaces)
-
 ## Key design decisions
 
 - SolidJS for fine-grained reactivity (no VDOM)
@@ -31,3 +21,11 @@ Monorepo with pnpm workspaces:
 - Use `jj` for version control, not git
 - PWA with service worker for offline support
 - Sync: WebSocket LWW (document-level, updated_at wins). Server stores full entity snapshots + tombstones in SQLite. Client pushes local changes + pulls remote on connect; real-time broadcast thereafter. Sync key = shared secret namespace.
+
+## Policies
+
+- Do not use non-ASCII for code or comments.
+- Do not use em-dashes (or the ASCII equivalents). Split into multiple sentences or clauses linked by an appropriate conjunction instead.
+- Comments should describe the current state, not changes made from previous states.
+- Comments should be brief.
+- Prefer the active voice and imperatives.

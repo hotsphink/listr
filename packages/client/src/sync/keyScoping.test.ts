@@ -23,7 +23,7 @@ describe("keysForEndpoint", () => {
     expect(keys).not.toContain("theirs");
   });
 
-  it("withholds a scoped board key from a never-before-connected endpoint (server_id null) — the circularity fix applies to boards too", () => {
+  it("withholds a scoped board key from a never-before-connected endpoint (server_id null), which applies to boards too", () => {
     const boardKeys: ScopedKeyRow[] = [{ key: "board1", server_id: "serverA" }];
     expect(keysForEndpoint("home", boardKeys, [], null)).not.toContain("board1");
   });
@@ -40,7 +40,7 @@ describe("keysForEndpoint", () => {
     expect(keysForEndpoint("home", [], roster, "serverB")).not.toContain("shared1");
   });
 
-  it("withholds a scoped roster key from a never-before-connected endpoint (server_id null) — this is the circularity fix", () => {
+  it("withholds a scoped roster key from a never-before-connected endpoint (server_id null)", () => {
     const roster: ScopedKeyRow[] = [{ key: "shared1", server_id: "serverA" }];
     expect(keysForEndpoint("home", [], roster, null)).not.toContain("shared1");
   });

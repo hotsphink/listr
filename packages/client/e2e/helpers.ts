@@ -13,7 +13,7 @@ export async function addItemToList(page: Page, title: string) {
 }
 
 /**
- * Add an item via the expand (⤢) button, which opens the full ItemFormModal.
+ * Add an item via the expand button, which opens the full ItemFormModal.
  * Optionally fill attribute fields via the callback before clicking Add.
  * Waits for the modal to close before returning.
  */
@@ -45,15 +45,13 @@ export async function clearDatabase(page: Page) {
 }
 
 /**
- * Give this device a home key directly in IndexedDB, bypassing both the
- * Admin page UI and an actual server registration (there is no sync server
- * in the e2e harness — see helpers.ts's module doc). "Does this device have
- * a default sync key" used to mean a hand-typed sync_config.sync_key; job 3
- * rewired that concept to server_identity.home_key (§3.1/§8.1), a
- * server-assigned field that normally only arrives via a real handshake. This
- * fakes just enough of a `server_identity` row — one server, `state: "active"`
- * — for Sidebar's "My Boards" gating to behave as if registration had
- * happened, without needing a live server.
+ * Give this device a home key directly in IndexedDB, bypassing both the Admin
+ * page UI and an actual server registration, since the e2e harness runs no
+ * sync server. "Does this device have a default sync key" means
+ * server_identity.home_key, a server-assigned field that normally arrives only
+ * via a real handshake. This fakes just enough of a `server_identity` row, one
+ * server with `state: "active"`, for Sidebar's "My Boards" gating to behave as
+ * if registration had happened.
  */
 export async function setDefaultSyncKey(page: Page, key: string) {
   await page.evaluate((homeKey) => {

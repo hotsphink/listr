@@ -52,7 +52,7 @@ async function fetchExtraction(imageBase64: string, mimeType: string, scope: Imp
 
   const raw = await resp.text();
   (window as any).lastImportRawResult = raw;
-  console.log("Import response received — inspect with: window.lastImportRawResult");
+  console.log("Import response received; inspect with: window.lastImportRawResult");
   if (!resp.ok) {
     let msg = `Server error ${resp.status}`;
     try { msg = (JSON.parse(raw) as any).error ?? msg; } catch {}

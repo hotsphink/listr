@@ -12,7 +12,7 @@ describe("variantAllowed", () => {
     expect(variantAllowed("dev", "prod")).toBe(false);
   });
 
-  it("allows an unknown (undefined) variant — older server, backward compat", () => {
+  it("allows an unknown (undefined) variant, for an older server", () => {
     expect(variantAllowed(undefined, "dev")).toBe(true);
     expect(variantAllowed(undefined, "prod")).toBe(true);
   });

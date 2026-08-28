@@ -53,14 +53,14 @@ const Layout: Component<{ children?: any }> = (props) => {
     const sharedKeysSub = liveQuery(() => db.shared_keys.toArray()).subscribe((rows) => {
       syncClient.updateSharedKeys(rows.map((r) => ({ key: r.key, server_id: r.server_id ?? null })));
     });
-    // Local, never-synced board→server binding (§3.3.1 item 4) — keeps
-    // SyncClient's copy current so keysForEndpoint/doInitialSync can scope
-    // boards to the one server each belongs to.
+    // Local, never-synced board-to-server binding. Keeps SyncClient's copy
+    // current so keysForEndpoint and doInitialSync can scope boards to the one
+    // server each belongs to.
     const bindingSub = liveQuery(() => db.board_server_binding.toArray()).subscribe((rows) => {
       syncClient.updateBoardBindings(rows);
     });
-    // Per-server registration state (§8.1) — this is where a server-assigned
-    // home key (§3.1) becomes visible to SyncClient's key resolution.
+    // Per-server registration state. This is where a server-assigned home key
+    // becomes visible to SyncClient's key resolution.
     const identitySub = liveQuery(() => db.server_identity.toArray()).subscribe((rows) => {
       syncClient.updateServerIdentities(rows);
     });

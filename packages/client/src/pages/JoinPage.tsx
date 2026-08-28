@@ -12,7 +12,7 @@ import { setSidebarOpen } from "../store/sidebarStore.js";
 type Step =
   | "invalid"
   | "resolving" // hashing configured endpoints / probing the default, looking for a server_id match
-  | "unknown_server" // nothing matched — offer to add a host by hand
+  | "unknown_server" // nothing matched, so offer to add a host by hand
   | "connecting" // matched an endpoint, waiting for the handshake to settle
   | "peeking" // connected, waiting for grant_info
   | "confirm" // grant_info in hand, showing the accept/keep-or-discard screen
@@ -53,9 +53,10 @@ const JoinPage: Component = () => {
   const [grantInfo, setGrantInfo] = createSignal<GrantInfo | null>(null);
   const [unboundBoards, setUnboundBoards] = createSignal(0);
   const [keepChoice, setKeepChoice] = createSignal<"keep" | "discard" | null>(null);
-  // Endpoints we created speculatively while probing (default or manual-host
-  // guesses) that turned out NOT to match the link — cleaned up so a failed
-  // guess doesn't linger as a dead row in AdminPage's endpoint list.
+  // Endpoints created speculatively while probing, whether the default or a
+  // manual-host guess, that turned out NOT to match the link. Clean them up so
+  // a failed guess does not linger as a dead row in AdminPage's endpoint
+  // list.
   const speculativeEndpointIds = new Set<string>();
 
   const status = () => (endpointId() ? (endpointStatuses()[endpointId()!] as EndpointStatus | undefined) : undefined);
@@ -68,11 +69,11 @@ const JoinPage: Component = () => {
     }
   }
 
-  // Resolve identity -> route (§7.3a-bis): try every configured endpoint
-  // whose known server_id hashes to the link's hash first, since that's
-  // "use my own route to a server I already know" — the whole reason the
-  // link doesn't carry a route at all. Only if nothing matches do we try the
-  // baked-in default.
+  // Resolve identity to route. Try every configured endpoint whose known
+  // server_id hashes to the link's hash first, since that means "use my own
+  // route to a server I already know", which is the whole reason the link
+  // carries no route at all. Fall back to the baked-in default only when
+  // nothing matches.
   async function tryConfiguredEndpoints(p: JoinLinkPayload): Promise<string | null> {
     const rows = await db.sync_endpoints.toArray();
     for (const row of rows) {
@@ -125,10 +126,10 @@ const JoinPage: Component = () => {
   });
 
   // Once the resolved endpoint's handshake settles, confirm its server_id
-  // actually matches the link's hash before doing anything else with it —
-  // this is what makes "hash matches nothing -> say so" work for the default/
-  // manual-host probe path (a configured-endpoint match was already verified
-  // before we ever set step to "connecting", so it always passes here too).
+  // matches the link's hash before doing anything else with it. That is what
+  // makes "hash matches nothing -> say so" work for the default and
+  // manual-host probe paths. A configured-endpoint match is already verified
+  // before step becomes "connecting", so it always passes here too.
   createEffect(() => {
     const p = payload();
     const epId = endpointId();
@@ -162,7 +163,7 @@ const JoinPage: Component = () => {
           cleanupSpeculative();
           return;
         }
-        // Confirmed — this speculative endpoint (if any) is the real one; stop tracking it for cleanup.
+        // Confirmed: this speculative endpoint, if any, is the real one, so stop tracking it for cleanup.
         speculativeEndpointIds.delete(epId);
         if (s.phase === "needs_grant" || s.phase === "ready") {
           setStep("peeking");
@@ -189,8 +190,9 @@ const JoinPage: Component = () => {
     onCleanup(unsubscribe);
   });
 
-  // Success: the endpoint reaching "ready" after we asked to join means the
-  // ok reply landed (redeem_grant's success path — see SyncClient.onReady).
+  // Success: the endpoint reaching "ready" after the join request means the
+  // ok reply landed, which is redeem_grant's success path. See
+  // SyncClient.onReady.
   createEffect(() => {
     if (step() !== "joining") return;
     const s = status();

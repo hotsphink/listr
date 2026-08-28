@@ -54,9 +54,8 @@ function makeLegacyDbFile(): { path: string; cleanup: () => void } {
   return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-// ── upsertEntity: entity vs entity ────────────────────────────────────────────
-
-describe("upsertEntity — entity vs entity LWW", () => {
+// -- upsertEntity: entity vs entity ------------------------------------------
+describe("upsertEntity: entity vs entity LWW", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -99,9 +98,8 @@ describe("upsertEntity — entity vs entity LWW", () => {
   });
 });
 
-// ── upsertEntity: item schema_version format gate ─────────────────────────────
-
-describe("upsertEntity — item format gate", () => {
+// -- upsertEntity: item schema_version format gate ---------------------------
+describe("upsertEntity: item format gate", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -125,15 +123,14 @@ describe("upsertEntity — item format gate", () => {
     expect(stored.schema_version).toBe(ENTITY_SCHEMA_VERSION);
   });
 
-  it("still gates only items — boards/lists are unaffected", () => {
+  it("still gates only items; boards/lists are unaffected", () => {
     expect(db.upsertEntity("board", makeBoard("b1", 100), KEY).accepted).toBe(true);
     expect(db.upsertEntity("list", makeList("l1", 100), KEY).accepted).toBe(true);
   });
 });
 
-// ── upsertEntity: entity vs tombstone ─────────────────────────────────────────
-
-describe("upsertEntity — entity vs tombstone LWW", () => {
+// -- upsertEntity: entity vs tombstone ---------------------------------------
+describe("upsertEntity: entity vs tombstone LWW", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -173,9 +170,8 @@ describe("upsertEntity — entity vs tombstone LWW", () => {
   });
 });
 
-// ── applyTombstone: tombstone vs tombstone ────────────────────────────────────
-
-describe("applyTombstone — tombstone vs tombstone LWW", () => {
+// -- applyTombstone: tombstone vs tombstone ----------------------------------
+describe("applyTombstone: tombstone vs tombstone LWW", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -214,9 +210,8 @@ describe("applyTombstone — tombstone vs tombstone LWW", () => {
   });
 });
 
-// ── applyTombstone: tombstone vs entity (entity deletion) ─────────────────────
-
-describe("applyTombstone — entity deletion LWW", () => {
+// -- applyTombstone: tombstone vs entity (entity deletion) -------------------
+describe("applyTombstone: entity deletion LWW", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -255,7 +250,7 @@ describe("applyTombstone — entity deletion LWW", () => {
   it("entity updated after deletion survives the old tombstone", () => {
     // Timeline: create at 100, delete at 200, then re-created at 300
     db.applyTombstone("list", "l1", 200, KEY);
-    db.upsertEntity("list", makeList("l1", 300), KEY);   // newer than tombstone → accepted
+    db.upsertEntity("list", makeList("l1", 300), KEY);   // newer than tombstone, accepted
     expect(db.getEntitiesSince("list", KEY, 0)).toHaveLength(1);
     // Old tombstone arriving again must not delete the newer entity
     db.applyTombstone("list", "l1", 200, KEY);           // rejected (existing tombstone same age)
@@ -263,10 +258,10 @@ describe("applyTombstone — entity deletion LWW", () => {
   });
 });
 
-// ── user_keys: server-side user/key-group association ──────────────────────
-// Keyed by user_id (migration 5), with a real FK to `users` — better-sqlite3
-// enforces foreign_keys by default, so every association here is created
-// against an actual user, not an arbitrary string standing in for one.
+// -- user_keys: server-side user/key-group association -----------------------
+// Keyed by user_id, with a real FK to `users`. better-sqlite3 enforces
+// foreign_keys by default, so every association here is created against an
+// actual user rather than an arbitrary string standing in for one.
 
 describe("user_keys", () => {
   let db: DbApi;
@@ -321,7 +316,7 @@ describe("user_keys", () => {
   });
 });
 
-describe("getOrCreateUserByHomeKey — v4 bridge", () => {
+describe("getOrCreateUserByHomeKey: home-key bridge", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -333,7 +328,7 @@ describe("getOrCreateUserByHomeKey — v4 bridge", () => {
     expect(user.caps).toEqual(["sync"]);
   });
 
-  it("is idempotent — the same home key resolves to the same user on a later call", () => {
+  it("is idempotent: the same home key resolves to the same user on a later call", () => {
     const first = db.getOrCreateUserByHomeKey("some-home-key");
     const second = db.getOrCreateUserByHomeKey("some-home-key");
     expect(second.user_id).toBe(first.user_id);
@@ -341,9 +336,8 @@ describe("getOrCreateUserByHomeKey — v4 bridge", () => {
   });
 });
 
-// ── updated_at / deleted_at clamped to server time (§11.2.2) ─────────────────
-
-describe("upsertEntity — clamps updated_at to server time", () => {
+// -- updated_at / deleted_at clamped to server time --------------------------
+describe("upsertEntity: clamps updated_at to server time", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -365,8 +359,8 @@ describe("upsertEntity — clamps updated_at to server time", () => {
 
   it("clamped updated_at agrees between the column and the stored JSON", () => {
     // getEntitiesSince filters on the `updated_at` column but reads the value
-    // back out of the JSON `data` blob — if clamping mutated one and not the
-    // other, a future `since` query keyed on the real column value wouldn't
+    // back out of the JSON `data` blob. If clamping mutated one and not the
+    // other, a future `since` query keyed on the real column value would not
     // find this row even though the returned object still claims to be from
     // the future.
     const farFuture = Date.now() + 1000 * 60 * 60 * 24 * 365;
@@ -378,7 +372,7 @@ describe("upsertEntity — clamps updated_at to server time", () => {
 
   it("an honest edit is no longer blocked once real time catches up past the skew window", () => {
     // The clamp reduces "permanently unbeatable" to "unbeatable for up to the
-    // skew window" — it can't reduce it to zero, since the clamped value is
+    // skew window". It cannot reduce it to zero, since the clamped value is
     // itself server-time-plus-skew. Demonstrate the recovery by controlling
     // the clock directly instead of relying on wall-clock time actually
     // passing during the test.
@@ -399,7 +393,7 @@ describe("upsertEntity — clamps updated_at to server time", () => {
   });
 });
 
-describe("applyTombstone — clamps deleted_at to server time", () => {
+describe("applyTombstone: clamps deleted_at to server time", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -419,9 +413,8 @@ describe("applyTombstone — clamps deleted_at to server time", () => {
   });
 });
 
-// ── assets: per-key isolation via asset_keys (§2.1 defect 2) ─────────────────
-
-describe("assets — per-key isolation via asset_keys", () => {
+// -- assets: per-key isolation via asset_keys --------------------------------
+describe("assets: per-key isolation via asset_keys", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -452,7 +445,7 @@ describe("assets — per-key isolation via asset_keys", () => {
       "sharedBoardKey",
     );
     expect(db.getEntitiesSince("asset", "sharedBoardKey", 0)).toHaveLength(1);
-    // And the uploader's own key still sees it too — association is additive.
+    // And the uploader's own key still sees it too: association is additive.
     expect(db.getEntitiesSince("asset", "uploaderKey", 0)).toHaveLength(1);
   });
 
@@ -488,14 +481,14 @@ describe("assets — per-key isolation via asset_keys", () => {
 
   it("an asset with no referencing entity anywhere is invisible to everyone", () => {
     db.upsertEntity("board", { id: "b1", updated_at: 100, name: "B" }, "someKey");
-    // No asset was ever pushed, so there's nothing to associate — sanity check
-    // that referencing-scan doesn't invent associations out of thin air.
+    // No asset was ever pushed, so there is nothing to associate. This is a
+    // sanity check that the referencing scan does not invent associations out
+    // of thin air.
     expect(db.getEntitiesSince("asset", "someKey", 0)).toHaveLength(0);
   });
 });
 
-// ── schema_version migrations (§12.1) ─────────────────────────────────────────
-
+// -- schema_version migrations -----------------------------------------------
 describe("schema_version migrations", () => {
   it("stamps a schema_version on a fresh database", () => {
     const db = openDb(":memory:");
@@ -508,9 +501,8 @@ describe("schema_version migrations", () => {
       const db = openDb(path);
       expect(db.getSchemaVersion()).toBeGreaterThan(0);
 
-      // user_keys is now keyed by user_id (migration 5), rekeyed from the
-      // home-key shape migration 3 produced — the association for "home1"
-      // survived, reachable via the user migration 5 minted for it.
+      // user_keys is keyed by user_id, so the association for "home1"
+      // survives and is reachable via the user migration 5 mints for it.
       const user = db.getOrCreateUserByHomeKey("home1");
       expect(db.getUserKeys(user.user_id)).toEqual([{ key: "grp1", name: null }]);
 
@@ -540,7 +532,7 @@ describe("schema_version migrations", () => {
 
       const second = openDb(path);
       expect(second.getSchemaVersion()).toBe(version);
-      // Data survives a second migration pass untouched — same user, same
+      // Data survives a second migration pass untouched: same user, same
       // association, no double-mint.
       expect(second.getOrCreateUserByHomeKey("home1").user_id).toBe(mintedUserId);
       expect(second.getUserKeys(mintedUserId)).toEqual([{ key: "grp1", name: null }]);
@@ -572,9 +564,8 @@ describe("schema_version migrations", () => {
   });
 });
 
-// ── migration 5: user_keys rekeyed to user_id, legacy home keys minted ──────
-
-describe("migration 5 — user_keys rekey and legacy user minting", () => {
+// -- migration 5: user_keys rekeyed to user_id, legacy home keys minted ------
+describe("migration 5: user_keys rekey and legacy user minting", () => {
   it("mints exactly one unparented, non-provisional, caps=['sync'] user per distinct pre-existing home key", () => {
     const { path, cleanup } = makeLegacyDbFile();
     try {
@@ -592,9 +583,9 @@ describe("migration 5 — user_keys rekey and legacy user minting", () => {
   });
 
   it("does not confuse a migration-minted legacy user with the designated root", () => {
-    // §5.1: several unparented users is a structurally-fine forest, but only
-    // one of them is "the root" bootstrap-root created — findRootUser must
-    // not just grab whichever unparented row it finds first.
+    // Several unparented users make a structurally fine forest, but only one
+    // of them is the root bootstrap-root created, so findRootUser must not
+    // just grab whichever unparented row it finds first.
     const { path, cleanup } = makeLegacyDbFile();
     try {
       const db = openDb(path);
@@ -618,9 +609,8 @@ describe("migration 5 — user_keys rekey and legacy user minting", () => {
   });
 });
 
-// ── Identity & authorization (auth-design.md §5, §6, §12.1, Phase 1 job 1) ───
-
-describe("users — tree, effective state, cascade", () => {
+// -- Identity & authorization ------------------------------------------------
+describe("users: tree, effective state, cascade", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -669,11 +659,11 @@ describe("users — tree, effective state, cascade", () => {
     // Restoring A is one UPDATE on A's row alone.
     db.setUserState(a.user_id, "active", now);
     expect(db.getEffectiveState(a.user_id)).toBe("active");
-    // B had no explicit state of its own — it reverts to active automatically.
+    // B has no explicit state of its own, so it reverts to active automatically.
     expect(db.getEffectiveState(b.user_id)).toBe("active");
     expect(db.getUser(b.user_id)?.state).toBe("active");
-    // C's own explicit suspension survives A's restore untouched — the
-    // cascade never touched C's row, restoring A didn't either.
+    // C's own explicit suspension survives A's restore untouched: the cascade
+    // never writes C's row, and neither does restoring A.
     expect(db.getEffectiveState(c.user_id)).toBe("suspended");
     expect(db.getUser(c.user_id)?.state).toBe("suspended");
   });
@@ -701,7 +691,7 @@ describe("users — tree, effective state, cascade", () => {
   });
 });
 
-describe("grants — attenuation", () => {
+describe("grants: attenuation", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -733,9 +723,9 @@ describe("grants — attenuation", () => {
   });
 
   // A user without 'invite' requesting caps=[] would otherwise sail through
-  // assertCapsAttenuated's subset check (the empty set is a subset of
-  // anything) — 'invite' is itself the authority bit that must be checked,
-  // not just a ceiling on what the new user receives.
+  // assertCapsAttenuated's subset check, since the empty set is a subset of
+  // anything. 'invite' is itself the authority bit that must be checked, not
+  // just a ceiling on what the new user receives.
   it("rejects an invite/guest grant from an issuer who lacks the 'invite' cap, even requesting caps=[]", () => {
     const now = Date.now();
     const syncOnly = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
@@ -751,7 +741,7 @@ describe("grants — attenuation", () => {
   });
 });
 
-describe("grants — redemption", () => {
+describe("grants: redemption", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -801,7 +791,7 @@ describe("grants — redemption", () => {
       const attempt = db.attemptRedeemGrant(grantId, "wrong-secret", now);
       expect(attempt.ok).toBe(false);
     }
-    // Burned — even the real secret is now refused.
+    // Burned, so even the real secret is refused.
     const result = db.attemptRedeemGrant(grantId, secret, now);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("burned");
@@ -853,11 +843,11 @@ describe("grants — redemption", () => {
     expect(db.getUserKeys(recipient.user_id)).toEqual([{ key: "shopping-list-key", name: null }]);
   });
 
-  it("guest grants create a provisional user with caps=['sync'] only — no invite cap, by construction", () => {
+  it("guest grants create a provisional user with caps=['sync'] only, with no invite cap, by construction", () => {
     const now = Date.now();
     const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
     // Even if a caller tried to smuggle extra caps through, guest ignores
-    // caller-supplied caps entirely (§7.4) — createGrant hardcodes ['sync'].
+    // caller-supplied caps entirely: createGrant hardcodes ['sync'].
     const { grantId, secret } = db.createGrant(
       { kind: "guest", issuerUserId: issuer.user_id, payload: "shopping-list-key", greeting: "Dad's shopping list" },
       now,
@@ -873,11 +863,10 @@ describe("grants — redemption", () => {
     expect(db.getUserKeys(outcome.result.user.user_id)).toEqual([{ key: "shopping-list-key", name: null }]);
   });
 
-  // Defect fix (job 3, found by job 2): an already-registered client redeeming
-  // a foreign invite/guest grant used to still burn the single use AND leave
-  // an orphaned, unparented-by-nobody user row behind (registerClient's
-  // ON CONFLICT never reassigns user_id, so the new user just never gets a
-  // client attached). Both must now be prevented.
+  // An already-registered client redeeming a foreign invite/guest grant must
+  // neither burn the single use nor leave an orphaned user row behind.
+  // registerClient's ON CONFLICT never reassigns user_id, so without the guard
+  // in redeemGrant the newly created user never gets a client attached.
   it("rejects invite redemption from a client that already has an identity, without consuming the grant or creating an orphan", () => {
     const now = Date.now();
     const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
@@ -894,9 +883,9 @@ describe("grants — redemption", () => {
 
     // No orphan user was created.
     expect(db.listAllUsers().length).toBe(usersBefore);
-    // The identity wasn't hijacked — the client is still attached to its own user.
+    // The identity was not hijacked: the client is still attached to its own user.
     expect(db.getUserForClient("already-registered-client")?.user.user_id).toBe(alreadyUserId);
-    // The grant is NOT burned — the intended recipient can still use it.
+    // The grant is NOT burned, so the intended recipient can still use it.
     const retry = db.redeemGrant(grantId, secret, { clientId: "fresh-client", pubkeyJwk: "{}" }, now);
     expect(retry.ok).toBe(true);
   });
@@ -946,7 +935,7 @@ describe("grants — redemption", () => {
   });
 });
 
-describe("peekGrant — read-only preview (§7.4/§8.2 job 3)", () => {
+describe("peekGrant: read-only preview", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -964,12 +953,12 @@ describe("peekGrant — read-only preview (§7.4/§8.2 job 3)", () => {
     expect(peek.grant.greeting).toBe("Dad's shopping list");
     expect(peek.issuerDisplayName).toBe("Steve");
 
-    // Still fully redeemable afterward — peek didn't touch uses_remaining.
+    // Still fully redeemable afterward, since peek never touches uses_remaining.
     const outcome = db.redeemGrant(grantId, secret, { clientId: "c", pubkeyJwk: "{}" }, now);
     expect(outcome.ok).toBe(true);
   });
 
-  it("shares the same attempt budget as attemptRedeemGrant — cannot be used as a free brute-force oracle", () => {
+  it("shares the same attempt budget as attemptRedeemGrant, so it cannot be used as a free brute-force oracle", () => {
     const now = Date.now();
     const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
     const { grantId, secret } = db.createGrant({ kind: "guest", issuerUserId: issuer.user_id, payload: "k" }, now);
@@ -978,7 +967,7 @@ describe("peekGrant — read-only preview (§7.4/§8.2 job 3)", () => {
       const attempt = db.peekGrant(grantId, "wrong", now);
       expect(attempt.ok).toBe(false);
     }
-    // Burned — even the real secret is now refused, via peek or redemption.
+    // Burned, so even the real secret is refused, via peek or redemption.
     const peek = db.peekGrant(grantId, secret, now);
     expect(peek.ok).toBe(false);
     if (!peek.ok) expect(peek.reason).toBe("burned");
@@ -1019,7 +1008,7 @@ describe("clients", () => {
   });
 });
 
-describe("users — self-set display name", () => {
+describe("users: self-set display name", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 
@@ -1033,7 +1022,7 @@ describe("users — self-set display name", () => {
   });
 });
 
-describe("auth_events — append-only audit", () => {
+describe("auth_events: append-only audit", () => {
   let db: DbApi;
   beforeEach(() => { db = openDb(":memory:"); });
 

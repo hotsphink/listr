@@ -17,26 +17,25 @@ import { INTEGRATIONS } from "./integrations/index.js";
 import { IntegrationRunner } from "./integration-runner.js";
 import type { Item } from "@listr/shared";
 
-// v5 handshake tuning (auth-design.md §4.2). 60s is generous for a
-// challenge round trip (including the crypto) while still being short
-// enough that a captured nonce is useless shortly after issuance.
+// Handshake tuning. 60s is generous for a challenge round trip, including the
+// crypto, while still being short enough that a captured nonce is useless
+// shortly after issuance.
 const NONCE_TTL_MS = 60_000;
 
-// ── §11.1 basic limits ───────────────────────────────────────────────────────
-// Four cheap, accounting-free limits against casual/accidental DoS — not the
-// full quota system §11.1 explicitly defers. The accidental case is the one
-// that matters most: a client bug that pushes in a loop looks exactly like an
-// attack and will happily saturate the server on the user's own behalf.
-const MAX_WS_PAYLOAD_BYTES = 1 * 1024 * 1024; // ~1MB — one giant push can't wedge the server
+// -- Basic limits ------------------------------------------------------------
+// Four cheap, accounting-free limits against casual or accidental DoS, not a
+// full quota system. The accidental case is the one that matters most: a
+// client bug that pushes in a loop looks exactly like an attack and will
+// happily saturate the server on the user's own behalf.
+const MAX_WS_PAYLOAD_BYTES = 1 * 1024 * 1024; // ~1MB, so one giant push cannot wedge the server
 // Per-connection message limiting as a token bucket rather than a fixed
-// per-second window. A fixed window cannot tell a legitimate initial sync from
-// a runaway loop: `doInitialSync` sends one push_entity PER ENTITY, so any
-// client with more than the window's worth of local data trips it on its very
-// first sync, gets closed mid-push, retries, and loops forever — which is what
-// a 50/sec window did in practice. The bucket separates the two cases: `BURST`
-// covers a full initial push in one go, while `REFILL_PER_SEC` is the only
-// rate sustainable indefinitely, so a client stuck in a push loop still trips.
-const MSG_BURST = 5000; // matches MAX_PULL_ENTITIES — one full sync's worth
+// per-second window. `doInitialSync` sends one push_entity PER ENTITY, so a
+// large burst is normal and only a sustained rate indicates a loop; a fixed
+// window cannot tell the two apart, and closes any client whose local data
+// exceeds one window mid-push, leaving it to retry and loop forever. `BURST`
+// covers a full initial push in one go, and `REFILL_PER_SEC` is the only rate
+// sustainable indefinitely, so a client stuck in a push loop still trips.
+const MSG_BURST = 5000; // matches MAX_PULL_ENTITIES, one full sync's worth
 const MSG_REFILL_PER_SEC = 200;
 const MAX_CONNECTIONS_PER_IP = 20; // trivial socket-exhaustion guard
 const MAX_PULL_ENTITIES = 5000; // bounds the server's own per-pull work
@@ -63,7 +62,7 @@ async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<
   console.log(`[import] ${new Date().toISOString()} scope=${scope.type} model=${config.gemini_model ?? "gemini-2.0-flash-lite"} image=${imageKB}KB`);
   const t0 = Date.now();
   const result = await extractFromImage(image, mime_type, scope, config.gemini, config.gemini_model);
-  console.log(`[import] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${result.boards?.length ?? 0} boards`);
+  console.log(`[import] done in ${((Date.now() - t0) / 1000).toFixed(1)}s, ${result.boards?.length ?? 0} boards`);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify(result));
 }
@@ -135,10 +134,9 @@ export interface SyncServerHandle {
   stop(): void;
 }
 
-// Builds one independent sync server instance around a given DbApi — pulled
-// out of module scope so tests can start a server against an in-memory db and
-// an ephemeral port instead of the production singleton (§14). Kept as a
-// single function rather than split further to keep this refactor small.
+// Build one independent sync server instance around a given DbApi. This lives
+// outside module scope so tests can start a server against an in-memory db and
+// an ephemeral port rather than the production singleton.
 export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): SyncServerHandle {
   const SERVER_ID = dbApi.getServerId();
   const SERVER_VARIANT = opts.variant ?? config.variant;
@@ -157,24 +155,22 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         requestHandler,
       );
 
-  // §2.1 defect 3 / §7.3a: the app and sync server are permanently different
-  // origins (listr.aapx.org vs listr-sync.aapx.org), so Origin is a
-  // meaningful signal here, unlike a same-origin app. ALLOWED_ORIGINS was
-  // previously only used to set a CORS header on the HTTP handlers; the
-  // WebSocketServer itself had no check at all. A request with no Origin
-  // header is allowed through rather than rejected — browsers always send
-  // Origin on a cross-origin WS handshake, so an absent header means a
-  // non-browser client (the `ws` client this repo's own test harness and
-  // any future CLI/native client use), which this check has nothing to say
-  // about; it exists to stop an unexpected *browser* origin, not to require
-  // one.
-  // §11.1: connections currently open per remote IP, checked at upgrade time
-  // (before the handshake does any crypto — an unauthenticated handshake
-  // still costs a signature verification, so this is an amplification
-  // target worth gating before accepting the socket at all). Incremented
-  // here in verifyClient rather than in the "connection" handler so a burst
-  // of concurrent upgrades from one IP can't all pass the check before any
-  // of them is counted.
+  // The app and the sync server are permanently different origins
+  // (listr.aapx.org vs listr-sync.aapx.org), so Origin is a meaningful signal
+  // here, unlike in a same-origin app. A request with no Origin header is
+  // allowed through rather than rejected: browsers always send Origin on a
+  // cross-origin WS handshake, so an absent header means a non-browser client,
+  // such as the `ws` client this repo's test harness uses or a CLI or native
+  // client. This check exists to stop an unexpected *browser* origin, not to
+  // require one.
+  //
+  // connectionsPerIp counts connections currently open per remote IP, checked
+  // at upgrade time, before the handshake does any crypto. An unauthenticated
+  // handshake still costs a signature verification, making it an amplification
+  // target worth gating before the socket is accepted at all. Increment in
+  // verifyClient rather than in the "connection" handler, so a burst of
+  // concurrent upgrades from one IP cannot all pass the check before any of
+  // them is counted.
   const connectionsPerIp = new Map<string, number>();
   const ipOf = (req: IncomingMessage): string => req.socket.remoteAddress ?? "unknown";
 
@@ -200,14 +196,14 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     },
   });
 
-  // sync_key → connected clients (a client may appear under multiple keys)
+  // sync_key -> connected clients (a client may appear under multiple keys)
   const keyToClients = new Map<string, Set<WebSocket>>();
 
-  // home_key ("user") → every currently-open connection presenting that home
-  // key, regardless of which other sync_keys it's subscribed to. Used to tell
-  // a user's *other* already-open connections about a key they didn't know
-  // about yet (or one they should drop), without waiting for their next
-  // reconnect — see notifyUserKeyChange/notifyUserKeyRemoved below.
+  // home_key ("user") -> every currently-open connection presenting that home
+  // key, regardless of which other sync_keys it is subscribed to. Tells a
+  // user's *other* already-open connections about a key they do not know about
+  // yet, or one they should drop, without waiting for their next reconnect.
+  // See notifyUserKeyChange/notifyUserKeyRemoved below.
   const homeKeyToClients = new Map<string, Set<WebSocket>>();
 
   function broadcast(syncKey: string, sender: WebSocket | null, msg: unknown): void {
@@ -219,11 +215,11 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     }
   }
 
-  // Tell a user's other open connections a key now belongs to them (new
-  // association, or a name being set/changed on one they already had). The
-  // client just needs the key (and name) — receiving it is enough to make the
-  // client mark that key locally, which cascades through its own
-  // recompute-and-reconnect into pulling the key's actual data normally.
+  // Tell a user's other open connections that a key belongs to them, either a
+  // new association or a name set or changed on one they already had. The key
+  // and name are all the client needs: receiving them is enough for it to mark
+  // that key locally, which cascades through its own recompute-and-reconnect
+  // into pulling the key's actual data normally.
   function notifyUserKeyChange(homeKey: string, key: string, name: string | null, sender: WebSocket): void {
     const clients = homeKeyToClients.get(homeKey);
     if (!clients) return;
@@ -245,11 +241,12 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
   /**
    * Push the current device list to every open connection of one user.
    *
-   * `list_clients` is request/response, so a device added or renamed on one
-   * machine left every other machine's list silently stale until someone hit
-   * Refresh. This is the same fan-out `notifyUserKeyChange` uses, and it
-   * deliberately includes the sender: after a `redeem_grant` the joining
-   * device wants the list too, and after a rename the reply IS this message.
+   * `list_clients` is request/response, so on its own a device added or
+   * renamed on one machine leaves every other machine's list silently stale
+   * until someone hits Refresh. This is the same fan-out `notifyUserKeyChange`
+   * uses, and it deliberately includes the sender: after a `redeem_grant` the
+   * joining device wants the list too, and after a rename the reply IS this
+   * message.
    */
   function notifyClientsChanged(homeKey: string, userId: string): void {
     const conns = homeKeyToClients.get(homeKey);
@@ -271,9 +268,9 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     const connIp = ipOf(req);
-    // §11.1: per-connection message-rate limiting — a fixed-size sliding
-    // window reset every second. Checked before JSON.parse so the cost is
-    // bounded regardless of what the client sends.
+    // Per-connection message-rate limiting, as a token bucket refilled on
+    // every message. Checked before JSON.parse so the cost is bounded
+    // regardless of what the client sends.
     let msgTokens = MSG_BURST;
     let msgTokensRefilledAt = Date.now();
     let syncKeys: string[] = [];
@@ -281,15 +278,16 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     let userId: string | null = null; // set once this connection is authenticated (post-ok, or post-redeem_grant)
     let clientId: string | null = null; // full RFC 7638 thumbprint, set at hello time (pre-authentication)
     let clientVersion = 0;
-    let pubkeyJwk: Record<string, unknown> | null = null; // set at hello time — needed again by redeem_grant
+    let pubkeyJwk: Record<string, unknown> | null = null; // set at hello time, needed again by redeem_grant
     let declaredKeys: string[] = []; // this connection's hello.keys, held until auth succeeds
-    // Single in-flight nonce per connection (§4.2): 128 bits, consumed by the
-    // very next `auth` attempt regardless of outcome (single-use), 60s TTL. A
+    // Single in-flight nonce per connection: 128 bits, single-use, consumed by
+    // the very next `auth` attempt regardless of outcome, with a 60s TTL. A
     // per-connection nonce is sufficient for replay resistance across
-    // connections: a captured (nonce, sig) pair was signed against *this*
-    // connection's nonce, and any other connection (including a reconnect) gets
-    // its own fresh one, so the signature simply won't verify there (see
-    // authCrypto.ts's verifyAuthSignature and its cross-server-replay test).
+    // connections, because a captured (nonce, sig) pair was signed against
+    // *this* connection's nonce and any other connection, including a
+    // reconnect, gets its own fresh one, so the signature will not verify
+    // there. See authCrypto.ts's verifyAuthSignature and its
+    // cross-server-replay test.
     let expectedNonce: string | null = null;
     let nonceExpiresAt = 0;
     let authenticated = false;
@@ -297,10 +295,10 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     const pushCounts: Partial<Record<string, number>> = {};
 
     // Finish authenticating this connection as `user`. Shared by the normal
-    // auth success path and by a successful redeem_grant, which is exactly the
-    // same "now we know who this connection is" event from a different cause
-    // (§6/§7.2: a brand-new client redeeming a grant should be able to reach a
-    // working `ok` without a second round trip).
+    // auth success path and by a successful redeem_grant, which is the same
+    // "we now know who this connection is" event from a different cause: a
+    // brand-new client redeeming a grant should reach a working `ok` without a
+    // second round trip.
     function completeAuthentication(user: UserRow): void {
       // Auto-associate every key this client declared (other than its own home
       // key) with its user, so this user's other devices learn about it too.
@@ -340,11 +338,10 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     }
 
     ws.on("message", (raw: Buffer) => {
-      // §11.1 rate limit, checked before parsing anything: the highest-value
-      // of the four limits, because it catches both a curious script AND an
-      // honest client bug looping on push (arguably the more likely case —
-      // it looks exactly like an attack and will happily saturate the server
-      // on the user's own behalf).
+      // Rate limit, checked before parsing anything. This is the
+      // highest-value of the four limits, because it catches both a curious
+      // script and an honest client bug looping on push, which looks exactly
+      // like an attack and is the more likely case.
       const nowMs = Date.now();
       msgTokens = Math.min(MSG_BURST, msgTokens + ((nowMs - msgTokensRefilledAt) / 1000) * MSG_REFILL_PER_SEC);
       msgTokensRefilledAt = nowMs;
@@ -365,13 +362,13 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
-      // ── hello: version-gate, then issue a challenge (§4.2) ──────────────
+      // -- hello: version-gate, then issue a challenge -----------------------
       if (msg.type === "hello") {
         clientVersion = typeof msg.protocol_version === "number" ? msg.protocol_version : 0;
         if (clientVersion < MIN_PROTOCOL_VERSION || clientVersion > MAX_PROTOCOL_VERSION) {
           const range = MIN_PROTOCOL_VERSION === MAX_PROTOCOL_VERSION
             ? `${MIN_PROTOCOL_VERSION}`
-            : `${MIN_PROTOCOL_VERSION}–${MAX_PROTOCOL_VERSION}`;
+            : `${MIN_PROTOCOL_VERSION}-${MAX_PROTOCOL_VERSION}`;
           const message = `Unsupported client protocol version ${clientVersion}; server understands ${range}. Please update the client.`;
           console.log(`[ws] ${ts()} reject client=${typeof msg.client_id === "string" ? msg.client_id.slice(0, 8) : "?"} protocol=${clientVersion} (server ${range})`);
           ws.send(JSON.stringify({ type: "error", message, reason: "protocol", min_protocol_version: MIN_PROTOCOL_VERSION, max_protocol_version: MAX_PROTOCOL_VERSION }));
@@ -390,15 +387,15 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
           return;
         }
 
-        // Self-consistency check (§4.2), before anything else: client_id
-        // must be the thumbprint of the key it claims. This makes signature
-        // verification at `auth` time self-contained — the `clients` table
-        // row (if any) is consulted only for registration status, never
-        // trusted to supply the identity itself.
+        // Self-consistency check, before anything else: client_id must be the
+        // thumbprint of the key it claims. That makes signature verification
+        // at `auth` time self-contained, so the `clients` table row, if any,
+        // is consulted only for registration status and never trusted to
+        // supply the identity itself.
         jwkThumbprint(pubkey)
           .then((computed) => {
             if (computed !== helloClientId) {
-              console.log(`[ws] ${ts()} reject client_id ${helloClientId.slice(0, 8)}… does not match pubkey_jwk thumbprint`);
+              console.log(`[ws] ${ts()} reject client_id ${helloClientId.slice(0, 8)}... does not match pubkey_jwk thumbprint`);
               ws.send(JSON.stringify({ type: "error", message: "client_id does not match pubkey_jwk", reason: "protocol" }));
               ws.close(1008, "client_id mismatch");
               return;
@@ -408,7 +405,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
             pubkeyJwk = pubkey;
             declaredKeys = keys;
 
-            const nonce = randomBytes(16).toString("base64url"); // 128 bits (§4.2)
+            const nonce = randomBytes(16).toString("base64url"); // 128 bits
             expectedNonce = nonce;
             nonceExpiresAt = Date.now() + NONCE_TTL_MS;
 
@@ -416,9 +413,8 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
               type: "challenge",
               nonce,
               server_id: SERVER_ID,
-              // §3.3 decision: variant travels in `challenge`, not `ok`, so a
-              // dev/prod mismatch is caught before the client does any
-              // crypto at all.
+              // Variant travels in `challenge` rather than `ok`, so a dev/prod
+              // mismatch is caught before the client does any crypto at all.
               variant: SERVER_VARIANT,
               min_protocol_version: MIN_PROTOCOL_VERSION,
               max_protocol_version: MAX_PROTOCOL_VERSION,
@@ -432,7 +428,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
-      // ── auth: verify the signed nonce, then ok / needs_grant / error ────
+      // -- auth: verify the signed nonce, then ok / needs_grant / error ------
       if (msg.type === "auth") {
         if (!clientId || !pubkeyJwk || !expectedNonce) {
           ws.send(JSON.stringify({ type: "error", message: "No pending challenge", reason: "protocol" }));
@@ -454,7 +450,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         verifyAuthSignature(capturedPubkey, sig, SERVER_ID, nonce, capturedClientId)
           .then((valid) => {
             if (!valid) {
-              console.log(`[ws] ${ts()} auth failed client=${capturedClientId.slice(0, 8)}… bad signature`);
+              console.log(`[ws] ${ts()} auth failed client=${capturedClientId.slice(0, 8)}... bad signature`);
               ws.send(JSON.stringify({ type: "error", message: "Invalid signature", reason: "bad_signature" }));
               ws.close(1008, "Invalid signature");
               return;
@@ -466,7 +462,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
               return;
             }
             if (record.effectiveState !== "active") {
-              console.log(`[ws] ${ts()} client=${capturedClientId.slice(0, 8)}… rejected: ${record.effectiveState}`);
+              console.log(`[ws] ${ts()} client=${capturedClientId.slice(0, 8)}... rejected: ${record.effectiveState}`);
               ws.send(JSON.stringify({ type: "error", message: `Account is ${record.effectiveState}`, reason: record.effectiveState }));
               ws.close(1008, record.effectiveState);
               return;
@@ -481,12 +477,12 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
-      // ── redeem_grant (§6, §7.2): registration plumbing, no UI here ──────
-      // Works whether this connection is still unauthenticated (invite/
-      // device/guest — registers a brand-new client) or already
-      // authenticated (share — hands one more key to the existing user);
-      // db.ts's applyGrantEffect picks whichever of clientId/pubkeyJwk vs.
-      // existingUserId a given grant kind actually needs.
+      // -- redeem_grant: registration plumbing, no UI here -------------------
+      // Works whether this connection is still unauthenticated, as for
+      // invite/device/guest, which register a brand-new client, or already
+      // authenticated, as for share, which hands one more key to the existing
+      // user. db.ts's applyGrantEffect picks whichever of clientId/pubkeyJwk
+      // or existingUserId a given grant kind needs.
       if (msg.type === "redeem_grant") {
         if (!clientId || !pubkeyJwk) {
           ws.send(JSON.stringify({ type: "error", message: "redeem_grant requires a completed challenge/auth first", reason: "protocol" }));
@@ -518,21 +514,22 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         }
         completeAuthentication(result.result.user);
         // A `device` grant just added a machine to this user's account, so the
-        // user's OTHER open connections have a stale device list. Called after
-        // completeAuthentication so this connection is already in the fan-out
-        // set and gets the list too. For invite/guest the redeemer is a brand
-        // new user, so this reaches only their own single connection — right
-        // by construction, since the issuer's own device list is unchanged.
+        // user's OTHER open connections hold a stale device list. Call this
+        // after completeAuthentication, so this connection is already in the
+        // fan-out set and gets the list too. For invite/guest the redeemer is
+        // a brand-new user, so this reaches only their own single connection,
+        // which is right by construction: the issuer's own device list is
+        // unchanged.
         notifyClientsChanged(result.result.user.home_key, result.result.user.user_id);
         return;
       }
 
-      // ── peek_grant (§7.4/§8.2 job 3): read-only preview ──────────────────
-      // The join screen must say plainly what's about to happen — the
-      // grant's greeting and the voucher's display name — BEFORE the account
-      // is created, and redemption is single-use so it can't double as a
-      // preview. Works unauthenticated (same as redeem_grant) since a
-      // brand-new client parked in needs_grant is exactly who needs this.
+      // -- peek_grant: read-only preview -------------------------------------
+      // The join screen shows the grant's greeting and the voucher's display
+      // name BEFORE the account is created, and redemption is single-use, so
+      // it cannot double as a preview. Works unauthenticated, like
+      // redeem_grant, since a brand-new client parked in needs_grant is
+      // exactly who needs this.
       if (msg.type === "peek_grant") {
         const grantId = typeof msg.grant_id === "string" ? msg.grant_id : "";
         const secret = typeof msg.secret === "string" ? msg.secret : "";
@@ -561,7 +558,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       }
 
       if (msg.type === "pull") {
-        // v3: { keys: [{ key, since }] }  — v2 compat: { since } applied to all keys
+        // v3: { keys: [{ key, since }] }. v2 compat: { since } applied to all keys.
         let keysSince: Array<{ key: string; since: number }>;
         if (Array.isArray(msg.keys)) {
           keysSince = msg.keys
@@ -578,21 +575,20 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         const allTombstones: unknown[] = [];
         const allIntegrationResults: unknown[] = [];
         // Assets are many-to-many with sync_key (asset_keys join table), so the
-        // same asset can legitimately match more than one requested key — dedupe
-        // by id rather than concatenating like the other entity types.
+        // same asset can legitimately match more than one requested key. Dedupe
+        // by id rather than concatenating as the other entity types do.
         const assetsById = new Map<string, unknown>();
         const serverTimes: Record<string, number> = {};
         const now = Date.now();
 
-        // §11.1: bound the server's own per-pull work. A key whose result
-        // would push the total over budget is skipped WHOLESALE rather than
-        // truncated — its entities are left out of the response and its
-        // entry is left out of `server_times` entirely, so the client's
-        // existing since-cursor for that key (in key_sync_state) is
-        // untouched and it picks the whole key back up on its next pull
-        // (next reconnect, or a forced resync). Silently truncating instead
-        // and still stamping server_times[key] = now would permanently lose
-        // whatever didn't fit.
+        // Bound the server's own per-pull work. Skip WHOLESALE any key whose
+        // result would push the total over budget, rather than truncating it:
+        // its entities stay out of the response and its entry stays out of
+        // `server_times`, so the client's existing since-cursor for that key
+        // (in key_sync_state) is untouched and it picks the whole key back up
+        // on its next pull, at the next reconnect or a forced resync.
+        // Truncating and still stamping server_times[key] = now would
+        // permanently lose whatever did not fit.
         let pulledTotal = 0;
         for (const { key, since } of keysSince) {
           const boards = dbApi.getEntitiesSince("board", key, since);
@@ -604,7 +600,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
           const count = boards.length + lists.length + items.length + assets.length + tombstones.length + integrationResults.length;
 
           if (pulledTotal + count > MAX_PULL_ENTITIES) {
-            console.warn(`[sync] ${ts()} pull budget exceeded for key ${key.slice(0, 6)} (${count} entities, ${pulledTotal} already queued) — deferred to next pull`);
+            console.warn(`[sync] ${ts()} pull budget exceeded for key ${key.slice(0, 6)} (${count} entities, ${pulledTotal} already queued), deferred to next pull`);
             continue;
           }
           pulledTotal += count;
@@ -622,7 +618,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
 
         const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
         for (const k of Object.keys(pushCounts)) delete pushCounts[k];
-        console.log(`[sync] ${ts()} ${keyTag(syncKeys)} client=${clientId?.slice(0, 8)} pull keys=${keysSince.length}${pushed ? ` pushed: ${pushed}` : ""} → boards=${allBoards.length} lists=${allLists.length} items=${allItems.length} assets=${allAssets.length} tombstones=${allTombstones.length} integration_results=${allIntegrationResults.length}`);
+        console.log(`[sync] ${ts()} ${keyTag(syncKeys)} client=${clientId?.slice(0, 8)} pull keys=${keysSince.length}${pushed ? ` pushed: ${pushed}` : ""} -> boards=${allBoards.length} lists=${allLists.length} items=${allItems.length} assets=${allAssets.length} tombstones=${allTombstones.length} integration_results=${allIntegrationResults.length}`);
 
         ws.send(JSON.stringify({
           type: "snapshot",
@@ -674,11 +670,10 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       }
 
       if (msg.type === "associate_key") {
-        // Defect 2.1(1) fix (now structural, not just checked): the identity
-        // acted on is always this connection's own authenticated identity
-        // (userId/homeKey from the v5 handshake) — there is no client-
-        // supplied identity field on this message at all anymore for a
-        // client to spoof another user's home key with.
+        // The identity acted on is always this connection's own authenticated
+        // identity, the userId and homeKey resolved by the handshake. This
+        // message carries no client-supplied identity field, so there is
+        // nothing for a client to spoof another user's home key with.
         const key = typeof msg.key === "string" ? msg.key.trim() : "";
         const name = typeof msg.name === "string" && msg.name ? msg.name : null;
         if (homeKey && userId && key && key !== homeKey) {
@@ -695,7 +690,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       }
 
       if (msg.type === "leave_key") {
-        // Same fix as associate_key above: identity comes from the
+        // Same rule as associate_key above: identity comes from the
         // connection, and there is no message-body field to spoof it with.
         const key = typeof msg.key === "string" ? msg.key.trim() : "";
         if (homeKey && userId && key) {
@@ -707,12 +702,12 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
-      // ── create_grant (§6, §8.2 scope B): grant-creation UI plumbing ──────
-      // Issuer is always this connection's own authenticated identity — there
-      // is no issuer_user_id field on the wire to spoof, same pattern as
-      // associate_key/leave_key. Cap/attenuation enforcement (§5.2) lives in
-      // dbApi.createGrant itself, not here, so it can't be bypassed by a
-      // client that skips the UI's own `invite`-cap gate.
+      // -- create_grant: grant-creation UI plumbing --------------------------
+      // The issuer is always this connection's own authenticated identity, and
+      // there is no issuer_user_id field on the wire to spoof, the same
+      // pattern as associate_key and leave_key. Cap and attenuation
+      // enforcement lives in dbApi.createGrant rather than here, so a client
+      // that skips the UI's own `invite`-cap gate cannot bypass it.
       if (msg.type === "create_grant") {
         const kind = typeof msg.kind === "string" ? (msg.kind as GrantKind) : null;
         if (!kind || !["invite", "device", "share", "guest"].includes(kind)) {
@@ -747,7 +742,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
-      // ── set_display_name (§9.2/§7.4): self-set nickname, never validated ─
+      // -- set_display_name: self-chosen nickname, never validated -----------
       if (msg.type === "set_display_name") {
         const displayName = typeof msg.display_name === "string" && msg.display_name.trim() ? msg.display_name.trim() : null;
         const updated = dbApi.setUserDisplayName(userId!, displayName, Date.now());
@@ -755,10 +750,10 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
-      // ── set_client_label (§8.2 scope C): name one of your own devices ────
-      // The label was previously only settable at redeem_grant time, and no UI
-      // ever passed one — so every device showed as "(unnamed device)" with no
-      // way to fix it. Ownership is enforced inside setClientLabel's WHERE.
+      // -- set_client_label: name one of your own devices --------------------
+      // redeem_grant can also carry a label, but no UI passes one there, so
+      // this is how a device gets a name instead of showing as "(unnamed
+      // device)". Ownership is enforced inside setClientLabel's WHERE.
       if (msg.type === "set_client_label") {
         const targetClientId = typeof msg.client_id === "string" ? msg.client_id.trim() : "";
         const label = typeof msg.label === "string" && msg.label.trim() ? msg.label.trim() : null;
@@ -777,7 +772,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         return;
       }
 
-      // ── list_clients (§8.2 scope C): "your devices" ──────────────────────
+      // -- list_clients: "your devices" --------------------------------------
       if (msg.type === "list_clients") {
         const clients = dbApi.getClientsForUser(userId!).map((c) => ({
           client_id: c.client_id,
@@ -826,9 +821,9 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
   };
 }
 
-// Production instance — only runs when this module is the entry point (guards
-// against side effects such as HTTPS cert reads and PORT binding when index.ts
-// is merely imported for its exports, e.g. from tests).
+// Production instance, run only when this module is the entry point. That
+// guards against side effects such as HTTPS cert reads and PORT binding when
+// index.ts is imported for its exports, as tests do.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const syncServer = createSyncServer(getProductionDb(), {
     tls: config.tls,

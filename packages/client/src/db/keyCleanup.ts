@@ -2,12 +2,12 @@ import { db } from "./database.js";
 
 /**
  * Remove all local boards/lists/items under syncKey, plus its shared_keys/
- * board_groups bookkeeping. Local-only — no tombstones, no server push.
+ * board_groups bookkeeping. Local-only, with no tombstones and no server push.
  *
- * Split out from operations.ts (rather than living inline in removeByKey)
- * so SyncClient.ts can reuse it when the server tells a sibling connection a
- * key was removed from the user, without importing operations.ts (which
- * imports SyncClient.ts, i.e. a cycle).
+ * Separate from operations.ts so SyncClient.ts can reuse it when the server
+ * tells a sibling connection that a key was removed from the user, without
+ * importing operations.ts, which imports SyncClient.ts and would close a
+ * cycle.
  */
 export async function removeKeyLocal(syncKey: string): Promise<void> {
   const boards = await db.boards.filter((b) => b.sync_key === syncKey).toArray();

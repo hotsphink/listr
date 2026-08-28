@@ -3,14 +3,14 @@
 // version is outside [MIN, MAX] the server rejects the connection.
 //
 // Clients that predate protocol versioning send no version and are treated as
-// version 0 — reject them by keeping MIN >= 1.
+// version 0, so keep MIN >= 1 to reject them.
 //
 // Keep in sync with the client's PROTOCOL_VERSION
 // (packages/client/src/sync/protocol.ts).
 // v2: items use `after_id` linked-list ordering instead of numeric `position`.
 // MIN is 2 so old position-format clients can't push into an after_id server and
 // corrupt shared ordering (the flag-day gate; see memory project_data_format_versioning).
-// v3: multi-key sync — hello sends `keys[]`, push_entity/push_delete carry `sync_key`.
+// v3: multi-key sync. hello sends `keys[]`, and push_entity/push_delete carry `sync_key`.
 // v4: server-side user/key-group tracking. hello requires a `default_key` field
 // identifying "the user"; the server persists which other keys have been used
 // together with that default_key (table `user_keys`) and returns the full known
@@ -20,15 +20,15 @@
 // association (e.g. leaving a shared board removes it from all your devices).
 // Flag day: MIN bumped to 4 so pre-v4 clients (no default_key) are rejected
 // outright rather than silently missing out on cross-device sync.
-// v5 (auth-design.md §4): client-keypair identity replaces the bare
-// `default_key`-as-credential model. hello now carries `client_id` (RFC 7638
-// thumbprint) + `pubkey_jwk` instead of `default_key`; a `challenge`/`auth`
-// round trip (signed nonce) sits between `hello` and `ok`; `variant` moves
-// from `ok` to `challenge` (§3.3 — reject a dev/prod mismatch before any
-// crypto runs); `ok` gains `home_key` (server-assigned, §3.1) since the
-// client no longer supplies one. Flag day, same shape as v4's: MIN bumped to
-// 5 so a pre-v5 client (no keypair, sends `default_key`) is rejected
-// outright with an actionable message rather than being silently unable to
-// complete a handshake it doesn't know it needs to speak differently.
+// v5: client-keypair identity replaces the `default_key`-as-credential model.
+// hello carries `client_id` (an RFC 7638 thumbprint) and `pubkey_jwk` instead
+// of `default_key`; a `challenge`/`auth` round trip over a signed nonce sits
+// between `hello` and `ok`; `variant` travels in `challenge` rather than `ok`,
+// so a dev/prod mismatch is rejected before any crypto runs; and `ok` gains
+// the server-assigned `home_key`, since the client no longer supplies one.
+// Flag day, the same shape as v4's: MIN bumped to 5 so a pre-v5 client, which
+// has no keypair and sends `default_key`, is rejected outright with an
+// actionable message rather than silently failing a handshake it does not know
+// it must speak differently.
 export const MIN_PROTOCOL_VERSION: number = 5;
 export const MAX_PROTOCOL_VERSION: number = 5;

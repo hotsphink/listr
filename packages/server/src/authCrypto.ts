@@ -1,23 +1,23 @@
 /**
- * Server-side half of the v5 handshake's crypto (auth-design.md §4.1/§4.2):
- * RFC 7638 JWK thumbprints, the same signed-payload construction the client
- * uses, and ECDSA signature verification.
+ * Server-side half of the handshake's crypto: RFC 7638 JWK thumbprints, the
+ * same signed-payload construction the client uses, and ECDSA signature
+ * verification.
  *
  * This is an intentionally independent implementation of the algorithm in
- * packages/client/src/sync/clientIdentity.ts, not an import of it — the
+ * packages/client/src/sync/clientIdentity.ts rather than an import of it. The
  * client module targets browser globals (`crypto.subtle`, `btoa`) while this
  * one runs in Node against `node:crypto`'s `webcrypto`, and the two packages
- * don't share a dependency edge. Both sides are independently tested
- * against the RFC 7638 test vector so they can't silently drift apart; if
- * you change one, change the other and re-run both test suites.
+ * share no dependency edge. Both sides are independently tested against the
+ * RFC 7638 test vector so they cannot silently drift apart. Change one and you
+ * must change the other, then re-run both test suites.
  */
 import { webcrypto } from "node:crypto";
 
 export const AUTH_DOMAIN = "listr-auth-v1";
 
-// Same registry as the client's clientIdentity.ts — see that file's comment
-// for why only "EC" matters in production and the rest exist purely so the
-// canonicalization can be checked against RFC 7638's (RSA) published vector.
+// Same registry as the client's clientIdentity.ts. See that file's comment for
+// why only "EC" matters in production and the rest exist purely so the
+// canonicalization can be checked against RFC 7638's published RSA vector.
 const THUMBPRINT_MEMBERS: Record<string, readonly string[]> = {
   EC: ["crv", "kty", "x", "y"],
   RSA: ["e", "kty", "n"],
@@ -41,19 +41,19 @@ export async function jwkThumbprint(jwk: Record<string, unknown>): Promise<strin
   return Buffer.from(digest).toString("base64url");
 }
 
-/** Identical construction to the client's buildAuthPayload — see that
- * file's comment for what each of the three bound values defends against. */
+/** Identical construction to the client's buildAuthPayload. See that file's
+ * comment for what each of the three bound values defends against. */
 export function buildAuthPayload(serverId: string, nonce: string, clientId: string): Uint8Array {
   return new TextEncoder().encode(AUTH_DOMAIN + serverId + nonce + clientId);
 }
 
 /**
- * Verify an `auth` message's signature against the challenge this
- * connection issued. Returns false (never throws) for any malformed input —
- * a bad curve name, a corrupt base64url signature, a key that doesn't parse
- * — since every caller only cares about accept/reject, and a malformed
- * client_id/pubkey_jwk pair was already rejected earlier in `hello` by the
- * self-consistency check (§4.2: client_id === thumbprint(pubkey_jwk)).
+ * Verify an `auth` message's signature against the challenge this connection
+ * issued. Returns false, and never throws, for any malformed input: a bad
+ * curve name, a corrupt base64url signature, or a key that does not parse.
+ * Every caller only cares about accept or reject, and `hello`'s
+ * self-consistency check (client_id === thumbprint(pubkey_jwk)) has already
+ * rejected a malformed client_id/pubkey_jwk pair.
  */
 export async function verifyAuthSignature(
   pubkeyJwk: Record<string, unknown>,
