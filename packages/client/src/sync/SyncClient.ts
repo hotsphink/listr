@@ -5,7 +5,7 @@ import { PROTOCOL_VERSION } from "./protocol.js";
 import { setSyncStatus, setSyncStatusMessage } from "./syncStore.js";
 import { applyIncomingEntity, shouldDeleteOnTombstone, type EntityType } from "./mergeLogic.js";
 import { variantAllowed } from "./variantGuard.js";
-import { keysForEndpoint, type ScopedKeyRow } from "./keyScoping.js";
+import { keysForEndpoint, sameKeySet, type ScopedKeyRow } from "./keyScoping.js";
 import { connectionsForPush, type PushRoutingConnection } from "./pushRouting.js";
 import { buildAuthPayload } from "./clientIdentity.js";
 import { exportPublicJwk, getOrCreateClientIdentity, signAuthPayload } from "./clientKeys.js";
@@ -792,29 +792,42 @@ class SyncClient {
     }));
   }
 
-  // Restart every connection so each recomputes its own scoped key list
-  // (keysForEndpoint) and resends it in hello. The key list is a function of
-  // the endpoint, namely its resolved server_id and that server's assigned
-  // home key, rather than one flat array, so there is no single before/after
-  // list to diff. A signature of the synchronous inputs guards this, so an
-  // unrelated liveQuery re-fire with equivalent data does not churn every
-  // connection.
+  // Restart the connections whose own scoped key list (keysForEndpoint) changed,
+  // so each resends an accurate hello, and leave the rest alone. The key list is
+  // a function of the endpoint, namely its resolved server_id and that server's
+  // assigned home key, so one server's news routinely leaves another endpoint's
+  // list identical. Restarting those too drops live connections for nothing, and
+  // it broke the join flow outright: registering a needs_grant state writes
+  // server_identity, which lands here, and the reconnect killed the very
+  // connection JoinPage had just sent peek_grant on, so the reply was dropped
+  // and the screen hung.
+  //
+  // A signature of the synchronous inputs is the cheap early-out, so an
+  // unrelated liveQuery re-fire with equivalent data does no work at all.
+  // Identities with no home key are left out of it: a server this client is not
+  // registered with yet contributes nothing to any hello.
   private recomputeAllKeys(): void {
     const boardRows = this.boardKeyRows().map((r) => `${r.key}:${r.server_id ?? ""}`).sort();
     const roster = this.sharedKeyRoster.map((r) => `${r.key}:${r.server_id ?? ""}`).sort();
-    const identities = [...this.serverIdentities.entries()].map(([sid, v]) => `${sid}:${v.homeKey ?? ""}`).sort();
+    const identities = [...this.serverIdentities.entries()]
+      .filter(([, v]) => v.homeKey)
+      .map(([sid, v]) => `${sid}:${v.homeKey}`)
+      .sort();
     const signature = JSON.stringify([boardRows, roster, identities]);
     if (signature === this.lastKeysSignature) return;
     this.lastKeysSignature = signature;
 
-    for (const conn of this.connections.values()) conn.stop();
-    this.connections.clear();
-    this.primaries.clear();
-    this.allSenders.clear();
-    this.readyServerId.clear();
-    this.primaryForServerId.clear();
-    this.resolvedHomeKeyByEndpoint.clear();
-    this.statusPhases.clear();
+    for (const ep of this.currentEndpoints) {
+      const conn = this.connections.get(ep.id);
+      if (!conn) continue;
+      if (sameKeySet(conn.helloKeys, this.resolveConnectionKeys(ep).keys)) continue;
+      conn.stop();
+      this.connections.delete(ep.id);
+      this.primaries.delete(ep.id);
+      this.allSenders.delete(ep.id);
+      this.statusPhases.delete(ep.id);
+      this.releasePrimaryIfHeld(ep.id);
+    }
     this.applyEndpoints(this.currentEndpoints);
   }
 

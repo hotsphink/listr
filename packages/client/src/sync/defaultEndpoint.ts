@@ -11,10 +11,10 @@
  * localhost, `wss://` for everything else. There is no reason for the
  * *default* to ever be an insecure host.
  *
- * ASSUMPTION, not verified against a live deployment: the hostnames below
- * come from index.ts's ALLOWED_ORIGINS list (listr-sync.aapx.org for prod,
- * listr-dev.aapx.org for dev), both on the default 443. If either sync
- * server actually listens on a different port, update here.
+ * Both hostnames below are verified against the live deployments: each answers
+ * "Listr sync server running" on 443 and completes a WebSocket upgrade on
+ * /sync, and a browser handshake against the dev one reaches `challenge` with
+ * variant=dev. Re-check here if either sync server moves to another port.
  */
 
 export interface DefaultEndpoint {

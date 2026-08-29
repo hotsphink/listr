@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { keysForEndpoint, type ScopedKeyRow } from "./keyScoping.js";
+import { keysForEndpoint, sameKeySet, type ScopedKeyRow } from "./keyScoping.js";
 
 describe("keysForEndpoint", () => {
   it("always includes the per-server home key, regardless of endpoint", () => {
@@ -70,5 +70,27 @@ describe("keysForEndpoint", () => {
 
   it("a server given no board keys and no roster still gets just its home key (nothing unconditional beyond that)", () => {
     expect(keysForEndpoint("solo-home", [], [], "serverA")).toEqual(["solo-home"]);
+  });
+});
+
+describe("sameKeySet", () => {
+  it("treats a reordering as unchanged, since order carries no meaning in hello", () => {
+    expect(sameKeySet(["a", "b", "c"], ["c", "a", "b"])).toBe(true);
+  });
+
+  it("reports an added key as changed", () => {
+    expect(sameKeySet(["a", "b"], ["a", "b", "c"])).toBe(false);
+  });
+
+  it("reports a removed key as changed", () => {
+    expect(sameKeySet(["a", "b"], ["a"])).toBe(false);
+  });
+
+  it("reports a swapped key as changed even though the length matches", () => {
+    expect(sameKeySet(["a", "b"], ["a", "c"])).toBe(false);
+  });
+
+  it("treats two empty lists as unchanged", () => {
+    expect(sameKeySet([], [])).toBe(true);
   });
 });

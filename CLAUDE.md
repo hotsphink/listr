@@ -9,6 +9,10 @@ Monorepo with pnpm workspaces:
 - `packages/client` — SolidJS + Vite frontend, Dexie.js for IndexedDB
 - `packages/server` — sync server (Node.js + WebSocket + SQLite)
 
+## Dependencies / Tools
+- pnpm is used instead of npm or npx.
+- source code is managed with jj.
+
 ## Key design decisions
 
 - SolidJS for fine-grained reactivity (no VDOM)
@@ -24,8 +28,9 @@ Monorepo with pnpm workspaces:
 
 ## Policies
 
-- Do not use non-ASCII for code or comments.
+- Do not use non-ASCII for code or comments. Non-ASCII is ok for standalone documents.
 - Do not use em-dashes (or the ASCII equivalents). Split into multiple sentences or clauses linked by an appropriate conjunction instead.
 - Comments should describe the current state, not changes made from previous states.
 - Comments should be brief.
 - Prefer the active voice and imperatives.
+

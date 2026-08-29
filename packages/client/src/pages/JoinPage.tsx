@@ -168,9 +168,27 @@ const JoinPage: Component = () => {
         if (s.phase === "needs_grant" || s.phase === "ready") {
           setStep("peeking");
           countUnboundLocalBoards().then(setUnboundBoards);
-          syncClient.peekGrant(epId, p.grantId, p.secret);
         }
       });
+    }
+  });
+
+  // Ask for the grant's details, once per connection. The server answers on
+  // the socket that asked, so a reconnect while the reply is in flight loses
+  // it; this runs again whenever the connection comes back up, which is the
+  // recovery. peek_grant consumes no use of the grant, so asking again costs
+  // nothing.
+  createEffect(() => {
+    const p = payload();
+    const epId = endpointId();
+    const s = status();
+    if (!p || !epId || !s || step() !== "peeking") return;
+    if (s.phase !== "needs_grant" && s.phase !== "ready") return;
+    try {
+      syncClient.peekGrant(epId, p.grantId, p.secret);
+    } catch {
+      // The connection went away between the status update and this call. The
+      // next one brings this effect back around.
     }
   });
 
@@ -207,7 +225,12 @@ const JoinPage: Component = () => {
       await discardUnboundLocalBoards();
     }
     setStep("joining");
-    syncClient.redeemGrant(epId, p.grantId, p.secret);
+    try {
+      syncClient.redeemGrant(epId, p.grantId, p.secret);
+    } catch {
+      setErrorMessage("Lost the connection to that server before joining. Open the link again.");
+      setStep("error");
+    }
   };
 
   const tryManualHost = async () => {

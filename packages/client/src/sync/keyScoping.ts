@@ -47,3 +47,15 @@ export function keysForEndpoint(
     rows.filter((r) => r.server_id === null || r.server_id === endpointServerId).map((r) => r.key);
   return [...new Set([homeKeyForServer, ...scope(boardKeys), ...scope(sharedKeyRoster)])];
 }
+
+/**
+ * Whether two key lists would produce the same `hello`. Order carries no
+ * meaning on the wire, so a reordering must not count as a change: the caller
+ * (SyncClient.recomputeAllKeys) reconnects on a difference, and a spurious
+ * reconnect drops a live connection for nothing.
+ */
+export function sameKeySet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((k) => set.has(k));
+}

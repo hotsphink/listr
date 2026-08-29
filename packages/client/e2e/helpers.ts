@@ -46,10 +46,11 @@ export async function clearDatabase(page: Page) {
 
 /**
  * Give this device a home key directly in IndexedDB, bypassing both the Admin
- * page UI and an actual server registration, since the e2e harness runs no
- * sync server. "Does this device have a default sync key" means
- * server_identity.home_key, a server-assigned field that normally arrives only
- * via a real handshake. This fakes just enough of a `server_identity` row, one
+ * page UI and an actual server registration. Most specs run no sync server;
+ * syncServer.ts stands a real one up for the few that need one, which costs
+ * seconds per run and is worth avoiding here. "Does this device have a default
+ * sync key" means server_identity.home_key, a server-assigned field that
+ * normally arrives only via a real handshake. This fakes just enough of a `server_identity` row, one
  * server with `state: "active"`, for Sidebar's "My Boards" gating to behave as
  * if registration had happened.
  */
@@ -76,6 +77,64 @@ export async function setDefaultSyncKey(page: Page, key: string) {
       req.onerror = () => reject(req.error);
     });
   }, key);
+}
+
+/**
+ * Every row of one IndexedDB object store, for asserting on state the UI does
+ * not render, such as which sync keys a join actually delivered.
+ */
+export async function readStore<T = any>(page: Page, storeName: string): Promise<T[]> {
+  return page.evaluate((name) => {
+    return new Promise<any[]>((resolve, reject) => {
+      const req = indexedDB.open("listr2");
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(name)) { db.close(); resolve([]); return; }
+        const get = db.transaction(name, "readonly").objectStore(name).getAll();
+        get.onsuccess = () => { db.close(); resolve(get.result); };
+        get.onerror = () => { db.close(); reject(get.error); };
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }, storeName);
+}
+
+/**
+ * Configure a sync endpoint directly in IndexedDB, standing for a client that
+ * has already spoken to this server: `last_server_id` is what lets a join link
+ * resolve its server *identity* to this route without probing anything.
+ *
+ * Reloads afterwards, because writing through raw IndexedDB goes behind
+ * Dexie's back: the liveQuery App.tsx feeds SyncClient from never fires, so
+ * without a reload the new endpoint is never connected to at all.
+ */
+export async function addSyncEndpoint(
+  page: Page,
+  endpoint: { host: string; port: number; secure: boolean; lastServerId: string | null },
+) {
+  await page.evaluate((ep) => {
+    return new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open("listr2");
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction("sync_endpoints", "readwrite");
+        tx.objectStore("sync_endpoints").put({
+          id: crypto.randomUUID(),
+          host: ep.host,
+          port: ep.port,
+          secure: ep.secure,
+          enabled: true,
+          last_server_id: ep.lastServerId,
+          position: Date.now(),
+        });
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }, endpoint);
+  await page.reload();
+  await page.waitForSelector(".sidebar");
 }
 
 export async function fillSchemaField(page: Page, input: Locator, value: string) {
