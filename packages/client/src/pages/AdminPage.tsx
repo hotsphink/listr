@@ -330,9 +330,6 @@ const AdminPage: Component = () => {
                     with, so they sit underneath as hints. */}
                 <div class="form-field">
                   <label class="field-label">You are</label>
-                    <span class="field-hint inline-note">
-                      User ID: <code>{shortId(identity().user_id ?? undefined) || "(no id on any server yet)"}</code>
-                    </span>
                   <div class="control-row">
                     <input
                       type="text"
@@ -348,8 +345,11 @@ const AdminPage: Component = () => {
                     <div class="field-error">{displayNameError()}</div>
                   </Show>
                   <div class="field-hint">Shown to people you invite or share with.</div>
-                  <div class="field-hint admin-identity-facts">
-                    Capabilities: {(identity().caps ?? []).join(", ") || "none"}
+                  <div class="field-hint">
+                    User ID: <code>{shortId(identity().user_id ?? undefined) || "(no id on any server yet)"}</code>
+                    <span class="admin-identity-facts">
+                      &nbsp;({(identity().caps ?? []).join(", ") || "Capabilities: none"})
+                    </span>
                   </div>
                 </div>
                 <div class="form-field">
