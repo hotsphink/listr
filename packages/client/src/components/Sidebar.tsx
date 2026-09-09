@@ -59,6 +59,16 @@ const Sidebar: Component<Props> = (props) => {
     }
   });
 
+  // Connection state, as one of the shared intent tones.
+  const syncTone = () => {
+    switch (syncStatus()) {
+      case "connected": return "tone-success";
+      case "connecting": return "tone-warning";
+      case "error": return "tone-danger";
+      default: return "tone-muted";
+    }
+  };
+
   const listsForBoard = (boardId: string) =>
     (lists() ?? []).filter((l) => l.board_id === boardId);
 
@@ -167,7 +177,7 @@ const Sidebar: Component<Props> = (props) => {
       <span class="sidebar-group-title">{name}</span>
       <Show when={shareKey}>
         <button
-          class="sidebar-group-share-btn"
+          class="btn-icon btn-icon-sm btn-icon-quiet sidebar-group-share-btn"
           type="button"
           title={`Share ${name}`}
           aria-label={`Share ${name}`}
@@ -184,9 +194,9 @@ const Sidebar: Component<Props> = (props) => {
       when={renamingId() === board.id}
       fallback={
         <div
-          class="sidebar-item sidebar-board"
+          class="sidebar-item sidebar-board board-stripe"
           classList={{ active: location.pathname === `/board/${board.id}` }}
-          style={`border-left: 3px solid ${board.color}`}
+          style={`--board-color: ${board.color}`}
           onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }}
           onDblClick={() => setEditingBoard(board)}
           onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, board }); }}
@@ -194,7 +204,7 @@ const Sidebar: Component<Props> = (props) => {
           <span class="sidebar-board-name">
             {board.name}
             <Show when={board.sync_key}>
-              <ShareIcon class="sidebar-board-shared-icon" />
+              <ShareIcon class="shared-icon" />
             </Show>
           </span>
         </div>
@@ -216,7 +226,6 @@ const Sidebar: Component<Props> = (props) => {
     <nav class="sidebar" classList={{ open: props.open ?? false }}>
       <div
         class="sidebar-header"
-        style="cursor: pointer"
         onClick={() => { props.onClose?.(); navigate("/"); }}
       >
         Listr
@@ -292,10 +301,7 @@ const Sidebar: Component<Props> = (props) => {
       </div>
       <div class="sidebar-footer">
         <div class="sidebar-sync-btn" onClick={() => { props.onClose?.(); navigate("/admin"); }}>
-          <span
-            class="sync-dot"
-            style={`background: ${syncStatus() === "connected" ? "var(--success)" : syncStatus() === "connecting" ? "#f0a500" : syncStatus() === "error" ? "var(--danger)" : "var(--text-dim)"}`}
-          />
+          <span class={`status-dot ${syncTone()}`} />
           Sync
         </div>
       </div>

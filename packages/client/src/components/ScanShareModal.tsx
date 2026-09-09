@@ -85,34 +85,31 @@ const ScanShareModal: Component<Props> = (props) => {
         >
           <div class="scan-preview-wrapper">
             <video ref={videoRef!} class="scan-preview" playsinline />
-            <canvas ref={canvasRef!} style="display:none" />
+            <canvas ref={canvasRef!} hidden />
             <div class="scan-overlay-corner tl" /><div class="scan-overlay-corner tr" />
             <div class="scan-overlay-corner bl" /><div class="scan-overlay-corner br" />
           </div>
-          <div class="field-hint" style="text-align:center; margin: 6px 0 12px">
-            Point at the share QR code
-          </div>
+          <div class="field-hint scan-hint">Point at the share QR code</div>
         </Show>
 
         <form onSubmit={handleManualSubmit} class="scan-manual-form">
           <div class="scan-manual-label">Or paste a share link or key:</div>
-          <div class="scan-manual-row">
+          <div class="control-row">
             <input
-              class="input"
               value={manualKey()}
               onInput={(e) => { setManualKey(e.currentTarget.value); setManualError(null); }}
               placeholder="https://… or bare key"
               autocomplete="off"
               spellcheck={false}
             />
-            <button class="btn btn-primary" type="submit">Add</button>
+            <button class="btn-primary" type="submit">Add</button>
           </div>
           <Show when={manualError()}>
             <div class="field-error">{manualError()}</div>
           </Show>
         </form>
 
-        <div class="modal-actions">
+        <div class="actions">
           <button class="btn-ghost" type="button" onClick={props.onClose}>Cancel</button>
         </div>
       </Show>
@@ -122,7 +119,7 @@ const ScanShareModal: Component<Props> = (props) => {
           <div class="scan-confirm">
             <div class="scan-confirm-detail">
               <Show when={payload().bn}>
-                <div class="scan-board-name">"{payload().bn}"</div>
+                <div class="offer-name">"{payload().bn}"</div>
               </Show>
               <div class="field-hint">Key: <code>{payload().sk}</code></div>
             </div>
@@ -131,7 +128,7 @@ const ScanShareModal: Component<Props> = (props) => {
                 ? "Subscribe to this board and sync its data?"
                 : "Subscribe to this board group and sync it? Boards added to or removed from the group later will stay in sync too."}
             </p>
-            <div class="modal-actions">
+            <div class="actions">
               <button class="btn-ghost" type="button" onClick={reset}>Back</button>
               <button class="btn-primary" type="button" disabled={saving()} onClick={() => acceptShare(payload())}>
                 {saving() ? "Adding…" : payload().bid ? "Add Board" : "Add Group"}

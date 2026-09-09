@@ -39,7 +39,7 @@ const ItemFormModal: Component<Props> = (props) => {
       <h2>{props.initial ? "Edit Item" : "New Item"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-field">
-          <label>Title</label>
+          <label class="field-label">Title</label>
           <input
             value={title()}
             onInput={(e) => setTitle(e.currentTarget.value)}
@@ -50,7 +50,7 @@ const ItemFormModal: Component<Props> = (props) => {
         <For each={props.schema}>
           {(def) => (
             <div class="form-field">
-              <label>{def.label || def.key}</label>
+              <label class="field-label">{def.label || def.key}</label>
               <AttributeEditor
                 definition={def}
                 value={attributes()[def.key]}
@@ -59,12 +59,11 @@ const ItemFormModal: Component<Props> = (props) => {
             </div>
           )}
         </For>
-        <div class="modal-actions">
+        <div class="actions">
           {props.initial && props.onDelete && (
             <button
               type="button"
-              class="btn-danger"
-              style="margin-right: auto"
+              class="btn-danger action-lead"
               onClick={props.onDelete}
             >
               Delete

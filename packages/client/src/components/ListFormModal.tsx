@@ -51,7 +51,7 @@ const ListFormModal: Component<Props> = (props) => {
       <h2>{props.initial ? "Edit List" : "New List"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-field">
-          <label>Name</label>
+          <label class="field-label">Name</label>
           <input
             value={name()}
             onInput={(e) => setName(e.currentTarget.value)}
@@ -59,7 +59,7 @@ const ListFormModal: Component<Props> = (props) => {
           />
         </div>
         <div class="form-field">
-          <label>Board</label>
+          <label class="field-label">Board</label>
           <select
             value={boardId()}
             onChange={(e) => setBoardId(e.currentTarget.value)}
@@ -72,7 +72,7 @@ const ListFormModal: Component<Props> = (props) => {
         <Show when={selectedBoard()}>
           {(board) => (
             <div class="form-field">
-              <div class="checkbox-field">
+              <label class="check-label">
                 <input
                   type="checkbox"
                   checked={overrideFormat()}
@@ -83,10 +83,8 @@ const ListFormModal: Component<Props> = (props) => {
                     }
                   }}
                 />
-                <label style="margin-bottom: 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text)">
-                  Override board format string
-                </label>
-              </div>
+                Override board format string
+              </label>
               <Show when={overrideFormat()}>
                 <input
                   value={formatOverride()}
@@ -95,34 +93,28 @@ const ListFormModal: Component<Props> = (props) => {
                 />
               </Show>
               <Show when={!overrideFormat()}>
-                <div style="font-size: 12px; color: var(--text-muted)">
-                  Using: {board().format_string}
-                </div>
+                <div class="field-hint">Using: {board().format_string}</div>
               </Show>
             </div>
           )}
         </Show>
         <div class="form-field">
-          <div class="checkbox-field">
+          <label class="check-label">
             <input
               type="checkbox"
               checked={overrideIntegrations()}
               onChange={(e) => setOverrideIntegrations(e.currentTarget.checked)}
             />
-            <label style="margin-bottom: 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text)">
-              Override board integrations
-            </label>
-          </div>
+            Override board integrations
+          </label>
           <Show when={overrideIntegrations()}>
             <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
           </Show>
           <Show when={!overrideIntegrations()}>
-            <div style="font-size: 12px; color: var(--text-muted)">
-              Using board integrations
-            </div>
+            <div class="field-hint">Using board integrations</div>
           </Show>
         </div>
-        <div class="modal-actions">
+        <div class="actions">
           <button type="button" class="btn-ghost" onClick={props.onClose}>
             Cancel
           </button>

@@ -251,7 +251,7 @@ const JoinPage: Component = () => {
 
   return (
     <div class="main receive-page">
-      <div class="receive-card">
+      <div class="panel receive-card">
         <Show when={step() === "invalid"}>
           <h2>Invalid join link</h2>
           <p class="field-hint">This link doesn't look like a valid Listr join link.</p>
@@ -260,14 +260,14 @@ const JoinPage: Component = () => {
 
         <Show when={step() === "resolving" || step() === "connecting"}>
           <div class="receive-syncing">
-            <div class="receive-spinner" />
+            <div class="spinner" />
             <div>Connecting…</div>
           </div>
         </Show>
 
         <Show when={step() === "peeking"}>
           <div class="receive-syncing">
-            <div class="receive-spinner" />
+            <div class="spinner" />
             <div>Looking up your invite…</div>
           </div>
         </Show>
@@ -275,13 +275,13 @@ const JoinPage: Component = () => {
         <Show when={step() === "unknown_server"}>
           <h2>Server not found</h2>
           <p class="field-hint">{errorMessage() ?? "This link is for a server you don't have configured."}</p>
-          <div class="admin-field" style="margin-top: 16px; text-align: left">
+          <div class="form-field join-manual-host">
             <label class="field-label">Host</label>
-            <input class="input" value={manualHost()} onInput={(e) => setManualHost(e.currentTarget.value)} placeholder="hostname" />
-            <label class="field-label" style="margin-top: 8px">Port</label>
-            <input class="input" type="number" value={manualPort()} onInput={(e) => setManualPort(parseInt(e.currentTarget.value) || 443)} />
+            <input value={manualHost()} onInput={(e) => setManualHost(e.currentTarget.value)} placeholder="hostname" />
+            <label class="field-label">Port</label>
+            <input type="number" value={manualPort()} onInput={(e) => setManualPort(parseInt(e.currentTarget.value) || 443)} />
           </div>
-          <div class="receive-actions">
+          <div class="actions actions-center">
             <button class="btn-ghost" type="button" onClick={goHome}>Cancel</button>
             <button class="btn-primary" type="button" disabled={!manualHost().trim()} onClick={tryManualHost}>Try this host</button>
           </div>
@@ -295,28 +295,28 @@ const JoinPage: Component = () => {
                 <p><strong>{info().issuerDisplayName}</strong> is inviting you with the message</p>
               </Show>
               <Show when={info().greeting}>
-                <div class="receive-board-name">"{info().greeting}"</div>
+                <div class="offer-name">"{info().greeting}"</div>
               </Show>
               <p class="field-hint">
                 Tapping Join creates an account for you on this server — this is not anonymous, and the person who
                 invited you can see that you joined.
               </p>
               <Show when={unboundBoards() > 0}>
-                <div class="admin-field" style="text-align: left; margin-top: 12px">
-                  <div class="field-hint" style="margin-bottom: 6px">
+                <div class="form-field join-keep-choice">
+                  <div class="field-hint field-hint-lead">
                     You already have {unboundBoards()} board{unboundBoards() > 1 ? "s" : ""} on this device from before joining.
                   </div>
-                  <label style="display:flex; align-items:center; gap:6px; margin-bottom:4px">
+                  <label class="check-label">
                     <input type="radio" name="keep-choice" checked={keepChoice() !== "discard"} onChange={() => setKeepChoice("keep")} />
                     Keep it — it becomes part of your new account
                   </label>
-                  <label style="display:flex; align-items:center; gap:6px">
+                  <label class="check-label">
                     <input type="radio" name="keep-choice" checked={keepChoice() === "discard"} onChange={() => setKeepChoice("discard")} />
                     Discard it
                   </label>
                 </div>
               </Show>
-              <div class="receive-actions">
+              <div class="actions actions-center">
                 <button class="btn-ghost" type="button" onClick={goHome}>Cancel</button>
                 <button class="btn-primary" type="button" onClick={doJoin}>Join</button>
               </div>
@@ -326,7 +326,7 @@ const JoinPage: Component = () => {
 
         <Show when={step() === "joining"}>
           <div class="receive-syncing">
-            <div class="receive-spinner" />
+            <div class="spinner" />
             <div>Joining…</div>
           </div>
         </Show>
@@ -336,7 +336,7 @@ const JoinPage: Component = () => {
             <div class="receive-saved-icon">✓</div>
             <div>You're in!</div>
           </div>
-          <div class="receive-actions">
+          <div class="actions actions-center">
             <button class="btn-primary" type="button" onClick={goHome}>Go to app</button>
           </div>
         </Show>
@@ -344,7 +344,7 @@ const JoinPage: Component = () => {
         <Show when={step() === "error"}>
           <h2>Couldn't join</h2>
           <p class="field-error">{errorMessage()}</p>
-          <div class="receive-actions">
+          <div class="actions actions-center">
             <button class="btn-ghost" type="button" onClick={goHome}>Go home</button>
           </div>
         </Show>

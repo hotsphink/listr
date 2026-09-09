@@ -22,11 +22,11 @@ const Modal: Component<Props> = (props) => {
     <Show when={props.open}>
       <Portal>
         <div
-          class={props.class ? `modal-overlay ${props.class}-overlay` : "modal-overlay"}
+          class={props.class ? `overlay modal-overlay ${props.class}-overlay` : "overlay modal-overlay"}
           ref={overlayRef}
           onClick={(e) => { if (e.target === overlayRef) props.onClose(); }}
         >
-          <div class={props.class ? `modal ${props.class}` : "modal"}>{props.children}</div>
+          <div class={props.class ? `panel modal ${props.class}` : "panel modal"}>{props.children}</div>
         </div>
       </Portal>
     </Show>

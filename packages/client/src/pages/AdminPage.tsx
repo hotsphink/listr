@@ -25,25 +25,26 @@ const PHASE_LABELS: Record<string, string> = {
   variant_mismatch: "Wrong Server",
 };
 
-const PHASE_COLORS: Record<string, string> = {
-  disabled: "var(--text-dim)",
-  connecting: "#f0a500",
-  handshaking: "#f0a500",
-  needs_grant: "#f0a500",
-  ready: "var(--success)",
-  error: "var(--danger)",
-  conflict: "var(--danger)",
-  variant_mismatch: "var(--danger)",
+const PHASE_STATUS_CLASSES: Record<string, string> = {
+  disabled: "",
+  connecting: "status-warning",
+  handshaking: "status-warning",
+  needs_grant: "status-warning",
+  ready: "status-success",
+  error: "status-danger",
+  conflict: "status-danger",
+  variant_mismatch: "status-danger",
 };
 
-// A connection that is ready but lost the race for its server_id to another
-// endpoint (see SyncClient.claimOrDefer). Connected, but standing by rather
-// than actively pushing and pulling.
-const STANDBY_COLOR = "#d4b106";
-
-function statusColor(status: EndpointStatus | undefined, phase: string): string {
-  if (phase === "ready" && status?.primary === false) return STANDBY_COLOR;
-  return PHASE_COLORS[phase] ?? "var(--text-dim)";
+// The status class an endpoint card wears. Everything inside it that reports
+// the connection — the border, the dot, the enable checkbox — colours itself
+// from the card's --status. "is-standby" marks a connection that is ready but
+// lost the race for its server_id to another endpoint (see
+// SyncClient.claimOrDefer): connected, but standing by rather than actively
+// pushing and pulling.
+function statusClass(status: EndpointStatus | undefined, phase: string): string {
+  if (phase === "ready" && status?.primary === false) return "status-warning is-standby";
+  return PHASE_STATUS_CLASSES[phase] ?? "";
 }
 
 function statusLabel(status: EndpointStatus | undefined, phase: string): string {
@@ -100,14 +101,14 @@ const ForceUpdateButton: Component = () => {
 
   return (
     <div>
-      <button class="btn btn-primary" disabled={!online() || state() === "working"} onClick={handleClick}>
+      <button class="btn-primary" disabled={!online() || state() === "working"} onClick={handleClick}>
         {state() === "working" ? "Updating…" : "Update Now"}
       </button>
       <Show when={!online()}>
-        <div class="field-hint" style="margin-top: 4px">Unavailable offline.</div>
+        <div class="field-hint">Unavailable offline.</div>
       </Show>
       <Show when={state() === "error"}>
-        <div class="field-error" style="margin-top: 4px">Update failed — check the console.</div>
+        <div class="field-error">Update failed — check the console.</div>
       </Show>
     </div>
   );
@@ -306,7 +307,7 @@ const AdminPage: Component = () => {
   return (
     <div class="main admin-page">
       <div class="page-header">
-        <button class="admin-back-btn" type="button" onClick={() => { setSidebarOpen(true); navigate(-1); }} aria-label="Back">
+        <button class="btn-icon btn-icon-lg btn-icon-strong" type="button" onClick={() => { setSidebarOpen(true); navigate(-1); }} aria-label="Back">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
@@ -319,7 +320,7 @@ const AdminPage: Component = () => {
           <h2>Identity</h2>
           <Show
             when={primaryIdentity()}
-            fallback={<div class="admin-empty">Not registered with any server yet.</div>}
+            fallback={<div class="empty-note">Not registered with any server yet.</div>}
           >
             {(identity) => (
               <>
@@ -327,36 +328,35 @@ const AdminPage: Component = () => {
                     concerned, so it leads. The user id and caps are machine
                     facts you occasionally need to read out, not things to lead
                     with, so they sit underneath as hints. */}
-                <div class="admin-field">
+                <div class="form-field">
                   <label class="field-label">You are</label>
                     <span class="field-hint inline-note">
                       User ID: <code>{shortId(identity().user_id ?? undefined) || "(no id on any server yet)"}</code>
                     </span>
-                  <div class="admin-input-row">
+                  <div class="control-row">
                     <input
-                      class="input"
                       type="text"
                       value={displayNameInput()}
                       onInput={(e) => { setDisplayNameInput(e.currentTarget.value); setDisplayNameDirty(true); }}
                       placeholder="a nickname — not your real name if you'd rather not"
                     />
                     <Show when={displayNameDirty()}>
-                      <button class="btn btn-primary" type="button" onClick={saveDisplayName}>Save</button>
+                      <button class="btn-primary" type="button" onClick={saveDisplayName}>Save</button>
                     </Show>
                   </div>
                   <Show when={displayNameError()}>
-                    <div class="field-hint field-hint-error">{displayNameError()}</div>
+                    <div class="field-error">{displayNameError()}</div>
                   </Show>
                   <div class="field-hint">Shown to people you invite or share with.</div>
                   <div class="field-hint admin-identity-facts">
                     Capabilities: {(identity().caps ?? []).join(", ") || "none"}
                   </div>
                 </div>
-                <div class="admin-field">
-                  <div class="admin-field-label-row admin-label-inline">
+                <div class="form-field">
+                  <div class="header-row header-row-tight header-row-inline">
                     <label class="field-label">Your devices</label>
                     <button
-                      class="btn-icon-sm"
+                      class="btn-icon btn-icon-sm"
                       type="button"
                       onClick={refreshDevices}
                       title="Refresh device list"
@@ -370,19 +370,19 @@ const AdminPage: Component = () => {
                   </div>
                   <For each={devices()}>
                     {(c) => (
-                      <div class="admin-device-row">
+                      <div class="control-row admin-device-row">
                         <Show
                           when={renamingClientId() === c.client_id}
                           fallback={
                             <>
-                              <div class="admin-client-id">
+                              <div class="code-box">
                                 {c.label ?? "(unnamed device)"} — {shortId(c.client_id)}
                                 <Show when={c.client_id === clientId()}>
                                   <span class="admin-device-self"> · this device</span>
                                 </Show>
                               </div>
                               <button
-                                class="btn-icon-sm"
+                                class="btn-icon btn-icon-sm"
                                 type="button"
                                 onClick={() => { setRenameInput(c.label ?? ""); setRenamingClientId(c.client_id); }}
                                 title={`Rename ${c.label ?? "this device"}`}
@@ -396,7 +396,6 @@ const AdminPage: Component = () => {
                           }
                         >
                           <input
-                            class="input"
                             type="text"
                             autofocus
                             value={renameInput()}
@@ -407,45 +406,45 @@ const AdminPage: Component = () => {
                             }}
                             placeholder="e.g. phone, laptop"
                           />
-                          <button class="btn btn-primary btn-xs" type="button" onClick={() => saveClientLabel(c.client_id)}>Save</button>
-                          <button class="btn btn-xs" type="button" onClick={() => setRenamingClientId(null)}>Cancel</button>
+                          <button class="btn-primary btn-xs" type="button" onClick={() => saveClientLabel(c.client_id)}>Save</button>
+                          <button class="btn-xs" type="button" onClick={() => setRenamingClientId(null)}>Cancel</button>
                         </Show>
                       </div>
                     )}
                   </For>
                   <Show when={deviceError()}>
-                    <div class="field-hint field-hint-error">{deviceError()}</div>
+                    <div class="field-error">{deviceError()}</div>
                   </Show>
                   <Show when={devices().length === 0}>
                     <div class="field-hint">No devices found — click Refresh.</div>
                   </Show>
                 </div>
-                <div class="admin-input-row">
-                  <button class="btn btn-primary" type="button" onClick={() => setShowGrantModal(true)}>+ Create join link</button>
+                <div class="control-row">
+                  <button class="btn-primary" type="button" onClick={() => setShowGrantModal(true)}>+ Create join link</button>
                 </div>
               </>
             )}
           </Show>
           <For each={needsGrantEndpoints()}>
             {(ep) => (
-              <div class="admin-field" style="margin-top: 12px">
+              <div class="form-field">
                 <div class="field-hint">Not registered on {ep.host || "this server"} yet.</div>
-                <button class="btn btn-primary" type="button" onClick={() => setJoiningEndpointId(ep.id)}>Join</button>
+                <button class="btn-primary" type="button" onClick={() => setJoiningEndpointId(ep.id)}>Join</button>
               </div>
             )}
           </For>
           <Show when={clientId()}>
-            <div class="admin-field" style="margin-top: 12px">
+            <div class="form-field">
               <label class="field-label">Client ID</label>
-              <div class="admin-client-id">{clientId()}</div>
+              <div class="code-box">{clientId()}</div>
               <div class="field-hint">Identifies this device's keypair. Assigned automatically, shared across every server it registers with.</div>
             </div>
           </Show>
-          <div class="admin-input-row">
-            <button class="btn" type="button" disabled={syncStatus() !== "connected"} onClick={() => syncClient.forceFullSync()}>
+          <div class="control-row">
+            <button type="button" disabled={syncStatus() !== "connected"} onClick={() => syncClient.forceFullSync()}>
               Refresh from server
             </button>
-            <button class="btn" type="button" disabled={syncStatus() !== "connected"} onClick={() => syncClient.forcePushAll()}>
+            <button type="button" disabled={syncStatus() !== "connected"} onClick={() => syncClient.forcePushAll()}>
               Push all to server
             </button>
             <Show when={connectedServerId()}>
@@ -455,9 +454,9 @@ const AdminPage: Component = () => {
         </div>
 
         <div class="admin-section">
-          <div class="admin-section-title">
+          <div class="header-row">
             <h2>Sync servers</h2>
-            <button class="btn" type="button" onClick={addEndpoint}>+ Add</button>
+            <button type="button" onClick={addEndpoint}>+ Add</button>
           </div>
           <For each={endpoints()}>
             {(ep) => {
@@ -468,22 +467,22 @@ const AdminPage: Component = () => {
               const connectedId = () => status()?.serverId ?? ep.last_server_id;
               const expanded = () => expandedIds().has(ep.id);
               return (
-                <div class="endpoint-card" style={`border-color: ${statusColor(status(), phase())}`}>
+                <div class={`panel endpoint-card ${statusClass(status(), phase())}`}>
                   <div class="endpoint-header" classList={{ collapsed: !expanded() }}>
-                    <button class="btn-icon-danger endpoint-expand-btn" type="button" onClick={() => toggleExpanded(ep.id)} aria-label={expanded() ? "Collapse" : "Expand"}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style={`transform: rotate(${expanded() ? 90 : 0}deg); transition: transform 0.15s; display: block`}>
+                    <button class="btn-icon btn-icon-sm btn-icon-quiet" type="button" onClick={() => toggleExpanded(ep.id)} aria-label={expanded() ? "Collapse" : "Expand"}>
+                      <svg class="endpoint-expand-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style={`transform: rotate(${expanded() ? 90 : 0}deg)`}>
                         <polyline points="9 18 15 12 9 6"/>
                       </svg>
                     </button>
-                    <span class="sync-dot" style={`background: ${statusColor(status(), phase())}`} title={statusLabel(status(), phase())} />
+                    <span class="status-dot" title={statusLabel(status(), phase())} />
                     <input
                       type="checkbox"
+                      class="endpoint-enabled"
                       checked={ep.enabled}
-                      style={`accent-color: ${statusColor(status(), phase())}`}
                       onChange={(e) => updateEndpoint(ep.id, { enabled: e.currentTarget.checked })}
                     />
                     <input
-                      class="input endpoint-host"
+                      class="endpoint-host"
                       type="text"
                       value={ep.host}
                       placeholder="hostname"
@@ -491,7 +490,7 @@ const AdminPage: Component = () => {
                     />
                     <span class="endpoint-sep">:</span>
                     <input
-                      class="input endpoint-port"
+                      class="endpoint-port"
                       type="number"
                       value={ep.port}
                       placeholder="port"
@@ -500,7 +499,7 @@ const AdminPage: Component = () => {
                         updateEndpoint(ep.id, { port: isNaN(n) ? 443 : n });
                       }}
                     />
-                    <label class="endpoint-tls-label">
+                    <label class="check-label">
                       <input
                         type="checkbox"
                         checked={ep.secure}
@@ -508,7 +507,7 @@ const AdminPage: Component = () => {
                       />
                       TLS
                     </label>
-                    <button class="btn-icon-danger" type="button" onClick={() => deleteEndpoint(ep.id)}>✕</button>
+                    <button class="btn-icon btn-icon-sm btn-icon-quiet tone-danger" type="button" onClick={() => deleteEndpoint(ep.id)}>✕</button>
                   </div>
                   <Show when={!expanded()}>
                     <div class="endpoint-collapsed-ellipsis" aria-hidden="true">. . .</div>
@@ -516,34 +515,34 @@ const AdminPage: Component = () => {
 
                   <Show when={expanded()}>
                     <div class="endpoint-urls">
-                      <span class="endpoint-url-chip"><span class="endpoint-url-proto">WS</span>{wsUrl()}</span>
-                      <span class="endpoint-url-chip"><span class="endpoint-url-proto">HTTP</span>{httpsUrl()}</span>
+                      <span class="chip chip-mono"><span class="endpoint-url-proto">WS</span>{wsUrl()}</span>
+                      <span class="chip chip-mono"><span class="endpoint-url-proto">HTTP</span>{httpsUrl()}</span>
                     </div>
 
                     <div class="endpoint-status-row">
-                      <span class="sync-dot" style={`background: ${statusColor(status(), phase())}`} />
-                      <span class="endpoint-phase-label">{statusLabel(status(), phase())}</span>
+                      <span class="status-dot" />
+                      <span>{statusLabel(status(), phase())}</span>
                       <Show when={status()?.message}>
-                        <span class="endpoint-status-msg"> — {status()!.message}</span>
+                        <span> — {status()!.message}</span>
                       </Show>
                       <Show when={connectedId()}>
-                        <span class="endpoint-server-id"> — server id {shortId(connectedId())}</span>
+                        <span> — server id {shortId(connectedId())}</span>
                       </Show>
                     </div>
                     <Show when={ep.secure && /^[\d.]+$|^[0-9a-f:]+$/i.test(ep.host)}>
-                      <div class="endpoint-hint">TLS certificates are issued for hostnames, not IPs — try disabling TLS for this address.</div>
+                      <div class="field-hint endpoint-hint">TLS certificates are issued for hostnames, not IPs — try disabling TLS for this address.</div>
                     </Show>
 
                     <Show when={phase() === "variant_mismatch"}>
-                      <div class="endpoint-conflict">
+                      <div class="callout tone-danger endpoint-conflict">
                         <div class="endpoint-conflict-msg">
-                          This server is <code>{status()?.serverVariant}</code>, but this client is built for{" "}
-                          <code>{status()?.clientVariant}</code>. Refusing to connect — a dev client talking to a prod
+                          This server is <code class="code">{status()?.serverVariant}</code>, but this client is built for{" "}
+                          <code class="code">{status()?.clientVariant}</code>. Refusing to connect — a dev client talking to a prod
                           server (or the reverse) would write live data to the wrong place.
                         </div>
-                        <div class="endpoint-conflict-actions">
+                        <div class="control-row">
                           <button
-                            class="btn btn-sm"
+                            class="btn-sm"
                             type="button"
                             onClick={() => updateEndpoint(ep.id, { enabled: false })}
                           >
@@ -554,20 +553,20 @@ const AdminPage: Component = () => {
                     </Show>
 
                     <Show when={phase() === "conflict"}>
-                      <div class="endpoint-conflict">
+                      <div class="callout tone-danger endpoint-conflict">
                         <div class="endpoint-conflict-msg">
-                          Server ID changed from <code>{shortId(status()?.knownId)}</code> to <code>{shortId(status()?.newId)}</code>
+                          Server ID changed from <code class="code">{shortId(status()?.knownId)}</code> to <code class="code">{shortId(status()?.newId)}</code>
                         </div>
-                        <div class="endpoint-conflict-actions">
+                        <div class="control-row">
                           <button
-                            class="btn btn-primary btn-sm"
+                            class="btn-primary btn-sm"
                             type="button"
                             onClick={() => updateEndpoint(ep.id, { last_server_id: status()?.newId ?? null })}
                           >
                             Accept new server
                           </button>
                           <button
-                            class="btn btn-sm"
+                            class="btn-sm"
                             type="button"
                             onClick={() => updateEndpoint(ep.id, { enabled: false })}
                           >
@@ -582,13 +581,13 @@ const AdminPage: Component = () => {
             }}
           </For>
           <Show when={endpoints().length === 0}>
-            <div class="admin-empty">No sync servers configured. Click + Add to get started.</div>
+            <div class="empty-note">No sync servers configured. Click + Add to get started.</div>
           </Show>
         </div>
 
         <div class="admin-section">
           <h2>Backup &amp; restore</h2>
-          <div class="admin-field">
+          <div class="form-field">
             <div class="field-hint">
               Moving data between two servers (e.g. dev and prod)? Export All here while
               connected to the source server, then Import that file while connected to the
@@ -596,9 +595,8 @@ const AdminPage: Component = () => {
               new IDs are added, and deletions recorded since the export are replayed.
             </div>
           </div>
-          <div class="admin-input-row">
+          <div class="control-row">
             <button
-              class="btn"
               type="button"
               onClick={async () => {
                 const data = await exportAllData();
@@ -608,7 +606,7 @@ const AdminPage: Component = () => {
             >
               Export All
             </button>
-            <button class="btn" type="button" onClick={() => setShowImport(true)}>
+            <button type="button" onClick={() => setShowImport(true)}>
               Import…
             </button>
           </div>
@@ -616,12 +614,12 @@ const AdminPage: Component = () => {
 
         <div class="admin-section">
           <h2>About</h2>
-          <div class="admin-field">
-            <div class="admin-field-label-row">
+          <div class="form-field">
+            <div class="header-row header-row-tight">
               <label class="field-label">Client build</label>
               <ForceUpdateButton />
             </div>
-            <div class="admin-client-id">{formatBuildTime(__BUILD_TIME__)} · protocol v{PROTOCOL_VERSION}</div>
+            <div class="code-box">{formatBuildTime(__BUILD_TIME__)} · protocol v{PROTOCOL_VERSION}</div>
             <div class="field-hint">Build timestamp and sync protocol version of this client.<br/>Update Now clears local cache and reloads from the server!</div>
           </div>
         </div>

@@ -91,12 +91,12 @@ const BoardShareModal: Component<Props> = (props) => {
     <Modal open={props.open} onClose={props.onClose} class="board-share">
       <h2>Share "{title()}"</h2>
       <Show when={props.group}>
-        <div class="field-hint" style="margin-bottom: 8px">
+        <div class="field-hint field-hint-lead">
           Anyone who accepts this link gets the whole group — boards added or removed later stay in sync too.
         </div>
       </Show>
       <Show when={props.board && otherBoardCount() !== null}>
-        <div class="field-hint" style="margin-bottom: 8px">
+        <div class="field-hint field-hint-lead">
           {otherBoardCount()! > 0
             ? `This link shares the whole namespace this board lives in — it also shares ${otherBoardCount()} other board${otherBoardCount()! > 1 ? "s" : ""}.`
             : "This board is alone in its sync namespace, so this link shares only it."}
@@ -104,24 +104,24 @@ const BoardShareModal: Component<Props> = (props) => {
       </Show>
       <Show
         when={qrDataUrl()}
-        fallback={<div class="share-loading">Generating…</div>}
+        fallback={<div class="empty-note empty-note-center">Generating…</div>}
       >
         <div class="share-qr-wrapper">
           <img class="share-qr-code" src={qrDataUrl()!} alt="Share QR code" />
         </div>
         <div class="share-key-section">
-          <div class="field-hint" style="margin-bottom: 6px">
+          <div class="field-hint field-hint-lead">
             Scan the QR code, or copy the link to share via any app.
           </div>
           <div class="share-key-row">
             <span class="share-url-text">{shareUrl()}</span>
-            <button class="btn btn-xs" type="button" onClick={copyUrl}>
+            <button class="btn-xs" type="button" onClick={copyUrl}>
               {urlCopied() ? "Copied!" : "Copy"}
             </button>
           </div>
         </div>
       </Show>
-      <div class="modal-actions">
+      <div class="actions">
         <button class="btn-primary" type="button" onClick={props.onClose}>Done</button>
       </div>
     </Modal>

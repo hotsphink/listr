@@ -46,7 +46,7 @@ const MultiItemFormModal: Component<Props> = (props) => {
             const state = () => states()[def.key] ?? { checked: false, value: null };
             return (
               <div class="multi-edit-field">
-                <label class="multi-edit-label">
+                <label class="check-label multi-edit-label">
                   <input
                     type="checkbox"
                     checked={state().checked}
@@ -65,7 +65,7 @@ const MultiItemFormModal: Component<Props> = (props) => {
             );
           }}
         </For>
-        <div class="modal-actions">
+        <div class="actions">
           <button type="button" class="btn-ghost" onClick={props.onClose}>Cancel</button>
           <button type="submit" class="btn-primary">Save</button>
         </div>

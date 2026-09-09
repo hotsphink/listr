@@ -1,0 +1,437 @@
+/* Item views.
+ *
+ * A board renders its lists as columns; each column renders its items in one of
+ * four modes (list, table, card, board). Everything a list of items needs to
+ * look like a list of items lives here, along with the drag-and-drop chrome
+ * shared by all four modes.
+ */
+
+/* ── Columns ──────────────────────────────────────────────────────────────*/
+.multi-list-view {
+  flex: 1;
+  display: flex;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-7) var(--space-7);
+  overflow-x: auto;
+  align-items: flex-start;
+  scroll-snap-type: x mandatory;
+  cursor: grab;
+}
+
+/* Dragging the background scrolls the board sideways. */
+.multi-list-view.bg-scroll-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* Every mode but "board" stacks the columns instead of scrolling them. */
+.multi-list-vertical {
+  flex-direction: column;
+  overflow-x: hidden;
+  cursor: default;
+}
+
+.multi-list-vertical .multi-list-column {
+  flex: none;
+  width: 100%;
+  max-height: none;
+}
+
+.multi-list-column {
+  flex: 0 0 260px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 100px);
+}
+
+.multi-list-column.active {
+  border-color: var(--accent);
+}
+
+/* The column a dragged item would land in. */
+.multi-list-column.snap-target .multi-list-column-name {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.multi-list-column-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--text-md);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+  user-select: none;
+}
+
+.multi-list-column-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+
+.multi-list-add-btn {
+  margin-left: auto;
+}
+
+.multi-list-new-column {
+  flex: 0 0 160px;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.multi-list-new-column:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.multi-list-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  margin: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ── List mode ────────────────────────────────────────────────────────────*/
+.list-view {
+  list-style: none;
+}
+
+.list-view-item {
+  display: flex;
+  align-items: center;
+  padding: var(--space-4) var(--space-5) var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+  font-size: var(--text-base);
+  transition: background var(--speed);
+  user-select: none;
+}
+
+.list-view-item:first-child {
+  border-top: 1px solid var(--border);
+}
+
+.list-view-item .drag-handle {
+  flex: 0 0 32px;
+  padding: 0;
+  text-align: center;
+}
+
+/* ── Table mode ───────────────────────────────────────────────────────────*/
+.table-container {
+  flex: 1;
+  overflow: auto;
+  padding: 0 var(--space-7) var(--space-7);
+}
+
+/* Set on the header cell too, so the column keeps its width. */
+.drag-handle-cell {
+  width: 32px;
+}
+
+tbody td.drag-handle-cell {
+  padding: var(--space-4) var(--space-2) var(--space-4) var(--space-5);
+}
+
+.cell-title {
+  font-weight: 500;
+}
+
+/* ── Card mode ────────────────────────────────────────────────────────────*/
+.card-container {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-7);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+
+.card {
+  padding: var(--space-6);
+  cursor: pointer;
+  transition: border-color var(--speed), background var(--speed);
+}
+
+.card.item {
+  position: relative;
+  cursor: default;
+  user-select: none;
+}
+
+.card-title {
+  font-weight: 500;
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-4);
+}
+
+.card-attrs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card-attr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+}
+
+.card-attr-label {
+  color: var(--text-muted);
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+/* ── Row states ───────────────────────────────────────────────────────────
+ * Hover is pointer-only, so a tap does not leave a row looking stuck. While an
+ * item is being picked up, the same highlight is applied deliberately.
+ */
+@media (hover: hover) {
+  tbody tr:hover,
+  .list-view-item:hover {
+    background: var(--bg-hover);
+  }
+
+  .card:hover {
+    border-color: var(--border-focus);
+    background: var(--bg-hover);
+  }
+
+  .list-view-item.selected,
+  .card.item.selected,
+  tr.selected td {
+    background: var(--accent-soft);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
+}
+
+tbody tr.drag-choosing,
+.list-view-item.drag-choosing {
+  background: var(--bg-hover);
+}
+
+.card.drag-choosing {
+  border-color: var(--border-focus);
+  background: var(--bg-hover);
+}
+
+/* ── Todo attribute ───────────────────────────────────────────────────────
+ * A tri-state control plus the way a done, cancelled or skipped item reads.
+ */
+.todo-control {
+  flex-shrink: 0;
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) calc(var(--space-4) * -1) auto;
+  padding: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: cell;
+  color: var(--text-muted);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.todo-control svg {
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) {
+  .todo-control:hover {
+    color: var(--text);
+  }
+}
+
+.todo-control.todo-cancelled {
+  color: var(--text-dim);
+}
+
+.todo-control.todo-skipped {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.list-view-item.todo-done .formatted-text {
+  text-decoration: line-through;
+  text-decoration-thickness: 3px;
+}
+
+.list-view-item.todo-cancelled .formatted-text {
+  text-decoration: line-through;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.list-view-item.todo-skipped .formatted-text {
+  color: var(--text-dim);
+}
+
+.list-view-item.todo-skipped .formatted-text::before { content: "("; }
+.list-view-item.todo-skipped .formatted-text::after { content: ")"; }
+
+/* ── Inline add ───────────────────────────────────────────────────────────
+ * A permanent last row that turns typing into a new item. It borrows the shape
+ * of whichever mode it is sitting in.
+ */
+.inline-add-item {
+  cursor: default;
+  gap: var(--space-2);
+}
+
+.card.inline-add-item {
+  display: flex;
+  align-items: center;
+  padding: var(--space-4) var(--space-6);
+  border-style: dashed;
+}
+
+/* In table mode the input shares its cell with the expand button. */
+tr.inline-add-item td:last-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Reads as part of the row rather than as a form control. */
+.inline-add-input {
+  flex: 1 1 0;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font: inherit;
+  font-size: var(--text-base);
+  color: var(--text);
+  padding: 0;
+}
+
+.inline-add-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ── Selection ────────────────────────────────────────────────────────────*/
+.item-select-checkbox {
+  flex: 0 0 32px;
+  margin: 0;
+  accent-color: var(--accent);
+  /* Display only: the row handles the click, and Firefox reverts a checkbox's
+     prevented default asynchronously. */
+  pointer-events: none;
+}
+
+.card-select-checkbox {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-4);
+  margin: 0;
+  accent-color: var(--accent);
+  pointer-events: none;
+}
+
+/* ── Drag and drop ────────────────────────────────────────────────────────*/
+.drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  user-select: none;
+  font-size: var(--text-base);
+  padding: 0 var(--space-2);
+  flex-shrink: 0;
+  transition: color var(--speed);
+}
+
+.drag-handle:hover {
+  color: var(--text-muted);
+}
+
+.drag-handle:active,
+.sortable-chosen {
+  cursor: grabbing;
+}
+
+.card-drag-handle {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+}
+
+/* The item left behind while dragging: an empty gap, no visible placeholder. */
+.sortable-ghost {
+  visibility: hidden;
+}
+
+/* The clone that follows the pointer in fallback mode: solid, lifted, same size. */
+.sortable-drag,
+.sortable-fallback {
+  opacity: 1;
+  cursor: grabbing;
+  box-shadow: var(--shadow-lift);
+}
+
+/* Drag onto this to abandon the drag. Touch only: a pointer can just press
+ * Escape. */
+.drag-cancel-zone {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .drag-cancel-zone.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 62px;
+    z-index: var(--z-drag-zone);
+    background: color-mix(in srgb, var(--danger) 20%, var(--bg-surface));
+    color: var(--text-muted);
+    font-size: 1rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+    pointer-events: none;
+    transition: background var(--speed), color var(--speed);
+  }
+
+  .drag-cancel-zone.active.over {
+    background: color-mix(in srgb, var(--danger) 55%, var(--bg-surface));
+    color: var(--danger);
+    border-bottom-color: var(--danger);
+  }
+}
+
+/* ── Rendered item text ───────────────────────────────────────────────────
+ * Output of a board's format string, so it can contain inline images.
+ */
+.formatted-text img {
+  height: 1.2em;
+  width: auto;
+  vertical-align: middle;
+  margin: var(--space-1);
+}

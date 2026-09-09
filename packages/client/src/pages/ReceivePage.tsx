@@ -64,7 +64,7 @@ const ReceivePage: Component = () => {
       <Show
         when={payload()}
         fallback={
-          <div class="receive-card">
+          <div class="panel receive-card">
             <h2>Invalid share link</h2>
             <p class="field-hint">This link doesn't look like a valid Listr board share.</p>
             <button class="btn-primary" type="button" onClick={() => navigate("/")}>Go home</button>
@@ -72,15 +72,15 @@ const ReceivePage: Component = () => {
         }
       >
         {(p) => (
-          <div class="receive-card">
+          <div class="panel receive-card">
             <Show when={!accepted()} fallback={
               <Show
                 when={boardId()}
                 fallback={
                   <div class="receive-syncing">
-                    <div class="receive-spinner" />
+                    <div class="spinner" />
                     <div>Syncing board…</div>
-                    <div class="field-hint" style="margin-top: 8px">Waiting for data from server</div>
+                    <div class="field-hint">Waiting for data from server</div>
                   </div>
                 }
               >
@@ -88,14 +88,14 @@ const ReceivePage: Component = () => {
                   <div class="receive-saved-icon">✓</div>
                   <div>Board is ready</div>
                 </div>
-                <div class="receive-actions">
+                <div class="actions actions-center">
                   <button class="btn-primary" type="button" onClick={viewBoard}>View Board</button>
                 </div>
               </Show>
             }>
               <h2>{p().bid ? "Board share" : "Board group share"}</h2>
               <Show when={p().bn}>
-                <div class="receive-board-name">"{p().bn}"</div>
+                <div class="offer-name">"{p().bn}"</div>
               </Show>
               <p>
                 {p().bid
@@ -105,7 +105,7 @@ const ReceivePage: Component = () => {
               <Show when={saveError()}>
                 <div class="field-error">{saveError()}</div>
               </Show>
-              <div class="receive-actions">
+              <div class="actions actions-center">
                 <button class="btn-ghost" type="button" onClick={() => navigate("/")}>Cancel</button>
                 <button class="btn-primary" type="button" disabled={saving()} onClick={accept}>
                   {saving() ? "Adding…" : p().bid ? "Add Board" : "Add Group"}

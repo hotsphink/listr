@@ -58,12 +58,12 @@ test.describe("guest links", () => {
     // Nothing configured and the default is a different server, so this is
     // 7.3 a-bis's third outcome: say the server is unknown, offer a host.
     await expect(page.locator(".receive-card h2")).toHaveText("Server not found", { timeout: 40_000 });
-    await page.locator(".admin-field input.input").first().fill("localhost");
-    await page.locator('.admin-field input[type="number"]').fill(String(server.port));
+    await page.locator(".join-manual-host input").first().fill("localhost");
+    await page.locator('.join-manual-host input[type="number"]').fill(String(server.port));
     await page.getByRole("button", { name: "Try this host" }).click();
 
     await expect(page.locator(".receive-card h2")).toHaveText("You're invited", { timeout: 30_000 });
-    await expect(page.locator(".receive-board-name")).toContainText("Dad's shopping list");
+    await expect(page.locator(".offer-name")).toContainText("Dad's shopping list");
 
     await page.getByRole("button", { name: "Join" }).click();
     await expect(page.locator(".receive-saved")).toContainText("You're in!", { timeout: 30_000 });
@@ -108,7 +108,7 @@ test.describe("guest links", () => {
     const shareLink = server.issueGrant({ kind: "share", payload: SHARE_KEY, greeting: "Packing list" });
     await page.goto(shareLink);
     await expect(page.locator(".receive-card h2")).toHaveText("You're invited", { timeout: 30_000 });
-    await expect(page.locator(".receive-board-name")).toContainText("Packing list");
+    await expect(page.locator(".offer-name")).toContainText("Packing list");
     await page.getByRole("button", { name: "Join" }).click();
     await expect(page.locator(".receive-saved")).toContainText("You're in!", { timeout: 30_000 });
 

@@ -77,14 +77,14 @@ const Layout: Component<{ children?: any }> = (props) => {
   return (
     <div class="app">
       <div
-        class="sidebar-backdrop"
+        class="overlay sidebar-backdrop"
         classList={{ open: sidebarOpen() }}
         onClick={close}
       />
       <Sidebar open={sidebarOpen()} onClose={close} />
       <div class="app-body">
         <Show when={!selectionMode() && location.pathname !== "/admin"}>
-          <button class="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+          <button class="btn-icon btn-icon-lg mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
             ☰
           </button>
         </Show>

@@ -1,0 +1,557 @@
+/* Shared primitives: the vocabulary every screen builds from.
+ *
+ * Nothing here names a screen or a feature. A rule belongs in this file only if
+ * more than one part of the app wants it, or clearly would.
+ */
+
+/* ── Intent tones ─────────────────────────────────────────────────────────
+ * A tone says what something means, not what it looks like. Add a tone class
+ * next to a primitive and the primitive picks up the colours: an error badge
+ * is `badge tone-danger`, an error callout is `callout tone-danger`, and both
+ * read from the same two variables.
+ *
+ *   --tone-fg  text, icons and borders
+ *   --tone-bg  the tint sitting behind them
+ *
+ * Custom properties inherit, so a tone reaches everything inside the element
+ * carrying it. Put a tone on the element it is meant to colour. A callout is
+ * fine, since what it holds is plain text; a card full of badges and chips is
+ * not, and should declare a variable of its own instead. See .endpoint-card in
+ * pages.css for that case.
+ */
+.tone-accent {
+  --tone-fg: var(--accent);
+  --tone-bg: var(--accent-soft);
+}
+
+.tone-success {
+  --tone-fg: var(--success);
+  --tone-bg: var(--success-soft);
+}
+
+.tone-warning {
+  --tone-fg: var(--warning);
+  --tone-bg: var(--warning-soft);
+}
+
+.tone-danger {
+  --tone-fg: var(--danger);
+  --tone-bg: var(--danger-soft);
+}
+
+.tone-muted {
+  --tone-fg: var(--text-dim);
+  --tone-bg: var(--bg-active);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────
+ * Every <button> gets the neutral look, so a plain button needs no class at
+ * all. Variants change intent, size classes change scale, and the two compose.
+ * .btn is here for the day something that is not a <button>, such as a link,
+ * has to look like one.
+ */
+button,
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: 1.5;
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background var(--speed), color var(--speed), border-color var(--speed);
+}
+
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-danger {
+  background: var(--danger);
+  border-color: transparent;
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+/* Outlined and quiet until hovered. The default for secondary actions. */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.btn-sm {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.btn-xs {
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--text-xs);
+}
+
+/* ── Icon buttons ─────────────────────────────────────────────────────────
+ * A square, borderless button holding one glyph or one svg. A tone class here
+ * colours the hover state only, so the control stays quiet at rest.
+ */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--tone-fg, var(--text));
+}
+
+.btn-icon svg {
+  display: block;
+}
+
+/* ShareIcon and friends carry a viewBox but no intrinsic size, so they need
+ * one from here. An svg that states its own size keeps it. */
+.btn-icon svg:not([width]) {
+  width: 100%;
+  height: 100%;
+}
+
+.btn-icon-sm {
+  width: 20px;
+  height: 20px;
+  padding: var(--space-1);
+  font-size: var(--text-md);
+}
+
+.btn-icon-lg {
+  width: 36px;
+  height: 36px;
+  font-size: 22px;
+}
+
+/* An icon button that only announces itself on hover, for affordances sitting
+ * inside a row of content. */
+.btn-icon-quiet {
+  color: var(--text-dim);
+}
+
+/* An icon button carrying a primary action, such as going back. */
+.btn-icon-strong {
+  color: var(--text);
+}
+
+/* ── Form fields ──────────────────────────────────────────────────────────*/
+.form-field {
+  margin-bottom: var(--space-6);
+}
+
+/* Checkboxes and colour swatches keep their intrinsic size; everything else
+ * fills the field. */
+.form-field input:not([type="checkbox"]):not([type="color"]),
+.form-field select,
+.form-field textarea {
+  width: 100%;
+}
+
+.field-label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: var(--space-2);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* A second label further down the same field. */
+.form-field input + .field-label {
+  margin-top: var(--space-4);
+}
+
+/* Takes a tone when the hint is a warning rather than an aside. */
+.field-hint {
+  font-size: var(--text-xs);
+  color: var(--tone-fg, var(--text-dim));
+  margin-top: var(--space-1);
+}
+
+/* A hint that introduces what follows rather than trailing what came before. */
+.field-hint-lead {
+  margin-top: 0;
+  margin-bottom: var(--space-4);
+}
+
+.field-error {
+  font-size: var(--text-xs);
+  color: var(--danger);
+  margin-top: var(--space-1);
+  white-space: pre-wrap;
+}
+
+/* Wins over the focus rule, so a bad value stays flagged while being retyped. */
+.input-error,
+.input-error:focus {
+  border-color: var(--danger) !important;
+}
+
+/* Fields sharing one line. */
+.form-row {
+  display: flex;
+  gap: var(--space-5);
+}
+
+.form-row .form-field {
+  flex: 1;
+}
+
+/* A checkbox with its label, as one clickable run of text. */
+.check-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.form-field > .check-label {
+  margin-bottom: var(--space-4);
+}
+
+/* ── Rows ─────────────────────────────────────────────────────────────────*/
+
+/* Controls sitting side by side: an input and its button, a pair of buttons.
+ * An input in one of these shares the line instead of claiming it. */
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.control-row input,
+.control-row select,
+.control-row > .code-box {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+/* A heading with its action pushed to the far end. */
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.header-row-tight {
+  margin-bottom: var(--space-3);
+}
+
+/* The action belongs with the heading rather than opposite it, which is how an
+ * icon button next to a label reads. */
+.header-row-inline {
+  justify-content: flex-start;
+  gap: var(--space-2);
+}
+
+.header-row > h2,
+.header-row > .field-label {
+  margin-bottom: 0;
+}
+
+/* Buttons closing out a form or a dialog. */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.actions-center {
+  justify-content: center;
+}
+
+/* An action that belongs with the group but reads apart from it, such as a
+ * delete sitting opposite save and cancel. */
+.action-lead {
+  margin-right: auto;
+}
+
+/* ── Badges, chips and tags ───────────────────────────────────────────────
+ * All three are small inline markers. They differ in shape and in how loudly
+ * they are meant to read, and take their colour from a tone class.
+ */
+
+/* Shouty micro-label: "new board", "skip". */
+.badge {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  background: var(--tone-bg, var(--bg-active));
+  color: var(--tone-fg, var(--text-dim));
+}
+
+/* One glyph in a circle, for per-row status. */
+.badge-round {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: none;
+  margin-left: var(--space-2);
+  cursor: default;
+}
+
+/* Quiet, factual, often a value rather than a label: a URL, an attribute. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  background: var(--tone-bg, var(--bg-active));
+  color: var(--tone-fg, var(--text-muted));
+}
+
+.chip-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* A selectable value from a fixed set. */
+.tag {
+  display: inline-block;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-right: var(--space-2);
+}
+
+/* A wrapping run of tags, each one a toggle. */
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tag-list .tag {
+  cursor: pointer;
+  margin-right: 0;
+}
+
+/* A tag offered but not chosen. */
+.tag-off {
+  opacity: 0.4;
+}
+
+/* A number riding alongside a name. */
+.count {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* Connection state, as a coloured dot. Callers set the tone. */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--tone-fg, var(--text-dim));
+}
+
+/* ── Surfaces ─────────────────────────────────────────────────────────────*/
+
+/* A raised block of content: a card, a dialog, a column, a menu. */
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* A board's own colour, marking anything that stands for that board. The
+ * colour comes from the record, passed in as --board-color. */
+.board-stripe {
+  border-left: 3px solid var(--board-color, transparent);
+}
+
+/* A tinted block that says something about its contents. Needs a tone. */
+.callout {
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--tone-fg) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone-fg) 30%, transparent);
+}
+
+/* ── Code and identifiers ─────────────────────────────────────────────────*/
+.code {
+  font-family: var(--font-mono);
+  background: var(--bg-active);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+/* A machine-generated value shown for reading and copying, never editing. */
+.code-box {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-5);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.textarea-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* ── Feedback ─────────────────────────────────────────────────────────────*/
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* For a glyph that is already round, such as a refresh arrow standing in for
+ * work in progress. */
+.is-spinning {
+  animation: spin 1.5s linear infinite;
+}
+
+/* Nothing to show, filling the space where content would be. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px var(--space-7);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.empty-state p {
+  margin-bottom: var(--space-6);
+}
+
+/* Nothing to show, in a spot too small for the full treatment. */
+.empty-note {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  padding: var(--space-6) 0;
+}
+
+.empty-note-center {
+  text-align: center;
+  color: var(--text-dim);
+  padding: var(--space-8) 0;
+}
+
+/* ── Drop targets ─────────────────────────────────────────────────────────*/
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--speed), background var(--speed);
+}
+
+.dropzone:hover,
+.dropzone.dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.dropzone.loading {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* The oversized glyph a drop target or a result screen leads with. */
+.big-glyph {
+  font-size: 2em;
+  margin-bottom: var(--space-4);
+}
+
+/* ── Text ─────────────────────────────────────────────────────────────────*/
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* An aside that trails the thing it qualifies. */
+.inline-note {
+  margin-left: 2em;
+  opacity: 0.85;
+}

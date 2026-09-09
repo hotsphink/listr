@@ -77,9 +77,9 @@ const Dashboard: Component = () => {
   };
 
   const renderListCard = (list: List) => (
-    <a class="card list" href={`/list/${list.id}`} onClick={(e) => { e.preventDefault(); navigate(`/list/${list.id}`); }}>
+    <a class="panel card list" href={`/list/${list.id}`} onClick={(e) => { e.preventDefault(); navigate(`/list/${list.id}`); }}>
       <div class="card-name">{list.name}</div>
-      <div class="card-count">
+      <div class="count">
         {itemCounts()?.[list.id] ?? 0} items
       </div>
     </a>
@@ -115,7 +115,7 @@ const Dashboard: Component = () => {
             {(board) => (
               <div class="dashboard-board">
                 <div class="dashboard-board-header">
-                  <h2 style={`border-left: 3px solid ${board.color}; padding-left: 8px`}>{board.name}</h2>
+                  <h2 class="board-stripe dashboard-board-name" style={`--board-color: ${board.color}`}>{board.name}</h2>
                   <button class="btn-icon" onClick={() => setEditingBoard(board)} title="Edit board">
                     ⚙
                   </button>
@@ -123,7 +123,7 @@ const Dashboard: Component = () => {
                 <Show
                   when={listsForBoard(board.id).length > 0}
                   fallback={
-                    <div style="color: var(--text-dim); font-size: 13px; padding: 4px 0 12px">
+                    <div class="empty-note">
                       No lists yet
                     </div>
                   }

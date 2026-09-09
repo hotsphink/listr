@@ -120,7 +120,7 @@ test.describe("import modal", () => {
     await expect(page.locator(".import-preview-item", { hasText: "Inception" })).toBeVisible();
     await expect(page.locator(".import-preview-item", { hasText: "The Matrix" })).toBeVisible();
     // All items are new
-    const newBadges = page.locator(".import-preview-item .badge-new");
+    const newBadges = page.locator(".import-preview-item .badge.tone-accent");
     await expect(newBadges).toHaveCount(2);
   });
 
@@ -192,7 +192,7 @@ test.describe("import modal", () => {
     await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
 
     await expect(page.locator(".import-summary")).toContainText("0 new items");
-    const skipBadges = page.locator(".import-preview-item .badge-skip");
+    const skipBadges = page.locator(".import-preview-item .badge.tone-muted");
     await expect(skipBadges).toHaveCount(2);
     // With nothing new, the import button reflects a zero-count no-op.
     await expect(page.getByRole("button", { name: /Import 0 items/ })).toBeVisible();
@@ -213,7 +213,7 @@ test.describe("import modal", () => {
     await uploadFakeImage(page);
 
     await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator(".import-attr-pill", { hasText: "imdb: 8.8" })).toBeVisible();
+    await expect(page.locator(".import-preview-item .chip", { hasText: "imdb: 8.8" })).toBeVisible();
   });
 
   test("list-scoped import opens from list context menu and adds items to that list", async ({ page }) => {

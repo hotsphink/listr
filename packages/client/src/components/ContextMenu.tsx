@@ -39,7 +39,7 @@ const ContextMenu: Component<Props> = (props) => {
   return (
     <div
       ref={menuRef}
-      class="context-menu"
+      class="panel context-menu"
       style={`left: ${props.x}px; top: ${props.y}px`}
     >
       <For each={props.items}>

@@ -46,7 +46,7 @@ const InlineAddItem: Component<Props> = (props) => {
   const expandBtn = (
     <Show when={props.onExpand}>
       <button
-        class="inline-add-btn"
+        class="btn-icon btn-icon-sm btn-icon-quiet inline-add-btn"
         onClick={() => props.onExpand!(title())}
         title="More options"
       >
@@ -72,7 +72,7 @@ const InlineAddItem: Component<Props> = (props) => {
     return (
       <div
         data-item-id={DUMMY_ITEM_ID}
-        class={`card inline-add-item${props.class ? ` ${props.class}` : ""}`}
+        class={`panel card inline-add-item${props.class ? ` ${props.class}` : ""}`}
       >
         <span class="drag-handle card-drag-handle" title="Drag to position">⠿</span>
         {inputEl}{expandBtn}

@@ -263,8 +263,8 @@ const BoardFormModal: Component<Props> = (props) => {
       <h2>{props.initial ? "Edit Board" : props.defaultSyncKey ? "New Board Group" : "New Board"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-row">
-          <div class="form-field" style="flex: 1">
-            <label>Name</label>
+          <div class="form-field">
+            <label class="field-label">Name</label>
             <input
               classList={{ "input-error": nameError() !== null }}
               value={name()}
@@ -275,18 +275,18 @@ const BoardFormModal: Component<Props> = (props) => {
               {(err) => <div class="field-error">{err()}</div>}
             </Show>
           </div>
-          <div class="form-field" style="flex: 0; min-width: 60px">
-            <label>Color</label>
+          <div class="form-field form-field-narrow">
+            <label class="field-label">Color</label>
             <input
+              class="color-input"
               type="color"
               value={color()}
               onInput={(e) => setColor(e.currentTarget.value)}
-              style="height: 32px; padding: 2px"
             />
           </div>
         </div>
         <div class="form-field">
-          <label>Share Key</label>
+          <label class="field-label">Share Key</label>
           <input
             value={boardSyncKey()}
             onInput={(e) => setBoardSyncKey(e.currentTarget.value)}
@@ -297,8 +297,8 @@ const BoardFormModal: Component<Props> = (props) => {
           </div>
         </div>
         <div class="form-field">
-          <div class="format-field-header">
-            <label>Format String</label>
+          <div class="header-row header-row-tight">
+            <label class="field-label">Format String</label>
             <button
               type="button"
               class="btn-ghost btn-xs"
@@ -336,7 +336,7 @@ const BoardFormModal: Component<Props> = (props) => {
               onDrop={handleDrop}
             >
               <textarea
-                class="format-advanced-textarea"
+                class="format-advanced-textarea textarea-code"
                 classList={{ "input-error": advancedError() !== null }}
                 value={advancedText()}
                 onInput={(e) => handleAdvancedInput(e.currentTarget.value)}
@@ -348,7 +348,7 @@ const BoardFormModal: Component<Props> = (props) => {
                 spellcheck={false}
               />
             </div>
-            <div class="format-advanced-toolbar">
+            <div class="control-row format-advanced-toolbar">
               <button
                 type="button"
                 class="btn-ghost btn-xs"
@@ -362,7 +362,7 @@ const BoardFormModal: Component<Props> = (props) => {
                 type="file"
                 accept="image/*"
                 multiple
-                style="display: none"
+                hidden
                 onChange={(e) => { handleAssetFiles(e.currentTarget.files); e.currentTarget.value = ""; }}
               />
             </div>
@@ -378,17 +378,17 @@ const BoardFormModal: Component<Props> = (props) => {
           </Show>
         </div>
         <div class="form-field">
-          <label>Attributes</label>
+          <label class="field-label">Attributes</label>
           <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
         </div>
         <div class="form-field">
-          <label>Integrations</label>
+          <label class="field-label">Integrations</label>
           <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
         </div>
         <Show when={saveError()}>
-          {(err) => <div class="field-error" style="margin-bottom: 8px">{err()}</div>}
+          {(err) => <div class="field-error">{err()}</div>}
         </Show>
-        <div class="modal-actions">
+        <div class="actions">
           <button type="button" class="btn-ghost" onClick={props.onClose} disabled={saving()}>
             Cancel
           </button>

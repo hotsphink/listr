@@ -71,7 +71,6 @@ const BooleanInput: Component<{ value: unknown; onChange: (v: unknown) => void }
     type="checkbox"
     checked={Boolean(props.value)}
     onChange={(e) => props.onChange(e.currentTarget.checked)}
-    style="width: auto"
   />
 );
 
@@ -103,12 +102,12 @@ const TagsInput: Component<{ value: unknown; onChange: (v: unknown) => void; opt
   };
 
   return (
-    <div style="display: flex; flex-wrap: wrap; gap: 4px">
+    <div class="tag-list">
       <For each={props.options}>
         {(opt) => (
           <span
             class="tag"
-            style={selected().includes(opt) ? "opacity: 1; cursor: pointer" : "opacity: 0.4; cursor: pointer"}
+            classList={{ "tag-off": !selected().includes(opt) }}
             onClick={() => toggle(opt)}
           >
             {opt}
@@ -150,33 +149,33 @@ const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void 
   const minutes = () => totalMinutes() % 60;
 
   return (
-    <div style="display: flex; gap: 4px; align-items: center">
+    <div class="duration-input">
       <input
         type="number"
         min="0"
+        class="duration-num"
         value={hours()}
-        style="width: 60px"
         onInput={(e) => props.onChange(e.currentTarget.valueAsNumber * 60 + minutes())}
       />
-      <span style="color: var(--text-muted); font-size: 12px">h</span>
+      <span class="duration-unit">h</span>
       <input
         type="number"
         min="0"
         max="59"
+        class="duration-num"
         value={minutes()}
-        style="width: 60px"
         onInput={(e) => props.onChange(hours() * 60 + (e.currentTarget.valueAsNumber || 0))}
       />
-      <span style="color: var(--text-muted); font-size: 12px">m</span>
+      <span class="duration-unit">m</span>
       <input
         type="text"
+        class="duration-text"
         placeholder="e.g. 1h42m"
         value={totalMinutes() > 0 ? formatDurationShort(totalMinutes()) : ""}
         onBlur={(e) => {
           const parsed = parseDurationText(e.currentTarget.value);
           if (parsed !== null) props.onChange(parsed);
         }}
-        style="width: 80px"
       />
     </div>
   );

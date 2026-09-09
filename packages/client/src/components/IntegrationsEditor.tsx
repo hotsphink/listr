@@ -66,14 +66,14 @@ const IntegrationEntry: Component<EntryProps> = (props) => {
 
   return (
     <div class="integration-entry">
-      <div class="integration-entry-main">
+      <div class="control-row">
         <input
           class="integration-id"
           placeholder="Integration ID (e.g. omdb)"
           value={props.integration.integration_id}
           onBlur={(e) => props.onUpdate({ integration_id: e.currentTarget.value })}
         />
-        <label class="integration-enabled-label">
+        <label class="check-label">
           <input
             type="checkbox"
             checked={props.integration.enabled}
@@ -95,7 +95,7 @@ const IntegrationEntry: Component<EntryProps> = (props) => {
       </div>
       <Show when={showConfig()}>
         <textarea
-          class="integration-config-textarea"
+          class="integration-config-textarea textarea-code"
           placeholder="{}"
           rows={3}
           value={configText()}

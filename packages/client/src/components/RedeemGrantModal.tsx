@@ -113,25 +113,25 @@ const RedeemGrantModal: Component<Props> = (props) => {
         >
           <div class="scan-preview-wrapper">
             <video ref={videoRef!} class="scan-preview" playsinline />
-            <canvas ref={canvasRef!} style="display:none" />
+            <canvas ref={canvasRef!} hidden />
           </div>
         </Show>
         <form onSubmit={submitPasted} class="scan-manual-form">
           <div class="scan-manual-label">Or paste a join link:</div>
-          <div class="scan-manual-row">
-            <input class="input" value={pasted()} onInput={(e) => setPasted(e.currentTarget.value)} placeholder="https://…" autocomplete="off" spellcheck={false} />
-            <button class="btn btn-primary" type="submit">Use</button>
+          <div class="control-row">
+            <input value={pasted()} onInput={(e) => setPasted(e.currentTarget.value)} placeholder="https://…" autocomplete="off" spellcheck={false} />
+            <button class="btn-primary" type="submit">Use</button>
           </div>
           <Show when={error()}><div class="field-error">{error()}</div></Show>
         </form>
-        <div class="modal-actions">
+        <div class="actions">
           <button class="btn-ghost" type="button" onClick={props.onClose}>Cancel</button>
         </div>
       </Show>
 
       <Show when={step() === "peeking"}>
         <div class="receive-syncing">
-          <div class="receive-spinner" />
+          <div class="spinner" />
           <div>Looking up the invite…</div>
         </div>
       </Show>
@@ -143,22 +143,22 @@ const RedeemGrantModal: Component<Props> = (props) => {
               <p><strong>{info().issuerDisplayName}</strong> is inviting you with the message</p>
             </Show>
             <Show when={info().greeting}>
-              <div class="scan-board-name">"{info().greeting}"</div>
+              <div class="offer-name">"{info().greeting}"</div>
             </Show>
             <Show when={unboundBoards() > 0}>
-              <div class="field-hint" style="margin: 8px 0">
+              <div class="field-hint field-hint-lead">
                 You have {unboundBoards()} local board{unboundBoards() > 1 ? "s" : ""} from before joining.
               </div>
-              <label style="display:flex; align-items:center; gap:6px">
+              <label class="check-label">
                 <input type="radio" name="redeem-keep" checked={keepChoice() === "keep"} onChange={() => setKeepChoice("keep")} />
                 Keep it
               </label>
-              <label style="display:flex; align-items:center; gap:6px">
+              <label class="check-label">
                 <input type="radio" name="redeem-keep" checked={keepChoice() === "discard"} onChange={() => setKeepChoice("discard")} />
                 Discard it
               </label>
             </Show>
-            <div class="modal-actions">
+            <div class="actions">
               <button class="btn-ghost" type="button" onClick={() => setStep("input")}>Back</button>
               <button class="btn-primary" type="button" onClick={doJoin}>Join</button>
             </div>
@@ -168,7 +168,7 @@ const RedeemGrantModal: Component<Props> = (props) => {
 
       <Show when={step() === "joining"}>
         <div class="receive-syncing">
-          <div class="receive-spinner" />
+          <div class="spinner" />
           <div>Joining…</div>
         </div>
       </Show>
@@ -178,7 +178,7 @@ const RedeemGrantModal: Component<Props> = (props) => {
           <div class="receive-saved-icon">✓</div>
           <div>You're in!</div>
         </div>
-        <div class="modal-actions">
+        <div class="actions">
           <button class="btn-primary" type="button" onClick={props.onClose}>Done</button>
         </div>
       </Show>

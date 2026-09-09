@@ -349,9 +349,9 @@ const ListView: Component = () => {
   const integrationBadge = (itemId: string) => {
     const status = integrationStatusByItemId().get(itemId);
     if (!status || status === "complete") return null;
-    if (status === "unprocessed") return <span class="integration-badge integration-badge-pending" title="Integration processing…">↻</span>;
-    if (status === "error") return <span class="integration-badge integration-badge-error" title="Integration error">!</span>;
-    if (status === "ambiguous") return <span class="integration-badge integration-badge-ambiguous" title="Ambiguous result — needs manual resolution">?</span>;
+    if (status === "unprocessed") return <span class="badge badge-round tone-muted is-spinning" title="Integration processing…">↻</span>;
+    if (status === "error") return <span class="badge badge-round tone-danger" title="Integration error">!</span>;
+    if (status === "ambiguous") return <span class="badge badge-round tone-warning" title="Ambiguous result — needs manual resolution">?</span>;
     return null;
   };
 
@@ -702,9 +702,9 @@ const ListView: Component = () => {
                   <div class="page-title" onContextMenu={(e) => { e.preventDefault(); setBoardCtxMenu({ x: e.clientX, y: e.clientY }); }}>
                     <h1>{headerTitle()}</h1>
                     <Show when={board()?.sync_key}>
-                      <ShareIcon class="board-header-shared-icon" />
+                      <ShareIcon class="shared-icon shared-icon-lg" />
                     </Show>
-                    <span class="item-count">{totalItemCount()}</span>
+                    <span class="count">{totalItemCount()}</span>
                   </div>
                   <div class="header-actions">
                     <input
@@ -715,7 +715,7 @@ const ListView: Component = () => {
                       onInput={(e) => setFilterQuery(e.currentTarget.value)}
                     />
                     <button
-                      class="filter-toggle-btn"
+                      class="header-toggle filter-toggle-btn"
                       classList={{ active: filterOpen() }}
                       onClick={() => setFilterOpen((v) => !v)}
                       aria-label="Filter"
@@ -739,7 +739,7 @@ const ListView: Component = () => {
                       </For>
                     </div>
                     <button
-                      class="config-btn"
+                      class="header-toggle config-btn"
                       classList={{ active: configOpen() }}
                       onClick={() => setConfigOpen(true)}
                       aria-label="Display settings"
@@ -760,7 +760,7 @@ const ListView: Component = () => {
                       ref={(el) => setTimeout(() => el.focus(), 50)}
                     />
                     <button
-                      class="mobile-filter-bar-close"
+                      class="btn-icon"
                       onClick={() => { setFilterOpen(false); setFilterQuery(""); }}
                       aria-label="Close filter"
                     >
@@ -771,7 +771,7 @@ const ListView: Component = () => {
               </>
             }>
               <div class="selection-bar">
-                <button class="selection-bar-back" onClick={exitSelectionMode} aria-label="Cancel selection">
+                <button class="btn-icon btn-icon-lg btn-icon-strong" onClick={exitSelectionMode} aria-label="Cancel selection">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M5 12H19M5 12L11 6M5 12L11 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
@@ -833,7 +833,7 @@ const ListView: Component = () => {
                     setItemsByList(newMap);
                   };
                   return (
-                    <div class="multi-list-column" data-list-id={list.id}>
+                    <div class="panel multi-list-column" data-list-id={list.id}>
                       <div
                         class="multi-list-column-header"
                         onContextMenu={(e) => { e.preventDefault(); setListCtxMenu({ x: e.clientX, y: e.clientY, list }); }}
@@ -851,9 +851,9 @@ const ListView: Component = () => {
                         }}
                       >
                         <span class="multi-list-column-name">{list.name}</span>
-                        <span class="multi-list-column-count">{items().length}</span>
+                        <span class="count">{items().length}</span>
                         <button
-                          class="multi-list-add-btn"
+                          class="btn-icon btn-icon-quiet multi-list-add-btn"
                           type="button"
                           aria-label="Add item"
                           onClick={(e) => {
@@ -912,7 +912,7 @@ const ListView: Component = () => {
                                     onContextMenu={(e) => handleItemContextMenu(e, realItem)}
                                   >
                                     <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                      <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(realItem.id)} style="pointer-events: none" />
+                                      <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(realItem.id)} />
                                     </Show>
                                     <FormattedText html={formatItem(realItem, list)} />
                                     {integrationBadge(realItem.id)}
@@ -970,7 +970,7 @@ const ListView: Component = () => {
                             <table>
                               <thead>
                                 <tr>
-                                  <th style="width: 32px"></th>
+                                  <th class="drag-handle-cell"></th>
                                   <th>Title</th>
                                   <For each={schema()}>
                                     {(attr) => <th>{attr.label || attr.key}</th>}
@@ -1017,10 +1017,10 @@ const ListView: Component = () => {
                                       >
                                         <td class="drag-handle-cell">
                                           <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                            <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item_.id)} style="pointer-events: none" />
+                                            <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item_.id)} />
                                           </Show>
                                         </td>
-                                        <td style="font-weight: 500">{item_.title}{integrationBadge(item_.id)}</td>
+                                        <td class="cell-title">{item_.title}{integrationBadge(item_.id)}</td>
                                         <For each={schema()}>
                                           {(attr) => (
                                             <td>{formatCellValue(item_.attributes[attr.key], attr.type)}</td>
@@ -1066,7 +1066,7 @@ const ListView: Component = () => {
                                   const item_ = item as Item;
                                   return (
                                     <div
-                                      class="card item"
+                                      class="panel card item"
                                       data-item-id={item_.id}
                                       classList={{ selected: selectedItemIds().has(item_.id) }}
                                       onTouchStart={(e) => handleItemTouchStart(e, item_)}
@@ -1076,7 +1076,7 @@ const ListView: Component = () => {
                                       onContextMenu={(e) => handleItemContextMenu(e, item_)}
                                     >
                                       <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>}>
-                                        <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item_.id)} style="pointer-events: none" />
+                                        <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item_.id)} />
                                       </Show>
                                       <div class="card-title"><FormattedText html={formatItem(item_, list)} />{integrationBadge(item_.id)}</div>
                                       <Show when={schema().length > 0}>
@@ -1116,7 +1116,7 @@ const ListView: Component = () => {
                   );
                 }}
               </For>
-              <div class="multi-list-new-column" onClick={handleNewList}>
+              <div class="panel multi-list-new-column" onClick={handleNewList}>
                 + New list
               </div>
             </div>
@@ -1236,11 +1236,11 @@ const ListView: Component = () => {
             />
 
             <Show when={configOpen()}>
-              <div class="config-overlay" onClick={() => setConfigOpen(false)}>
-                <div class="config-sheet" onClick={(e) => e.stopPropagation()}>
+              <div class="overlay overlay-bottom" onClick={() => setConfigOpen(false)}>
+                <div class="panel config-sheet" onClick={(e) => e.stopPropagation()}>
                   <div class="config-sheet-header">
                     <span class="config-sheet-title">Display</span>
-                    <button class="config-sheet-close" onClick={() => setConfigOpen(false)} aria-label="Close">✕</button>
+                    <button class="btn-icon" onClick={() => setConfigOpen(false)} aria-label="Close">✕</button>
                   </div>
                   <div class="config-section">
                     <div class="config-section-label">View</div>

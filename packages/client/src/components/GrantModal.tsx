@@ -124,25 +124,25 @@ const GrantModal: Component<Props> = (props) => {
       <Show when={!link()} fallback={
         <>
           <p class="field-hint">Share this link or QR code. It works once, and expires in 24 hours.</p>
-          <Show when={qrDataUrl()} fallback={<div class="share-loading">Generating…</div>}>
+          <Show when={qrDataUrl()} fallback={<div class="empty-note empty-note-center">Generating…</div>}>
             <div class="share-qr-wrapper">
               <img class="share-qr-code" src={qrDataUrl()!} alt="Join QR code" />
             </div>
             <div class="share-key-section">
               <div class="share-key-row">
                 <span class="share-url-text">{link()}</span>
-                <button class="btn btn-xs" type="button" onClick={copyUrl}>{urlCopied() ? "Copied!" : "Copy"}</button>
+                <button class="btn-xs" type="button" onClick={copyUrl}>{urlCopied() ? "Copied!" : "Copy"}</button>
               </div>
             </div>
           </Show>
-          <div class="modal-actions">
+          <div class="actions">
             <button class="btn-primary" type="button" onClick={props.onClose}>Done</button>
           </div>
         </>
       }>
-        <div class="admin-field">
+        <div class="form-field">
           <label class="field-label">What kind of link?</label>
-          <select class="input" value={kind()} onChange={(e) => setKind(e.currentTarget.value as GrantKind)}>
+          <select value={kind()} onChange={(e) => setKind(e.currentTarget.value as GrantKind)}>
             <option value="device">{KIND_LABELS.device}</option>
             <option value="share">{KIND_LABELS.share}</option>
             <Show when={canInvite()}>
@@ -150,12 +150,12 @@ const GrantModal: Component<Props> = (props) => {
               <option value="guest">{KIND_LABELS.guest}</option>
             </Show>
           </select>
-          <div class="field-hint" style="margin-top: 4px">{KIND_HINTS[kind()]}</div>
+          <div class="field-hint">{KIND_HINTS[kind()]}</div>
         </div>
 
         <Show when={kind() === "invite"}>
-          <div class="admin-field">
-            <label style="display:flex; align-items:center; gap:6px">
+          <div class="form-field">
+            <label class="check-label">
               <input type="checkbox" checked={alsoInvite()} onChange={(e) => setAlsoInvite(e.currentTarget.checked)} />
               Let them invite others too
             </label>
@@ -163,22 +163,22 @@ const GrantModal: Component<Props> = (props) => {
         </Show>
 
         <Show when={kind() === "share" || kind() === "guest"}>
-          <div class="admin-field">
+          <div class="form-field">
             <label class="field-label">Sync key to hand over</label>
-            <input class="input" value={payload()} onInput={(e) => setPayload(e.currentTarget.value)} placeholder="paste a sync key" />
+            <input value={payload()} onInput={(e) => setPayload(e.currentTarget.value)} placeholder="paste a sync key" />
             <div class="field-hint">Leave blank to create the account without handing over any data yet.</div>
           </div>
         </Show>
 
-        <div class="admin-field">
+        <div class="form-field">
           <label class="field-label">Message</label>
-          <input class="input" value={greeting()} onInput={(e) => setGreeting(e.currentTarget.value)} placeholder={KIND_GREETING_PLACEHOLDERS[kind()]} />
+          <input value={greeting()} onInput={(e) => setGreeting(e.currentTarget.value)} placeholder={KIND_GREETING_PLACEHOLDERS[kind()]} />
         </div>
 
         <Show when={needsDisplayNamePrompt()}>
-          <div class="admin-field">
+          <div class="form-field">
             <label class="field-label">Your name</label>
-            <input class="input" value={displayName()} onInput={(e) => setDisplayName(e.currentTarget.value)} placeholder="they'll see this name" />
+            <input value={displayName()} onInput={(e) => setDisplayName(e.currentTarget.value)} placeholder="they'll see this name" />
             <div class="field-hint">A nickname, not your real name if you'd rather not — they'll see it on the invite.</div>
           </div>
         </Show>
@@ -187,7 +187,7 @@ const GrantModal: Component<Props> = (props) => {
           <div class="field-error">{error()}</div>
         </Show>
 
-        <div class="modal-actions">
+        <div class="actions">
           <button class="btn-ghost" type="button" onClick={props.onClose}>Cancel</button>
           <button class="btn-primary" type="button" disabled={busy()} onClick={submit}>{busy() ? "Creating…" : "Create link"}</button>
         </div>

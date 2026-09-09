@@ -395,11 +395,11 @@ const ImportModal: Component<Props> = (props) => {
       <div class="import-modal-body">
 
       <Show when={phase() === "idle" || phase() === "extracting"}>
-        <p class="field-hint" style="margin-bottom: 12px">
+        <p class="field-hint field-hint-lead">
           Drop a screenshot to extract with AI {scopeLabel()}, or drop a Listr JSON export to apply directly.
         </p>
         <div
-          class="import-dropzone"
+          class="dropzone import-dropzone"
           classList={{ dragging: dragging(), loading: phase() === "extracting" }}
           onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragging(true); }}
           onDragLeave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setDragging(false); }}
@@ -408,25 +408,25 @@ const ImportModal: Component<Props> = (props) => {
         >
           <Show when={phase() === "extracting"} fallback={
             <div class="import-dropzone-hint">
-              <div style="font-size: 2em; margin-bottom: 8px">📷</div>
+              <div class="big-glyph">📷</div>
               <div>Drop screenshot, paste, or click to select</div>
-              <div class="field-hint" style="margin-top: 4px">Image: AI extraction &nbsp;·&nbsp; JSON: direct apply</div>
+              <div class="field-hint">Image: AI extraction &nbsp;·&nbsp; JSON: direct apply</div>
             </div>
           }>
             <div class="import-dropzone-hint">
-              <div style="font-size: 1.5em; margin-bottom: 8px">⏳</div>
+              <div class="big-glyph">⏳</div>
               <div>Processing...</div>
             </div>
           </Show>
         </div>
-        <input ref={fileInputRef} type="file" accept="image/*,.json" style="display:none"
+        <input ref={fileInputRef} type="file" accept="image/*,.json" hidden
           onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) processFile(f); e.currentTarget.value = ""; }} />
-        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style="display:none"
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden
           onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) processFile(f); e.currentTarget.value = ""; }} />
         <Show when={error()}>
-          {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
+          {(err) => <div class="field-error">{err()}</div>}
         </Show>
-        <div class="modal-actions">
+        <div class="actions">
           <button class="btn-ghost" onClick={handleClose}>Cancel</button>
           <Show when={isTouchDevice}>
             <button class="btn-ghost" disabled={phase() === "extracting"} onClick={() => cameraInputRef.click()}>
@@ -441,7 +441,7 @@ const ImportModal: Component<Props> = (props) => {
 
       <Show when={phase() === "native_preview"}>
         <>
-          <p class="field-hint" style="margin-bottom: 16px">
+          <p class="field-hint field-hint-lead">
             Applying this export will upsert entities by ID. Items not in the export are left untouched.
           </p>
           <Show when={nativeStats()}>
@@ -462,9 +462,9 @@ const ImportModal: Component<Props> = (props) => {
             )}
           </Show>
           <Show when={error()}>
-            {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
+            {(err) => <div class="field-error">{err()}</div>}
           </Show>
-          <div class="modal-actions">
+          <div class="actions">
             <button class="btn-ghost" onClick={reset}>Back</button>
             <button class="btn-primary" onClick={handleNativeConfirm}>Apply</button>
           </div>
@@ -486,7 +486,7 @@ const ImportModal: Component<Props> = (props) => {
                   <div class="import-preview-board">
                     {board.name}
                     <Show when={!board.existingId}>
-                      {" "}<span class="badge badge-new">new board</span>
+                      {" "}<span class="badge tone-accent">new board</span>
                     </Show>
                   </div>
                 </Show>
@@ -496,7 +496,7 @@ const ImportModal: Component<Props> = (props) => {
                       <div class="import-preview-list">
                         {list.name}
                         <Show when={!list.existingId}>
-                          {" "}<span class="badge badge-new">new list</span>
+                          {" "}<span class="badge tone-accent">new list</span>
                         </Show>
                         {" "}
                         <span class="text-muted">({list.newCount} new{list.items.length - list.newCount > 0 ? `, ${list.items.length - list.newCount} skip` : ""})</span>
@@ -504,13 +504,13 @@ const ImportModal: Component<Props> = (props) => {
                       <For each={list.items}>
                         {(item) => (
                           <div class="import-preview-item" classList={{ skip: item.skip }}>
-                            <span class={item.skip ? "badge badge-skip" : "badge badge-new"}>
+                            <span class={item.skip ? "badge tone-muted" : "badge tone-accent"}>
                               {item.skip ? "skip" : "new"}
                             </span>
                             <span class="import-item-title">{item.title}</span>
                             <For each={Object.entries(item.attributes).filter(([, v]) => v != null && v !== "")}>
                               {([k, v]) => (
-                                <span class="import-attr-pill">{k}: {String(v)}</span>
+                                <span class="chip">{k}: {String(v)}</span>
                               )}
                             </For>
                           </div>
@@ -524,19 +524,19 @@ const ImportModal: Component<Props> = (props) => {
           </For>
         </div>
         <Show when={rawJson()}>
-          <div style="margin-top: 8px">
+          <div>
             <button type="button" class="btn-ghost btn-xs" onClick={() => setShowRaw((v) => !v)}>
               {showRaw() ? "Hide raw JSON" : "Show raw JSON"}
             </button>
             <Show when={showRaw()}>
-              <pre style="margin-top: 6px; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all">{rawJson()}</pre>
+              <pre class="import-raw-json">{rawJson()}</pre>
             </Show>
           </div>
         </Show>
         <Show when={error()}>
-          {(err) => <div class="field-error" style="margin-top: 8px">{err()}</div>}
+          {(err) => <div class="field-error">{err()}</div>}
         </Show>
-        <div class="modal-actions">
+        <div class="actions">
           <button class="btn-ghost" onClick={() => { setError(null); setPhase("idle"); }} disabled={phase() === "importing"}>Back</button>
           <button class="btn-primary" onClick={handleConfirm} disabled={phase() === "importing"}>
             {phase() === "importing" ? "Importing..." : `Import ${totalNew()} item${totalNew() !== 1 ? "s" : ""}`}
@@ -545,15 +545,15 @@ const ImportModal: Component<Props> = (props) => {
       </Show>
 
       <Show when={phase() === "done"}>
-        <div style="text-align: center; padding: 24px 0">
-          <div style="font-size: 2em; margin-bottom: 8px">✓</div>
+        <div class="import-done">
+          <div class="big-glyph">✓</div>
           <Show when={nativeResult()} fallback={
             <div>Imported {importedCount()} item{importedCount() !== 1 ? "s" : ""} successfully.</div>
           }>
             {(r) => <div>{statsLabel(r())}</div>}
           </Show>
         </div>
-        <div class="modal-actions">
+        <div class="actions">
           <button class="btn-primary" onClick={handleClose}>Done</button>
         </div>
       </Show>

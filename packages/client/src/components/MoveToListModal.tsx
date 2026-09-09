@@ -48,9 +48,9 @@ const MoveToListModal: Component<Props> = (props) => {
 
   return (
     <Modal open={props.open} onClose={props.onClose}>
-      <div class="modal-title-row">
+      <div class="header-row">
         <h2>Move to list</h2>
-        <button type="button" class="btn-icon modal-close-btn" onClick={props.onClose} aria-label="Cancel">✕</button>
+        <button type="button" class="btn-icon" onClick={props.onClose} aria-label="Cancel">✕</button>
       </div>
       <div class="move-to-list-groups">
         <For each={groups()}>
@@ -59,8 +59,8 @@ const MoveToListModal: Component<Props> = (props) => {
             return (
               <div class="move-to-list-group">
                 <div
-                  class="move-to-list-board"
-                  style={`border-left: 3px solid ${board.color}`}
+                  class="move-to-list-board board-stripe"
+                  style={`--board-color: ${board.color}`}
                   onClick={() => toggle(board.id)}
                 >
                   <span class="move-to-list-chevron">{expanded() ? "▾" : "▸"}</span>
