@@ -181,6 +181,48 @@ button:disabled,
   color: var(--text);
 }
 
+/* A circled "?" that hands over an explainer the screen has no room to keep
+ * on display. Pair it with a .help-note. */
+.btn-help {
+  position: relative;
+  width: 1.4em;
+  height: 1.4em;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  /* Sized off the text it follows, so the circle matches that text rather than
+   * taking the 28px an icon button otherwise would. */
+  font-size: 0.625em;
+  font-weight: 600;
+  letter-spacing: normal;
+}
+
+/* The circle is smaller than a thumb, so the target reaches past it. */
+.btn-help::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+}
+
+.btn-help[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* Explanatory text a wide screen carries in full and a narrow one tucks behind
+ * its .btn-help. Both live in the markup; the width decides which shows. */
+@media (min-width: 769px) {
+  .btn-help {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .help-note:not(.help-note-open) {
+    display: none;
+  }
+}
+
 /* ── Form fields ──────────────────────────────────────────────────────────*/
 .form-field {
   margin-bottom: var(--space-6);

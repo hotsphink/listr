@@ -520,6 +520,12 @@
   margin-bottom: var(--space-5);
 }
 
+/* A heading sharing a row with the control that belongs to it spaces from the
+ * row, not from itself. */
+.admin-section .header-row-inline > h2 {
+  margin-bottom: 0;
+}
+
 .admin-device-row {
   margin-top: var(--space-1);
 }

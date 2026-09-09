@@ -119,6 +119,7 @@ const AdminPage: Component = () => {
   const [endpoints, setEndpoints] = createSignal<SyncEndpoint[]>([]);
   const [identities, setIdentities] = createSignal<ServerIdentity[]>([]);
   const [showImport, setShowImport] = createSignal(false);
+  const [showBackupHelp, setShowBackupHelp] = createSignal(false);
   const [showGrantModal, setShowGrantModal] = createSignal(false);
   const [joiningEndpointId, setJoiningEndpointId] = createSignal<string | null>(null);
   const [devices, setDevices] = createSignal<{ client_id: string; label: string | null; last_seen: number | null }[]>([]);
@@ -586,8 +587,25 @@ const AdminPage: Component = () => {
         </div>
 
         <div class="admin-section">
-          <h2>Backup &amp; restore</h2>
-          <div class="form-field">
+          <div class="header-row header-row-inline">
+            <h2>Backup &amp; restore</h2>
+            {/* Narrow screens cannot spare four lines for an explainer nobody
+                needs twice, so they keep it behind this. */}
+            <button
+              class="btn-icon btn-help"
+              type="button"
+              aria-label="About backup and restore"
+              aria-expanded={showBackupHelp()}
+              aria-controls="backup-help"
+              onClick={() => setShowBackupHelp((v) => !v)}
+            >
+              ?
+            </button>
+          </div>
+          <div
+            id="backup-help"
+            class={`form-field help-note ${showBackupHelp() ? "help-note-open" : ""}`}
+          >
             <div class="field-hint">
               Moving data between two servers (e.g. dev and prod)? Export All here while
               connected to the source server, then Import that file while connected to the
