@@ -103,7 +103,7 @@ const ReceivePage: Component = () => {
                   : "Subscribe to this board group and sync it to your device? Boards added to or removed from the group later will stay in sync too."}
               </p>
               <Show when={saveError()}>
-                <div class="field-error">{saveError()}</div>
+                <div class="field-error" role="alert">{saveError()}</div>
               </Show>
               <div class="actions actions-center">
                 <button class="btn-ghost" type="button" onClick={() => navigate("/")}>Cancel</button>

@@ -8,6 +8,7 @@ import { db } from "../db/database.js";
 import { createItem, updateItem, updateItemAttribute, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
 import { exportList, exportBoard } from "../db/exportImport.js";
 import { triggerDownload } from "../utils/download.js";
+import { menuPosition } from "../utils/menuPosition.js";
 import ImportModal from "../components/ImportModal.js";
 import type { ImportScope } from "../components/ImportModal.js";
 import { syncClient } from "../sync/SyncClient.js";
@@ -33,6 +34,13 @@ import ShareIcon from "../components/ShareIcon.js";
 // lets SolidJS <For> reuse the DOM node when the dummy changes position.
 type DummyShim = { id: typeof DUMMY_ITEM_ID; after_id: string | null; created_at: 0 };
 const DUMMY_SHIM: DummyShim = { id: DUMMY_ITEM_ID, after_id: null, created_at: 0 };
+
+const TODO_LABELS: Record<TodoState, string> = {
+  default: "To do",
+  done: "Done",
+  cancelled: "Cancelled",
+  skipped: "Skipped",
+};
 
 const VIEW_MODES: { mode: "list" | "table" | "card"; label: string }[] = [
   { mode: "list", label: "List" },
@@ -304,6 +312,13 @@ const ListView: Component = () => {
   const visibleLists = allLists;
 
   const headerTitle = () => board()?.name ?? "";
+
+  // Keep the document title on the board being viewed, so tab lists and screen
+  // reader page announcements say which board this is.
+  createEffect(() => {
+    const name = board()?.name;
+    document.title = name ? `${name} - Listr` : "Listr";
+  });
 
   const schema = createMemo((): AttributeDefinition[] => {
     const b = board();
@@ -623,6 +638,25 @@ const ListView: Component = () => {
     }
   };
 
+  // Keyboard equivalents of the row gestures. The Menu key raises a native
+  // contextmenu event, so handleItemContextMenu already covers that path.
+  const handleItemKeyDown = (e: KeyboardEvent, item: Item) => {
+    // Let a control inside the row keep its own keys.
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      setEditingItem(item);
+    } else if (e.key === " ") {
+      e.preventDefault();
+      setAnchorItemId(item.id);
+      setSelectedItemIds((prev) => {
+        const next = new Set(prev);
+        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+        return next;
+      });
+    }
+  };
+
   const handleItemContextMenu = (e: MouseEvent, item: Item) => {
     e.preventDefault();
     e.stopPropagation();
@@ -638,7 +672,7 @@ const ListView: Component = () => {
       setSelectedItemIds(new Set([item.id]));
       setAnchorItemId(item.id);
     }
-    setItemCtxMenu({ x: e.clientX, y: e.clientY, item });
+    setItemCtxMenu({ ...menuPosition(e), item });
   };
 
   const handleCrossListMove = async (itemId: string, toEl: HTMLElement, rawPredecessorId: string | null) => {
@@ -699,17 +733,30 @@ const ListView: Component = () => {
             <Show when={selectionMode()} fallback={
               <>
                 <div class="page-header">
-                  <div class="page-title" onContextMenu={(e) => { e.preventDefault(); setBoardCtxMenu({ x: e.clientX, y: e.clientY }); }}>
+                  <div class="page-title" onContextMenu={(e) => { e.preventDefault(); setBoardCtxMenu(menuPosition(e)); }}>
                     <h1>{headerTitle()}</h1>
                     <Show when={board()?.sync_key}>
                       <ShareIcon class="shared-icon shared-icon-lg" />
+                      <span class="sr-only">shared</span>
                     </Show>
-                    <span class="count">{totalItemCount()}</span>
+                    <span class="count">{totalItemCount()}<span class="sr-only"> items</span></span>
+                    {/* The same menu right-click raises, reachable without a
+                        pointer and discoverable on touch. */}
+                    <button
+                      class="btn-icon btn-icon-sm btn-icon-quiet"
+                      type="button"
+                      aria-label={`Actions for board ${headerTitle()}`}
+                      aria-haspopup="menu"
+                      onClick={(e) => setBoardCtxMenu(menuPosition(e))}
+                    >
+                      <span aria-hidden="true">⋯</span>
+                    </button>
                   </div>
                   <div class="header-actions">
                     <input
                       class="filter-input"
                       type="text"
+                      aria-label="Filter items"
                       placeholder="Filter..."
                       value={filterQuery()}
                       onInput={(e) => setFilterQuery(e.currentTarget.value)}
@@ -719,16 +766,16 @@ const ListView: Component = () => {
                       classList={{ active: filterOpen() }}
                       onClick={() => setFilterOpen((v) => !v)}
                       aria-label="Filter"
+                      aria-expanded={filterOpen()}
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h11A1.5 1.5 0 0 1 15 2.5v1.5a1.5 1.5 0 0 1-.44 1.06L10 9.62V14a1 1 0 0 1-1.45.9l-2-1A1 1 0 0 1 6 13v-3.38L1.44 5.06A1.5 1.5 0 0 1 1 4V2.5zm1.5-.5a.5.5 0 0 0-.5.5V4a.5.5 0 0 0 .15.35L7.5 9.2V13l1 .5V9.2l4.85-4.85A.5.5 0 0 0 13.5 4V2.5a.5.5 0 0 0-.5-.5h-11z"/></svg>
                     </button>
-                    <div class="view-switcher" role="tablist" aria-label="View mode">
+                    <div class="view-switcher" role="group" aria-label="View mode">
                       <For each={VIEW_MODES}>
                         {(vm) => (
                           <button
                             type="button"
-                            role="tab"
-                            aria-selected={appViewMode() === vm.mode}
+                            aria-pressed={appViewMode() === vm.mode}
                             class="view-switcher-btn"
                             classList={{ active: appViewMode() === vm.mode }}
                             onClick={() => setAppViewMode(vm.mode)}
@@ -743,6 +790,7 @@ const ListView: Component = () => {
                       classList={{ active: configOpen() }}
                       onClick={() => setConfigOpen(true)}
                       aria-label="Display settings"
+                      aria-haspopup="dialog"
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM9.05 3a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0V3h9.05zM4.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM2.05 8a2.5 2.5 0 0 1 4.9 0H16v1H6.95a2.5 2.5 0 0 1-4.9 0H0V8h2.05zm9.45 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm-2.45 1a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0v-1h9.05z"/></svg>
                     </button>
@@ -754,6 +802,7 @@ const ListView: Component = () => {
                     <input
                       class="filter-input"
                       type="text"
+                      aria-label="Filter items"
                       placeholder="Filter..."
                       value={filterQuery()}
                       onInput={(e) => setFilterQuery(e.currentTarget.value)}
@@ -776,7 +825,7 @@ const ListView: Component = () => {
                     <path d="M5 12H19M5 12L11 6M5 12L11 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
-                <span class="selection-bar-count">{selectedItemIds().size} selected</span>
+                <span class="selection-bar-count" role="status" aria-live="polite">{selectedItemIds().size} selected</span>
                 <button class="btn-ghost" onClick={handleEditFromBar}>Edit</button>
                 <button class="btn-ghost" onClick={() => setShowMoveToList(true)}>Move</button>
                 <button class="btn-danger" onClick={handleDeleteSelectedItems}>Delete</button>
@@ -836,37 +885,50 @@ const ListView: Component = () => {
                     <div class="panel multi-list-column" data-list-id={list.id}>
                       <div
                         class="multi-list-column-header"
-                        onContextMenu={(e) => { e.preventDefault(); setListCtxMenu({ x: e.clientX, y: e.clientY, list }); }}
-                        onClick={() => {
-                          if (isTouch) {
-                            const now = Date.now();
-                            if (lastTapListId === list.id && now - lastTapListTime < 350) {
-                              lastTapListId = null; lastTapListTime = 0;
-                              setEditingList(list);
-                              return;
-                            }
-                            lastTapListId = list.id; lastTapListTime = now;
-                          }
-                          setSelectedListIds(new Set([list.id]));
-                        }}
+                        onContextMenu={(e) => { e.preventDefault(); setListCtxMenu({ ...menuPosition(e), list }); }}
                       >
-                        <span class="multi-list-column-name">{list.name}</span>
-                        <span class="count">{items().length}</span>
+                        <button
+                          type="button"
+                          class="btn-bare multi-list-column-select"
+                          aria-pressed={selectedListIds().has(list.id)}
+                          onClick={() => {
+                            if (isTouch) {
+                              const now = Date.now();
+                              if (lastTapListId === list.id && now - lastTapListTime < 350) {
+                                lastTapListId = null; lastTapListTime = 0;
+                                setEditingList(list);
+                                return;
+                              }
+                              lastTapListId = list.id; lastTapListTime = now;
+                            }
+                            setSelectedListIds(new Set([list.id]));
+                          }}
+                        >
+                          <span class="multi-list-column-name">{list.name}</span>
+                          <span class="count">{items().length}<span class="sr-only"> items</span></span>
+                        </button>
                         <button
                           class="btn-icon btn-icon-quiet multi-list-add-btn"
                           type="button"
-                          aria-label="Add item"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDummyAfterId(list.id, null); // move inline-add dummy to top
-                          }}
+                          aria-label={`Add item to ${list.name}`}
+                          onClick={() => setDummyAfterId(list.id, null) /* move inline-add dummy to top */}
                         >+</button>
+                        <button
+                          class="btn-icon btn-icon-sm btn-icon-quiet"
+                          type="button"
+                          aria-label={`Actions for list ${list.name}`}
+                          aria-haspopup="menu"
+                          onClick={(e) => setListCtxMenu({ ...menuPosition(e), list })}
+                        >
+                          <span aria-hidden="true">⋯</span>
+                        </button>
                       </div>
 
                       <Switch>
                         <Match when={appViewMode() === "list"}>
                           <ul
                             class="list-view multi-list-items"
+                            aria-label={`Items in ${list.name}`}
                             data-list-id={list.id}
                             ref={(el) => useSortable(el, allItemsForList, {
                               group: params.id,
@@ -899,6 +961,7 @@ const ListView: Component = () => {
                                   <li
                                     class="list-view-item"
                                     data-item-id={realItem.id}
+                                    tabindex={0}
                                     classList={{
                                       selected: selectedItemIds().has(realItem.id),
                                       "todo-done": todoAttr() !== undefined && getTodoState(realItem) === "done",
@@ -909,17 +972,23 @@ const ListView: Component = () => {
                                     onTouchMove={handleItemTouchMove}
                                     onClick={(e) => handleItemClick(e, realItem, items())}
                                     onDblClick={() => setEditingItem(realItem)}
+                                    onKeyDown={(e) => handleItemKeyDown(e, realItem)}
                                     onContextMenu={(e) => handleItemContextMenu(e, realItem)}
                                   >
-                                    <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                      <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(realItem.id)} />
+                                    <Show when={selectedItemIds().has(realItem.id)}>
+                                      <span class="sr-only">Selected. </span>
+                                    </Show>
+                                    <Show when={selectionMode()} fallback={<span class="drag-handle" aria-hidden="true" title="Drag to reorder">⠿</span>}>
+                                      {/* Display only: the row itself carries the toggle. */}
+                                      <input type="checkbox" class="item-select-checkbox" tabindex={-1} aria-hidden="true" checked={selectedItemIds().has(realItem.id)} />
                                     </Show>
                                     <FormattedText html={formatItem(realItem, list)} />
                                     {integrationBadge(realItem.id)}
                                     <Show when={todoAttr()}>
                                       {(attr) => (
-                                        <div
-                                          class={`todo-control todo-${getTodoState(realItem)}`}
+                                        <button
+                                          type="button"
+                                          class={`btn-bare todo-control todo-${getTodoState(realItem)}`}
                                           onClick={async (e) => {
                                             e.stopPropagation();
                                             const cur = getTodoState(realItem);
@@ -952,10 +1021,11 @@ const ListView: Component = () => {
                                               todoLongPressTimer = null;
                                             }
                                           }}
-                                          aria-label={`Todo: ${getTodoState(realItem)}`}
+                                          aria-label={`${realItem.title}: ${TODO_LABELS[getTodoState(realItem)]}. Activate to toggle done.`}
+                                          aria-haspopup="menu"
                                         >
                                           <TodoIcon state={getTodoState(realItem)} />
-                                        </div>
+                                        </button>
                                       )}
                                     </Show>
                                   </li>
@@ -970,7 +1040,7 @@ const ListView: Component = () => {
                             <table>
                               <thead>
                                 <tr>
-                                  <th class="drag-handle-cell"></th>
+                                  <th class="drag-handle-cell"><span class="sr-only">Reorder</span></th>
                                   <th>Title</th>
                                   <For each={schema()}>
                                     {(attr) => <th>{attr.label || attr.key}</th>}
@@ -1008,19 +1078,26 @@ const ListView: Component = () => {
                                     return (
                                       <tr
                                         data-item-id={item_.id}
+                                        tabindex={0}
                                         classList={{ selected: selectedItemIds().has(item_.id) }}
                                         onTouchStart={(e) => handleItemTouchStart(e, item_)}
                                         onTouchMove={handleItemTouchMove}
                                         onClick={(e) => handleItemClick(e, item_, items())}
                                         onDblClick={() => setEditingItem(item_)}
+                                        onKeyDown={(e) => handleItemKeyDown(e, item_)}
                                         onContextMenu={(e) => handleItemContextMenu(e, item_)}
                                       >
                                         <td class="drag-handle-cell">
-                                          <Show when={selectionMode()} fallback={<span class="drag-handle" title="Drag to reorder">⠿</span>}>
-                                            <input type="checkbox" class="item-select-checkbox" checked={selectedItemIds().has(item_.id)} />
+                                          <Show when={selectionMode()} fallback={<span class="drag-handle" aria-hidden="true" title="Drag to reorder">⠿</span>}>
+                                            <input type="checkbox" class="item-select-checkbox" tabindex={-1} aria-hidden="true" checked={selectedItemIds().has(item_.id)} />
                                           </Show>
                                         </td>
-                                        <td class="cell-title">{item_.title}{integrationBadge(item_.id)}</td>
+                                        <td class="cell-title">
+                                          <Show when={selectedItemIds().has(item_.id)}>
+                                            <span class="sr-only">Selected. </span>
+                                          </Show>
+                                          {item_.title}{integrationBadge(item_.id)}
+                                        </td>
                                         <For each={schema()}>
                                           {(attr) => (
                                             <td>{formatCellValue(item_.attributes[attr.key], attr.type)}</td>
@@ -1037,7 +1114,7 @@ const ListView: Component = () => {
 
                         <Match when={appViewMode() === "card"}>
                           <div class="card-container">
-                            <div class="card-grid" data-list-id={list.id} ref={(el) => useSortable(el, allItemsForList, {
+                            <div class="card-grid" role="list" aria-label={`Items in ${list.name}`} data-list-id={list.id} ref={(el) => useSortable(el, allItemsForList, {
                               group: params.id,
                               onCrossMove: handleCrossListMove,
                               onOptimisticReorder: applyOptimisticReorder,
@@ -1068,15 +1145,21 @@ const ListView: Component = () => {
                                     <div
                                       class="panel card item"
                                       data-item-id={item_.id}
+                                      role="listitem"
+                                      tabindex={0}
                                       classList={{ selected: selectedItemIds().has(item_.id) }}
                                       onTouchStart={(e) => handleItemTouchStart(e, item_)}
                                       onTouchMove={handleItemTouchMove}
                                       onClick={(e) => handleItemClick(e, item_, items())}
                                       onDblClick={() => setEditingItem(item_)}
+                                      onKeyDown={(e) => handleItemKeyDown(e, item_)}
                                       onContextMenu={(e) => handleItemContextMenu(e, item_)}
                                     >
-                                      <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" title="Drag to reorder">⠿</span>}>
-                                        <input type="checkbox" class="card-select-checkbox" checked={selectedItemIds().has(item_.id)} />
+                                      <Show when={selectedItemIds().has(item_.id)}>
+                                        <span class="sr-only">Selected. </span>
+                                      </Show>
+                                      <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" aria-hidden="true" title="Drag to reorder">⠿</span>}>
+                                        <input type="checkbox" class="card-select-checkbox" tabindex={-1} aria-hidden="true" checked={selectedItemIds().has(item_.id)} />
                                       </Show>
                                       <div class="card-title"><FormattedText html={formatItem(item_, list)} />{integrationBadge(item_.id)}</div>
                                       <Show when={schema().length > 0}>
@@ -1116,16 +1199,16 @@ const ListView: Component = () => {
                   );
                 }}
               </For>
-              <div class="panel multi-list-new-column" onClick={handleNewList}>
+              <button type="button" class="btn-bare panel multi-list-new-column" onClick={handleNewList}>
                 + New list
-              </div>
+              </button>
             </div>
 
             <Show when={boardCtxMenu() !== null}>
               {(_) => {
                 const pos = () => boardCtxMenu()!;
                 return (
-                  <ContextMenu x={pos().x} y={pos().y} items={boardCtxMenuItems()} onClose={() => setBoardCtxMenu(null)} />
+                  <ContextMenu x={pos().x} y={pos().y} label={`Actions for board ${headerTitle()}`} items={boardCtxMenuItems()} onClose={() => setBoardCtxMenu(null)} />
                 );
               }}
             </Show>
@@ -1144,7 +1227,7 @@ const ListView: Component = () => {
               {(_) => {
                 const pos = () => listCtxMenu()!;
                 return (
-                  <ContextMenu x={pos().x} y={pos().y} items={listCtxMenuItems()} onClose={() => setListCtxMenu(null)} />
+                  <ContextMenu x={pos().x} y={pos().y} label={`Actions for list ${pos().list.name}`} items={listCtxMenuItems()} onClose={() => setListCtxMenu(null)} />
                 );
               }}
             </Show>
@@ -1160,6 +1243,7 @@ const ListView: Component = () => {
                   <ContextMenu
                     x={pos().x}
                     y={pos().y}
+                    label={`Actions for ${pos().item.title}`}
                     items={itemCtxMenuItems()}
                     onClose={() => setItemCtxMenu(null)}
                   />
@@ -1174,6 +1258,7 @@ const ListView: Component = () => {
                   <ContextMenu
                     x={pos().x}
                     y={pos().y}
+                    label={`Set state for ${pos().item.title}`}
                     items={todoCtxMenuItems()}
                     onClose={() => setTodoCtxMenu(null)}
                   />
@@ -1221,13 +1306,6 @@ const ListView: Component = () => {
               initial={editingBoard()}
             />
 
-            <BoardFormModal
-              open={editingBoard() !== undefined}
-              onClose={() => setEditingBoard(undefined)}
-              onSave={handleEditBoard}
-              initial={editingBoard()}
-            />
-
             <MoveToListModal
               open={showMoveToList()}
               onClose={() => setShowMoveToList(false)}
@@ -1237,40 +1315,56 @@ const ListView: Component = () => {
 
             <Show when={configOpen()}>
               <div class="overlay overlay-bottom" onClick={() => setConfigOpen(false)}>
-                <div class="panel config-sheet" onClick={(e) => e.stopPropagation()}>
+                <div
+                  class="panel config-sheet"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="config-sheet-title"
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => { if (e.key === "Escape") setConfigOpen(false); }}
+                >
                   <div class="config-sheet-header">
-                    <span class="config-sheet-title">Display</span>
-                    <button class="btn-icon" onClick={() => setConfigOpen(false)} aria-label="Close">✕</button>
+                    <span class="config-sheet-title" id="config-sheet-title">Display</span>
+                    <button
+                      class="btn-icon"
+                      onClick={() => setConfigOpen(false)}
+                      aria-label="Close display settings"
+                      ref={(el) => setTimeout(() => el.focus(), 0)}
+                    >
+                      <span aria-hidden="true">✕</span>
+                    </button>
                   </div>
-                  <div class="config-section">
-                    <div class="config-section-label">View</div>
+                  <div class="config-section" role="group" aria-labelledby="config-view-label">
+                    <div class="config-section-label" id="config-view-label">View</div>
                     <For each={VIEW_MODES}>
                       {(vm) => (
                         <button
                           class="config-option"
+                          aria-pressed={appViewMode() === vm.mode}
                           classList={{ active: appViewMode() === vm.mode }}
                           onClick={() => { setAppViewMode(vm.mode); setConfigOpen(false); }}
                         >
                           <span class="config-option-label">{vm.label}</span>
                           <Show when={appViewMode() === vm.mode}>
-                            <span class="config-option-check">✓</span>
+                            <span class="config-option-check" aria-hidden="true">✓</span>
                           </Show>
                         </button>
                       )}
                     </For>
                   </div>
-                  <div class="config-section config-section-divided">
-                    <div class="config-section-label">Appearance</div>
+                  <div class="config-section config-section-divided" role="group" aria-labelledby="config-theme-label">
+                    <div class="config-section-label" id="config-theme-label">Appearance</div>
                     <For each={THEME_OPTIONS}>
                       {(opt) => (
                         <button
                           class="config-option"
+                          aria-pressed={themePref() === opt.value}
                           classList={{ active: themePref() === opt.value }}
                           onClick={() => setThemePref(opt.value)}
                         >
                           <span class="config-option-label">{opt.label}</span>
                           <Show when={themePref() === opt.value}>
-                            <span class="config-option-check">✓</span>
+                            <span class="config-option-check" aria-hidden="true">✓</span>
                           </Show>
                         </button>
                       )}

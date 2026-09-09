@@ -149,6 +149,16 @@
 .sidebar-group-header {
   display: flex;
   align-items: center;
+  border-radius: var(--radius);
+}
+
+/* Carries the header's whole look, so the row itself can stay a bare container
+ * and the share button next to it stays a separate target. */
+.sidebar-group-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
   font-size: var(--text-sm);
@@ -160,7 +170,7 @@
   transition: background var(--speed);
 }
 
-.sidebar-group-header:hover {
+.sidebar-group-toggle:hover {
   background: var(--bg-hover);
 }
 
@@ -187,8 +197,16 @@
   grid-template-rows: 1fr;
 }
 
+/* A collapsed group leaves the tab order and the accessibility tree rather than
+ * merely being clipped to nothing. */
 .sidebar-group-boards {
   overflow: hidden;
+  visibility: hidden;
+  transition: visibility 0.1s;
+}
+
+.sidebar-group-boards-wrapper.expanded .sidebar-group-boards {
+  visibility: visible;
 }
 
 .sidebar-sync-btn {
@@ -432,15 +450,28 @@
   padding: var(--space-2) 0;
 }
 
+/* A real <button>, so it undoes the button primitive's chrome and centering. */
 .context-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text);
   padding: var(--space-3) var(--space-5);
   font-size: var(--text-md);
   cursor: pointer;
   transition: background var(--speed);
 }
 
-.context-menu-item:hover {
+.context-menu-item:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+/* Sits inside the menu's own edge rather than straddling it. */
+.context-menu-item:focus-visible {
+  outline-offset: -2px;
 }
 
 .context-menu-item.danger {
@@ -475,11 +506,15 @@
     bottom: 0;
     z-index: var(--z-overlay);
     transform: translateX(-100%);
-    transition: transform 0.2s ease;
+    /* Hide it outright once it has finished sliding away, so its controls are
+     * not reachable by Tab or announced while off screen. */
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0.2s ease;
   }
 
   .sidebar.open {
     transform: translateX(0);
+    visibility: visible;
     box-shadow: var(--shadow-slide);
   }
 

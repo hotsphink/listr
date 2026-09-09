@@ -12,7 +12,10 @@ interface Props {
   defaultBoardId?: string | null;
 }
 
+let seq = 0;
+
 const ListFormModal: Component<Props> = (props) => {
+  const uid = `list-form-${++seq}`;
   const [name, setName] = createSignal("");
   const [boardId, setBoardId] = createSignal("");
   const [formatOverride, setFormatOverride] = createSignal("");
@@ -51,16 +54,18 @@ const ListFormModal: Component<Props> = (props) => {
       <h2>{props.initial ? "Edit List" : "New List"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-field">
-          <label class="field-label">Name</label>
+          <label class="field-label" for={`${uid}-name`}>Name</label>
           <input
+            id={`${uid}-name`}
             value={name()}
             onInput={(e) => setName(e.currentTarget.value)}
             autofocus
           />
         </div>
         <div class="form-field">
-          <label class="field-label">Board</label>
+          <label class="field-label" for={`${uid}-board`}>Board</label>
           <select
+            id={`${uid}-board`}
             value={boardId()}
             onChange={(e) => setBoardId(e.currentTarget.value)}
           >
@@ -87,6 +92,7 @@ const ListFormModal: Component<Props> = (props) => {
               </label>
               <Show when={overrideFormat()}>
                 <input
+                  aria-label="Format string override"
                   value={formatOverride()}
                   onInput={(e) => setFormatOverride(e.currentTarget.value)}
                   placeholder={board().format_string}

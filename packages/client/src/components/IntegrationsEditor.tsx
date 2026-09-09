@@ -70,6 +70,7 @@ const IntegrationEntry: Component<EntryProps> = (props) => {
         <input
           class="integration-id"
           placeholder="Integration ID (e.g. omdb)"
+          aria-label="Integration ID"
           value={props.integration.integration_id}
           onBlur={(e) => props.onUpdate({ integration_id: e.currentTarget.value })}
         />
@@ -86,17 +87,25 @@ const IntegrationEntry: Component<EntryProps> = (props) => {
           class="btn-ghost btn-xs"
           onClick={() => setShowConfig((v) => !v)}
           title="Toggle config"
+          aria-expanded={showConfig()}
         >
           Config
         </button>
-        <button type="button" class="btn-icon" onClick={props.onRemove} title="Remove integration">
-          ×
+        <button
+          type="button"
+          class="btn-icon"
+          onClick={props.onRemove}
+          title="Remove integration"
+          aria-label={`Remove integration ${props.integration.integration_id || ""}`.trim()}
+        >
+          <span aria-hidden="true">×</span>
         </button>
       </div>
       <Show when={showConfig()}>
         <textarea
           class="integration-config-textarea textarea-code"
           placeholder="{}"
+          aria-label="Integration config, as JSON"
           rows={3}
           value={configText()}
           onInput={(e) => {

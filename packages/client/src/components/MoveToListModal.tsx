@@ -58,14 +58,16 @@ const MoveToListModal: Component<Props> = (props) => {
             const expanded = () => expandedIds().has(board.id);
             return (
               <div class="move-to-list-group">
-                <div
-                  class="move-to-list-board board-stripe"
+                <button
+                  type="button"
+                  class="btn-bare move-to-list-board board-stripe"
                   style={`--board-color: ${board.color}`}
+                  aria-expanded={expanded()}
                   onClick={() => toggle(board.id)}
                 >
-                  <span class="move-to-list-chevron">{expanded() ? "▾" : "▸"}</span>
+                  <span class="move-to-list-chevron" aria-hidden="true">{expanded() ? "▾" : "▸"}</span>
                   {board.name}
-                </div>
+                </button>
                 <Show when={expanded()}>
                   <For each={lists}>
                     {(list) => (

@@ -112,7 +112,7 @@ const RedeemGrantModal: Component<Props> = (props) => {
           fallback={<div class="scan-no-camera field-hint">Camera unavailable: {scanner.cameraError()}</div>}
         >
           <div class="scan-preview-wrapper">
-            <video ref={videoRef!} class="scan-preview" playsinline />
+            <video ref={videoRef!} class="scan-preview" playsinline aria-label="Camera preview for scanning an invite code" />
             <canvas ref={canvasRef!} hidden />
           </div>
         </Show>
@@ -122,7 +122,7 @@ const RedeemGrantModal: Component<Props> = (props) => {
             <input value={pasted()} onInput={(e) => setPasted(e.currentTarget.value)} placeholder="https://…" autocomplete="off" spellcheck={false} />
             <button class="btn-primary" type="submit">Use</button>
           </div>
-          <Show when={error()}><div class="field-error">{error()}</div></Show>
+          <Show when={error()}><div class="field-error" role="alert">{error()}</div></Show>
         </form>
         <div class="actions">
           <button class="btn-ghost" type="button" onClick={props.onClose}>Cancel</button>

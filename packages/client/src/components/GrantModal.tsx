@@ -45,7 +45,10 @@ const KIND_GREETING_PLACEHOLDERS: Record<GrantKind, string> = {
  * invite and guest at all, and the kind selector hides them too when myCaps
  * lacks 'invite', since a component reused elsewhere must not assume its
  * caller gates correctly. The server enforces it either way. */
+let seq = 0;
+
 const GrantModal: Component<Props> = (props) => {
+  const uid = `grant-${++seq}`;
   const [kind, setKind] = createSignal<GrantKind>("device");
   const [alsoInvite, setAlsoInvite] = createSignal(false);
   const [payload, setPayload] = createSignal("");
@@ -141,8 +144,8 @@ const GrantModal: Component<Props> = (props) => {
         </>
       }>
         <div class="form-field">
-          <label class="field-label">What kind of link?</label>
-          <select value={kind()} onChange={(e) => setKind(e.currentTarget.value as GrantKind)}>
+          <label class="field-label" for={`${uid}-kind`}>What kind of link?</label>
+          <select id={`${uid}-kind`} aria-describedby={`${uid}-kind-hint`} value={kind()} onChange={(e) => setKind(e.currentTarget.value as GrantKind)}>
             <option value="device">{KIND_LABELS.device}</option>
             <option value="share">{KIND_LABELS.share}</option>
             <Show when={canInvite()}>
@@ -150,7 +153,7 @@ const GrantModal: Component<Props> = (props) => {
               <option value="guest">{KIND_LABELS.guest}</option>
             </Show>
           </select>
-          <div class="field-hint">{KIND_HINTS[kind()]}</div>
+          <div class="field-hint" id={`${uid}-kind-hint`}>{KIND_HINTS[kind()]}</div>
         </div>
 
         <Show when={kind() === "invite"}>
@@ -164,27 +167,27 @@ const GrantModal: Component<Props> = (props) => {
 
         <Show when={kind() === "share" || kind() === "guest"}>
           <div class="form-field">
-            <label class="field-label">Sync key to hand over</label>
-            <input value={payload()} onInput={(e) => setPayload(e.currentTarget.value)} placeholder="paste a sync key" />
+            <label class="field-label" for={`${uid}-payload`}>Sync key to hand over</label>
+            <input id={`${uid}-payload`} value={payload()} onInput={(e) => setPayload(e.currentTarget.value)} placeholder="paste a sync key" />
             <div class="field-hint">Leave blank to create the account without handing over any data yet.</div>
           </div>
         </Show>
 
         <div class="form-field">
-          <label class="field-label">Message</label>
-          <input value={greeting()} onInput={(e) => setGreeting(e.currentTarget.value)} placeholder={KIND_GREETING_PLACEHOLDERS[kind()]} />
+          <label class="field-label" for={`${uid}-greeting`}>Message</label>
+          <input id={`${uid}-greeting`} value={greeting()} onInput={(e) => setGreeting(e.currentTarget.value)} placeholder={KIND_GREETING_PLACEHOLDERS[kind()]} />
         </div>
 
         <Show when={needsDisplayNamePrompt()}>
           <div class="form-field">
-            <label class="field-label">Your name</label>
-            <input value={displayName()} onInput={(e) => setDisplayName(e.currentTarget.value)} placeholder="they'll see this name" />
+            <label class="field-label" for={`${uid}-display-name`}>Your name</label>
+            <input id={`${uid}-display-name`} value={displayName()} onInput={(e) => setDisplayName(e.currentTarget.value)} placeholder="they'll see this name" />
             <div class="field-hint">A nickname, not your real name if you'd rather not — they'll see it on the invite.</div>
           </div>
         </Show>
 
         <Show when={error()}>
-          <div class="field-error">{error()}</div>
+          <div class="field-error" role="alert">{error()}</div>
         </Show>
 
         <div class="actions">

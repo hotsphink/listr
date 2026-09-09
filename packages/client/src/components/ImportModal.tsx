@@ -424,7 +424,7 @@ const ImportModal: Component<Props> = (props) => {
         <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden
           onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) processFile(f); e.currentTarget.value = ""; }} />
         <Show when={error()}>
-          {(err) => <div class="field-error">{err()}</div>}
+          {(err) => <div class="field-error" role="alert">{err()}</div>}
         </Show>
         <div class="actions">
           <button class="btn-ghost" onClick={handleClose}>Cancel</button>
@@ -462,7 +462,7 @@ const ImportModal: Component<Props> = (props) => {
             )}
           </Show>
           <Show when={error()}>
-            {(err) => <div class="field-error">{err()}</div>}
+            {(err) => <div class="field-error" role="alert">{err()}</div>}
           </Show>
           <div class="actions">
             <button class="btn-ghost" onClick={reset}>Back</button>
@@ -534,7 +534,7 @@ const ImportModal: Component<Props> = (props) => {
           </div>
         </Show>
         <Show when={error()}>
-          {(err) => <div class="field-error">{err()}</div>}
+          {(err) => <div class="field-error" role="alert">{err()}</div>}
         </Show>
         <div class="actions">
           <button class="btn-ghost" onClick={() => { setError(null); setPhase("idle"); }} disabled={phase() === "importing"}>Back</button>

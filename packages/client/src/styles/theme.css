@@ -18,6 +18,9 @@
 
   --border: light-dark(#d0d0d0, #333333);
   --border-focus: light-dark(#888888, #666666);
+  /* Keyboard focus ring. Deliberately louder than --border-focus, which only
+   * tints a field's own border. See the :focus-visible rule in base.css. */
+  --focus-ring: light-dark(#1d4ed8, #8ab4ff);
 
   --text: light-dark(#1a1a1a, #f0f0f0);
   --text-muted: light-dark(#666666, #999999);
@@ -111,6 +114,7 @@ html[data-theme="high-contrast"] {
 
   --border: #ffffff;
   --border-focus: #ffd700;
+  --focus-ring: #ffd700;
 
   --text: #ffffff;
   --text-muted: #c0c0c0;

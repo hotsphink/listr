@@ -116,8 +116,8 @@ const Dashboard: Component = () => {
               <div class="dashboard-board">
                 <div class="dashboard-board-header">
                   <h2 class="board-stripe dashboard-board-name" style={`--board-color: ${board.color}`}>{board.name}</h2>
-                  <button class="btn-icon" onClick={() => setEditingBoard(board)} title="Edit board">
-                    ⚙
+                  <button class="btn-icon" onClick={() => setEditingBoard(board)} title="Edit board" aria-label={`Edit board ${board.name}`}>
+                    <span aria-hidden="true">⚙</span>
                   </button>
                 </div>
                 <Show

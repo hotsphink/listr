@@ -330,9 +330,10 @@ const AdminPage: Component = () => {
                     facts you occasionally need to read out, not things to lead
                     with, so they sit underneath as hints. */}
                 <div class="form-field">
-                  <label class="field-label">You are</label>
+                  <label class="field-label" for="admin-display-name">You are</label>
                   <div class="control-row">
                     <input
+                      id="admin-display-name"
                       type="text"
                       value={displayNameInput()}
                       onInput={(e) => { setDisplayNameInput(e.currentTarget.value); setDisplayNameDirty(true); }}
@@ -343,7 +344,7 @@ const AdminPage: Component = () => {
                     </Show>
                   </div>
                   <Show when={displayNameError()}>
-                    <div class="field-error">{displayNameError()}</div>
+                    <div class="field-error" role="alert">{displayNameError()}</div>
                   </Show>
                   <div class="field-hint">Shown to people you invite or share with.</div>
                   <div class="field-hint">
@@ -355,7 +356,7 @@ const AdminPage: Component = () => {
                 </div>
                 <div class="form-field">
                   <div class="header-row header-row-tight header-row-inline">
-                    <label class="field-label">Your devices</label>
+                    <div class="field-label">Your devices</div>
                     <button
                       class="btn-icon btn-icon-sm"
                       type="button"
@@ -436,7 +437,7 @@ const AdminPage: Component = () => {
           </For>
           <Show when={clientId()}>
             <div class="form-field">
-              <label class="field-label">Client ID</label>
+              <div class="field-label">Client ID</div>
               <div class="code-box">{clientId()}</div>
               <div class="field-hint">Identifies this device's keypair. Assigned automatically, shared across every server it registers with.</div>
             </div>
@@ -470,29 +471,41 @@ const AdminPage: Component = () => {
               return (
                 <div class={`panel endpoint-card ${statusClass(status(), phase())}`}>
                   <div class="endpoint-header" classList={{ collapsed: !expanded() }}>
-                    <button class="btn-icon btn-icon-sm btn-icon-quiet" type="button" onClick={() => toggleExpanded(ep.id)} aria-label={expanded() ? "Collapse" : "Expand"}>
+                    <button
+                      class="btn-icon btn-icon-sm btn-icon-quiet"
+                      type="button"
+                      onClick={() => toggleExpanded(ep.id)}
+                      aria-expanded={expanded()}
+                      aria-label={`${expanded() ? "Collapse" : "Expand"} ${ep.host || "server"} settings`}
+                    >
                       <svg class="endpoint-expand-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style={`transform: rotate(${expanded() ? 90 : 0}deg)`}>
                         <polyline points="9 18 15 12 9 6"/>
                       </svg>
                     </button>
-                    <span class="status-dot" title={statusLabel(status(), phase())} />
+                    {/* A title on a span is not announced reliably, so the
+                        state also goes in as text only a reader sees. */}
+                    <span class="status-dot" title={statusLabel(status(), phase())} aria-hidden="true" />
+                    <span class="sr-only">{statusLabel(status(), phase())}</span>
                     <input
                       type="checkbox"
                       class="endpoint-enabled"
+                      aria-label={`Sync with ${ep.host || "this server"}`}
                       checked={ep.enabled}
                       onChange={(e) => updateEndpoint(ep.id, { enabled: e.currentTarget.checked })}
                     />
                     <input
                       class="endpoint-host"
                       type="text"
+                      aria-label="Server hostname"
                       value={ep.host}
                       placeholder="hostname"
                       onBlur={(e) => updateEndpoint(ep.id, { host: e.currentTarget.value.trim() })}
                     />
-                    <span class="endpoint-sep">:</span>
+                    <span class="endpoint-sep" aria-hidden="true">:</span>
                     <input
                       class="endpoint-port"
                       type="number"
+                      aria-label="Server port"
                       value={ep.port}
                       placeholder="port"
                       onBlur={(e) => {
@@ -634,7 +647,7 @@ const AdminPage: Component = () => {
           <h2>About</h2>
           <div class="form-field">
             <div class="header-row header-row-tight">
-              <label class="field-label">Client build</label>
+              <div class="field-label">Client build</div>
               <ForceUpdateButton />
             </div>
             <div class="code-box">{formatBuildTime(__BUILD_TIME__)} · protocol v{PROTOCOL_VERSION}</div>

@@ -27,7 +27,6 @@ textarea {
   border-radius: var(--radius);
   color: var(--text);
   padding: var(--space-3) var(--space-5);
-  outline: none;
   transition: border-color var(--speed);
 }
 
@@ -35,6 +34,27 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--border-focus);
+}
+
+/* One ring for everything reachable by keyboard. Anything that opts out here
+ * has to draw its own, or it becomes invisible to keyboard users. The border
+ * tint above is too quiet on its own to serve as the only focus indicator. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* A field already has a border to sit on, so hug it rather than float outside. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: 0;
+}
+
+/* A container made focusable only so scripts can move focus into it should not
+ * announce itself as an interactive target. */
+[tabindex="-1"]:focus {
+  outline: none;
 }
 
 textarea {
@@ -81,4 +101,51 @@ tbody td {
 
 tbody tr {
   cursor: default;
+}
+
+/* Honour a request for less motion: drop transitions and animations rather
+ * than trying to tune each one down. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visible to assistive technology, invisible on screen. Use it for a label or
+ * a status message that the layout already conveys visually. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Off screen until focused, then it lands where the page starts. */
+button.skip-link,
+.skip-link {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-4);
+  z-index: 1000;
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }

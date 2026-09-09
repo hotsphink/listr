@@ -11,7 +11,10 @@ interface Props {
   count: number;
 }
 
+let seq = 0;
+
 const MultiItemFormModal: Component<Props> = (props) => {
+  const uid = `multi-form-${++seq}`;
   const [states, setStates] = createSignal<Record<string, { checked: boolean; value: unknown }>>({});
 
   createEffect(() => {
@@ -52,11 +55,14 @@ const MultiItemFormModal: Component<Props> = (props) => {
                     checked={state().checked}
                     onChange={(e) => setChecked(def.key, e.currentTarget.checked)}
                   />
-                  <span>{def.label || def.key}</span>
+                  {/* Also names the value control beside it, which has no label
+                      of its own. */}
+                  <span id={`${uid}-${def.key}-label`}>{def.label || def.key}</span>
                 </label>
                 <div class="multi-edit-input">
                   <AttributeEditor
                     definition={def}
+                    labelledBy={`${uid}-${def.key}-label`}
                     value={state().value}
                     onChange={(v) => setValue(def.key, v)}
                   />

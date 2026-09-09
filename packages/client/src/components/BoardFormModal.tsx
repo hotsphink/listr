@@ -29,7 +29,10 @@ interface Props {
   defaultSyncKey?: string;
 }
 
+let seq = 0;
+
 const BoardFormModal: Component<Props> = (props) => {
+  const uid = `board-form-${++seq}`;
   const [name, setName] = createSignal("");
   const [color, setColor] = createSignal("#5b8def");
   const [formatStr, setFormatStr] = createSignal("{title}");
@@ -264,20 +267,24 @@ const BoardFormModal: Component<Props> = (props) => {
       <form onSubmit={handleSubmit}>
         <div class="form-row">
           <div class="form-field">
-            <label class="field-label">Name</label>
+            <label class="field-label" for={`${uid}-name`}>Name</label>
             <input
+              id={`${uid}-name`}
               classList={{ "input-error": nameError() !== null }}
               value={name()}
               onInput={(e) => { setName(e.currentTarget.value); setNameError(null); }}
+              aria-invalid={nameError() !== null}
+              aria-describedby={nameError() !== null ? `${uid}-name-error` : undefined}
               autofocus
             />
             <Show when={nameError()}>
-              {(err) => <div class="field-error">{err()}</div>}
+              {(err) => <div class="field-error" id={`${uid}-name-error`}>{err()}</div>}
             </Show>
           </div>
           <div class="form-field form-field-narrow">
-            <label class="field-label">Color</label>
+            <label class="field-label" for={`${uid}-color`}>Color</label>
             <input
+              id={`${uid}-color`}
               class="color-input"
               type="color"
               value={color()}
@@ -286,19 +293,21 @@ const BoardFormModal: Component<Props> = (props) => {
           </div>
         </div>
         <div class="form-field">
-          <label class="field-label">Share Key</label>
+          <label class="field-label" for={`${uid}-share-key`}>Share Key</label>
           <input
+            id={`${uid}-share-key`}
             value={boardSyncKey()}
             onInput={(e) => setBoardSyncKey(e.currentTarget.value)}
             placeholder="leave empty to use your default key"
+            aria-describedby={`${uid}-share-key-hint`}
           />
-          <div class="field-hint">
+          <div class="field-hint" id={`${uid}-share-key-hint`}>
             Boards with the same share key sync together. Share this key with others to collaborate.
           </div>
         </div>
         <div class="form-field">
           <div class="header-row header-row-tight">
-            <label class="field-label">Format String</label>
+            <label class="field-label" for={`${uid}-format`}>Format String</label>
             <button
               type="button"
               class="btn-ghost btn-xs"
@@ -312,10 +321,12 @@ const BoardFormModal: Component<Props> = (props) => {
             fallback={
               <>
                 <input
+                  id={`${uid}-format`}
                   classList={{ "input-error": formatError() !== null }}
                   value={formatStr()}
                   onInput={(e) => handleFormatInput(e.currentTarget.value)}
                   placeholder="{title}"
+                  aria-invalid={formatError() !== null}
                 />
                 <Show when={formatError()}>
                   {(err) => <div class="field-error">{err()}</div>}
@@ -336,6 +347,7 @@ const BoardFormModal: Component<Props> = (props) => {
               onDrop={handleDrop}
             >
               <textarea
+                id={`${uid}-format`}
                 class="format-advanced-textarea textarea-code"
                 classList={{ "input-error": advancedError() !== null }}
                 value={advancedText()}
@@ -378,15 +390,19 @@ const BoardFormModal: Component<Props> = (props) => {
           </Show>
         </div>
         <div class="form-field">
-          <label class="field-label">Attributes</label>
-          <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
+          <div class="field-label" id={`${uid}-attrs-label`}>Attributes</div>
+          <div role="group" aria-labelledby={`${uid}-attrs-label`}>
+            <SchemaEditor schema={schema()} onChange={handleSchemaChange} />
+          </div>
         </div>
         <div class="form-field">
-          <label class="field-label">Integrations</label>
-          <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
+          <div class="field-label" id={`${uid}-integrations-label`}>Integrations</div>
+          <div role="group" aria-labelledby={`${uid}-integrations-label`}>
+            <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
+          </div>
         </div>
         <Show when={saveError()}>
-          {(err) => <div class="field-error">{err()}</div>}
+          {(err) => <div class="field-error" role="alert">{err()}</div>}
         </Show>
         <div class="actions">
           <button type="button" class="btn-ghost" onClick={props.onClose} disabled={saving()}>

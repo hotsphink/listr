@@ -2,7 +2,7 @@
   "name": "listr",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter @listr/client dev",
+    "client:dev": "pnpm --filter @listr/client dev",
     "build": "pnpm --filter @listr/client build",
     "preview": "pnpm build && pnpm --filter @listr/client preview",
     "server:dev": "pnpm --filter @listr/server dev",

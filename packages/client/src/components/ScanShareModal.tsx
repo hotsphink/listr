@@ -84,7 +84,7 @@ const ScanShareModal: Component<Props> = (props) => {
           }
         >
           <div class="scan-preview-wrapper">
-            <video ref={videoRef!} class="scan-preview" playsinline />
+            <video ref={videoRef!} class="scan-preview" playsinline aria-label="Camera preview for scanning a share code" />
             <canvas ref={canvasRef!} hidden />
             <div class="scan-overlay-corner tl" /><div class="scan-overlay-corner tr" />
             <div class="scan-overlay-corner bl" /><div class="scan-overlay-corner br" />
@@ -105,7 +105,7 @@ const ScanShareModal: Component<Props> = (props) => {
             <button class="btn-primary" type="submit">Add</button>
           </div>
           <Show when={manualError()}>
-            <div class="field-error">{manualError()}</div>
+            <div class="field-error" role="alert">{manualError()}</div>
           </Show>
         </form>
 

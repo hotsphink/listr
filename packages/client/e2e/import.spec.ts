@@ -159,7 +159,8 @@ test.describe("import modal", () => {
     await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
     await uploadFakeImage(page);
     await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
-    await page.getByRole("button", { name: /Import/ }).click();
+    // Scoped to the modal: the sidebar's own Import row is a button too.
+    await page.locator(".modal").getByRole("button", { name: /Import/ }).click();
     await expect(page.locator(".modal")).toContainText("Imported 1 item successfully");
     await page.getByRole("button", { name: "Done" }).click();
     await expect(page.locator(".modal")).toHaveCount(0);

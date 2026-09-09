@@ -13,7 +13,13 @@ interface Props {
   initialTitle?: string;
 }
 
+let seq = 0;
+
 const ItemFormModal: Component<Props> = (props) => {
+  // Per-instance id prefix, so each label points at its own control even with
+  // two of these modals mounted at once.
+  const uid = `item-form-${++seq}`;
+  const fieldId = (key: string) => `${uid}-${key}`;
   const [title, setTitle] = createSignal("");
   const [attributes, setAttributes] = createSignal<Record<string, unknown>>({});
 
@@ -39,8 +45,9 @@ const ItemFormModal: Component<Props> = (props) => {
       <h2>{props.initial ? "Edit Item" : "New Item"}</h2>
       <form onSubmit={handleSubmit}>
         <div class="form-field">
-          <label class="field-label">Title</label>
+          <label class="field-label" for={`${uid}-title`}>Title</label>
           <input
+            id={`${uid}-title`}
             value={title()}
             onInput={(e) => setTitle(e.currentTarget.value)}
             autocapitalize="words"
@@ -50,9 +57,13 @@ const ItemFormModal: Component<Props> = (props) => {
         <For each={props.schema}>
           {(def) => (
             <div class="form-field">
-              <label class="field-label">{def.label || def.key}</label>
+              <label class="field-label" id={`${fieldId(def.key)}-label`} for={fieldId(def.key)}>
+                {def.label || def.key}
+              </label>
               <AttributeEditor
                 definition={def}
+                id={fieldId(def.key)}
+                labelledBy={`${fieldId(def.key)}-label`}
                 value={attributes()[def.key]}
                 onChange={(v) => setAttribute(def.key, v)}
               />

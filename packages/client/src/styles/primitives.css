@@ -68,9 +68,27 @@ button,
   transition: background var(--speed), color var(--speed), border-color var(--speed);
 }
 
-button:hover:not(:disabled),
-.btn:hover:not(:disabled) {
+button:hover:not(:disabled):not(.btn-bare),
+.btn:hover:not(:disabled):not(.btn-bare) {
   background: var(--bg-active);
+}
+
+/* A control that has to be a <button> so the keyboard and screen readers can
+ * reach it, but should not look like one. The class beside it supplies the
+ * whole appearance, including hover. */
+.btn-bare {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: inherit;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  padding: 0;
 }
 
 button:disabled,
@@ -435,9 +453,16 @@ button:disabled,
   gap: var(--space-2);
 }
 
+/* Each one is a <button>, so undo the full-width stretch .btn-bare hands out. */
 .tag-list .tag {
   cursor: pointer;
   margin-right: 0;
+  width: auto;
+}
+
+.tag-list .tag:hover {
+  opacity: 1;
+  filter: brightness(1.15);
 }
 
 /* A tag offered but not chosen. */

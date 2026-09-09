@@ -16,6 +16,7 @@ import { generateShareKey } from "../sync/shareToken.js";
 import { collapsedGroups, toggleGroupCollapsed } from "../store/sidebarGroups.js";
 import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
 import { triggerDownload } from "../utils/download.js";
+import { menuPosition } from "../utils/menuPosition.js";
 
 interface Props {
   open?: boolean;
@@ -172,16 +173,23 @@ const Sidebar: Component<Props> = (props) => {
   };
 
   const renderGroupHeader = (groupKey: string, name: string, shareKey?: string) => (
-    <div class="sidebar-group-header" onClick={() => toggleGroupCollapsed(groupKey)}>
-      <span class="sidebar-group-chevron">{collapsedGroups().has(groupKey) ? "▸" : "▾"}</span>
-      <span class="sidebar-group-title">{name}</span>
+    <div class="sidebar-group-header">
+      <button
+        type="button"
+        class="btn-bare sidebar-group-toggle"
+        aria-expanded={!collapsedGroups().has(groupKey)}
+        onClick={() => toggleGroupCollapsed(groupKey)}
+      >
+        <span class="sidebar-group-chevron" aria-hidden="true">{collapsedGroups().has(groupKey) ? "▸" : "▾"}</span>
+        <span class="sidebar-group-title">{name}</span>
+      </button>
       <Show when={shareKey}>
         <button
           class="btn-icon btn-icon-sm btn-icon-quiet sidebar-group-share-btn"
           type="button"
           title={`Share ${name}`}
           aria-label={`Share ${name}`}
-          onClick={(e) => { e.stopPropagation(); setSharingGroup({ key: shareKey!, name }); }}
+          onClick={() => setSharingGroup({ key: shareKey!, name })}
         >
           <ShareIcon />
         </button>
@@ -193,26 +201,30 @@ const Sidebar: Component<Props> = (props) => {
     <Show
       when={renamingId() === board.id}
       fallback={
-        <div
-          class="sidebar-item sidebar-board board-stripe"
+        <button
+          type="button"
+          class="btn-bare sidebar-item sidebar-board board-stripe"
           classList={{ active: location.pathname === `/board/${board.id}` }}
+          aria-current={location.pathname === `/board/${board.id}` ? "page" : undefined}
           style={`--board-color: ${board.color}`}
           onClick={() => { navigate(`/board/${board.id}`); props.onClose?.(); }}
           onDblClick={() => setEditingBoard(board)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, board }); }}
+          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ ...menuPosition(e), board }); }}
         >
           <span class="sidebar-board-name">
             {board.name}
             <Show when={board.sync_key}>
               <ShareIcon class="shared-icon" />
+              <span class="sr-only">shared</span>
             </Show>
           </span>
-        </div>
+        </button>
       }
     >
       <div class="sidebar-item sidebar-board">
         <input
           class="sidebar-rename-input"
+          aria-label={`Rename board ${board.name}`}
           value={board.name}
           onBlur={(e) => handleRenameBlur(board.id, e.currentTarget.value)}
           onKeyDown={handleRenameKeyDown}
@@ -223,13 +235,14 @@ const Sidebar: Component<Props> = (props) => {
   );
 
   return (
-    <nav class="sidebar" classList={{ open: props.open ?? false }}>
-      <div
-        class="sidebar-header"
+    <nav class="sidebar" id="sidebar" classList={{ open: props.open ?? false }} aria-label="Boards">
+      <button
+        type="button"
+        class="btn-bare sidebar-header"
         onClick={() => { props.onClose?.(); navigate("/"); }}
       >
         Listr
-      </div>
+      </button>
       <div class="sidebar-content">
         <div class="sidebar-group">
           {renderGroupHeader("own", "My Boards", defaultSyncKey())}
@@ -264,46 +277,56 @@ const Sidebar: Component<Props> = (props) => {
           </div>
         </Show>
 
-        <div
-          class="sidebar-item sidebar-new board"
+        <button
+          type="button"
+          class="btn-bare sidebar-item sidebar-new board"
           onClick={() => setShowCreateBoard(true)}
         >
           + New Board
-        </div>
-        <div
-          class="sidebar-item sidebar-new"
+        </button>
+        <button
+          type="button"
+          class="btn-bare sidebar-item sidebar-new"
           onClick={() => setCreatingGroupKey(generateShareKey())}
         >
           + New Board Group
-        </div>
-        <div
-          class="sidebar-item sidebar-new"
+        </button>
+        <button
+          type="button"
+          class="btn-bare sidebar-item sidebar-new"
           onClick={async () => {
             const data = await exportAllData();
             const date = new Date().toISOString().slice(0, 10);
             triggerDownload(data, `listr-${date}.json`);
           }}
         >
-          ↑ Export
-        </div>
-        <div
-          class="sidebar-item sidebar-new"
+          <span aria-hidden="true">↑</span> Export
+        </button>
+        <button
+          type="button"
+          class="btn-bare sidebar-item sidebar-new"
           onClick={() => setImportScope({ type: "global" })}
         >
-          ↓ Import
-        </div>
-        <div
-          class="sidebar-item sidebar-new"
+          <span aria-hidden="true">↓</span> Import
+        </button>
+        <button
+          type="button"
+          class="btn-bare sidebar-item sidebar-new"
           onClick={() => setShowScanShare(true)}
         >
-          ⬚ Receive Share
-        </div>
+          <span aria-hidden="true">⬚</span> Receive Share
+        </button>
       </div>
       <div class="sidebar-footer">
-        <div class="sidebar-sync-btn" onClick={() => { props.onClose?.(); navigate("/admin"); }}>
-          <span class={`status-dot ${syncTone()}`} />
+        <button
+          type="button"
+          class="btn-bare sidebar-sync-btn"
+          onClick={() => { props.onClose?.(); navigate("/admin"); }}
+        >
+          <span class={`status-dot ${syncTone()}`} aria-hidden="true" />
           Sync
-        </div>
+          <span class="sr-only">, {syncStatus()}</span>
+        </button>
       </div>
 
       <Show when={contextMenu()}>
@@ -311,6 +334,7 @@ const Sidebar: Component<Props> = (props) => {
           <ContextMenu
             x={ctx().x}
             y={ctx().y}
+            label={`Actions for board ${ctx().board.name}`}
             items={menuItems()}
             onClose={() => setContextMenu(null)}
           />

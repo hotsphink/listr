@@ -76,21 +76,37 @@ const Layout: Component<{ children?: any }> = (props) => {
 
   return (
     <div class="app">
+      {/* A button, not an anchor: the app routes on the URL hash, so a
+          fragment link would navigate instead of moving focus. */}
+      <button
+        type="button"
+        class="skip-link"
+        onClick={() => document.getElementById("main-content")?.focus()}
+      >
+        Skip to content
+      </button>
       <div
         class="overlay sidebar-backdrop"
         classList={{ open: sidebarOpen() }}
         onClick={close}
+        aria-hidden="true"
       />
       <Sidebar open={sidebarOpen()} onClose={close} />
-      <div class="app-body">
+      <main class="app-body" id="main-content" tabindex={-1}>
         <Show when={!selectionMode() && location.pathname !== "/admin"}>
-          <button class="btn-icon btn-icon-lg mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
-            ☰
+          <button
+            class="btn-icon btn-icon-lg mobile-menu-btn"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open menu"
+            aria-expanded={sidebarOpen()}
+            aria-controls="sidebar"
+          >
+            <span aria-hidden="true">☰</span>
           </button>
         </Show>
         {props.children}
-      </div>
-      <div id="drag-cancel-zone" class="drag-cancel-zone" classList={{ active: isDragging() }}>
+      </main>
+      <div id="drag-cancel-zone" class="drag-cancel-zone" classList={{ active: isDragging() }} aria-hidden="true">
         ✕ Cancel
       </div>
     </div>

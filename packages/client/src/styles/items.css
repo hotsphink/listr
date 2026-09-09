@@ -67,6 +67,18 @@
   user-select: none;
 }
 
+/* The selectable part of the header. A <button>, so the keyboard can pick a
+ * list; the menu and add buttons beside it stay separate targets. */
+.multi-list-column-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
 .multi-list-column-name {
   min-width: 0;
   overflow: hidden;
@@ -242,7 +254,9 @@ tbody tr.drag-choosing,
 /* ── Todo attribute ───────────────────────────────────────────────────────
  * A tri-state control plus the way a done, cancelled or skipped item reads.
  */
+/* A <button>, so undo the full-width stretch .btn-bare hands out. */
 .todo-control {
+  width: auto;
   flex-shrink: 0;
   margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) calc(var(--space-4) * -1) auto;
   padding: var(--space-4);
@@ -317,17 +331,21 @@ tr.inline-add-item td:last-child {
   gap: var(--space-2);
 }
 
-/* Reads as part of the row rather than as a form control. */
+/* Reads as part of the row rather than as a form control. It has no border of
+ * its own, so the focus ring is all a keyboard user gets: let it float clear. */
 .inline-add-input {
   flex: 1 1 0;
   min-width: 0;
   background: transparent;
   border: none;
-  outline: none;
   font: inherit;
   font-size: var(--text-base);
   color: var(--text);
   padding: 0;
+}
+
+.inline-add-input:focus-visible {
+  outline-offset: 2px;
 }
 
 .inline-add-input::placeholder {
@@ -434,4 +452,13 @@ tr.inline-add-item td:last-child {
   width: auto;
   vertical-align: middle;
   margin: var(--space-1);
+}
+
+/* Rows carry tabindex so Enter edits, Space selects, and the Menu key opens the
+ * same actions right-click does. Their ring sits inside the row's own edge. */
+.list-view-item:focus-visible,
+.card.item:focus-visible,
+tbody tr:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }

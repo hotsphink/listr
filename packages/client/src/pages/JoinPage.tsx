@@ -276,10 +276,10 @@ const JoinPage: Component = () => {
           <h2>Server not found</h2>
           <p class="field-hint">{errorMessage() ?? "This link is for a server you don't have configured."}</p>
           <div class="form-field join-manual-host">
-            <label class="field-label">Host</label>
-            <input value={manualHost()} onInput={(e) => setManualHost(e.currentTarget.value)} placeholder="hostname" />
-            <label class="field-label">Port</label>
-            <input type="number" value={manualPort()} onInput={(e) => setManualPort(parseInt(e.currentTarget.value) || 443)} />
+            <label class="field-label" for="join-manual-host">Host</label>
+            <input id="join-manual-host" value={manualHost()} onInput={(e) => setManualHost(e.currentTarget.value)} placeholder="hostname" />
+            <label class="field-label" for="join-manual-port">Port</label>
+            <input id="join-manual-port" type="number" value={manualPort()} onInput={(e) => setManualPort(parseInt(e.currentTarget.value) || 443)} />
           </div>
           <div class="actions actions-center">
             <button class="btn-ghost" type="button" onClick={goHome}>Cancel</button>
@@ -306,14 +306,17 @@ const JoinPage: Component = () => {
                   <div class="field-hint field-hint-lead">
                     You already have {unboundBoards()} board{unboundBoards() > 1 ? "s" : ""} on this device from before joining.
                   </div>
-                  <label class="check-label">
-                    <input type="radio" name="keep-choice" checked={keepChoice() !== "discard"} onChange={() => setKeepChoice("keep")} />
-                    Keep it — it becomes part of your new account
-                  </label>
-                  <label class="check-label">
-                    <input type="radio" name="keep-choice" checked={keepChoice() === "discard"} onChange={() => setKeepChoice("discard")} />
-                    Discard it
-                  </label>
+                  <fieldset class="join-keep-options">
+                    <legend class="sr-only">What to do with the boards already on this device</legend>
+                    <label class="check-label">
+                      <input type="radio" name="keep-choice" checked={keepChoice() !== "discard"} onChange={() => setKeepChoice("keep")} />
+                      Keep it — it becomes part of your new account
+                    </label>
+                    <label class="check-label">
+                      <input type="radio" name="keep-choice" checked={keepChoice() === "discard"} onChange={() => setKeepChoice("discard")} />
+                      Discard it
+                    </label>
+                  </fieldset>
                 </div>
               </Show>
               <div class="actions actions-center">
@@ -343,7 +346,7 @@ const JoinPage: Component = () => {
 
         <Show when={step() === "error"}>
           <h2>Couldn't join</h2>
-          <p class="field-error">{errorMessage()}</p>
+          <p class="field-error" role="alert">{errorMessage()}</p>
           <div class="actions actions-center">
             <button class="btn-ghost" type="button" onClick={goHome}>Go home</button>
           </div>

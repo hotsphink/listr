@@ -55,24 +55,33 @@ const SchemaEditor: Component<Props> = (props) => {
               <input
                 class="schema-key"
                 placeholder="Key"
+                aria-label="Attribute key, used in format strings"
                 title="Attribute key (used in format strings)"
                 value={attr().key}
                 onBlur={(e) => updateAt(i, { key: e.currentTarget.value })}
               />
               <input
                 placeholder="Label"
+                aria-label="Display label, shown in table headers and forms"
                 title="Display label (shown in table headers and forms)"
                 value={attr().label}
                 onBlur={(e) => updateAt(i, { label: e.currentTarget.value })}
               />
-              <button type="button" class="btn-icon" onClick={() => removeAt(i)} title="Remove attribute">
-                ×
+              <button
+                type="button"
+                class="btn-icon"
+                onClick={() => removeAt(i)}
+                title="Remove attribute"
+                aria-label={`Remove attribute ${attr().label || attr().key || i + 1}`}
+              >
+                <span aria-hidden="true">×</span>
               </button>
             </div>
             {/* Row 2 on mobile: type + options + default. display:contents on desktop. */}
             <div class="schema-entry-detail">
               <select
                 class="schema-type"
+                aria-label="Attribute type"
                 title="Attribute type"
                 value={attr().type}
                 onChange={(e) => {
@@ -88,6 +97,7 @@ const SchemaEditor: Component<Props> = (props) => {
                 <input
                   class="schema-options"
                   placeholder="opt1, opt2, ..."
+                  aria-label="Options, comma separated"
                   title="Options (comma-separated)"
                   value={(attr().options ?? []).join(", ")}
                   onBlur={(e) =>
@@ -128,6 +138,7 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
     <Switch fallback={
       <input
         placeholder="empty"
+        aria-label="Default value for new items"
         title="Default value for new items"
         value={props.value != null ? String(props.value) : ""}
         onBlur={(e) => props.onChange(e.currentTarget.value || undefined)}
@@ -136,7 +147,8 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
       <Match when={props.type === "url"}>
         <input
           placeholder="https://..."
-          title="Default value for new items"
+          aria-label="Default value for new items"
+        title="Default value for new items"
           value={props.value != null ? String(props.value) : ""}
           onBlur={(e) => props.onChange(e.currentTarget.value || undefined)}
         />
@@ -146,7 +158,8 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
           type="number"
           step="any"
           placeholder="(none)"
-          title="Default value for new items"
+          aria-label="Default value for new items"
+        title="Default value for new items"
           value={props.value != null ? Number(props.value) : ""}
           onBlur={(e) => {
             const v = e.currentTarget.valueAsNumber;
@@ -156,7 +169,8 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
       </Match>
       <Match when={props.type === "boolean"}>
         <select
-          title="Default value for new items"
+          aria-label="Default value for new items"
+        title="Default value for new items"
           value={props.value === true ? "true" : "false"}
           onChange={(e) => props.onChange(e.currentTarget.value === "true")}
         >
@@ -166,7 +180,8 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
       </Match>
       <Match when={props.type === "enum"}>
         <select
-          title="Default value for new items"
+          aria-label="Default value for new items"
+        title="Default value for new items"
           value={props.value != null ? String(props.value) : ""}
           onChange={(e) => props.onChange(e.currentTarget.value || undefined)}
         >
@@ -179,14 +194,16 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
       <Match when={props.type === "date" || props.type === "datetime"}>
         <input
           type={props.type === "datetime" ? "datetime-local" : "date"}
-          title="Default value for new items"
+          aria-label="Default value for new items"
+        title="Default value for new items"
           value={props.value != null ? String(props.value) : ""}
           onChange={(e) => props.onChange(e.currentTarget.value || undefined)}
         />
       </Match>
       <Match when={props.type === "todo"}>
         <select
-          title="Default state for new items"
+          aria-label="Default state for new items"
+        title="Default state for new items"
           value={props.value != null ? String(props.value) : "default"}
           onChange={(e) => props.onChange(e.currentTarget.value === "default" ? undefined : e.currentTarget.value)}
         >
@@ -200,6 +217,7 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
         <input
           type="number"
           placeholder="(none)"
+          aria-label="Default value for new items, in minutes"
           title="Default value for new items (in minutes)"
           value={props.value != null ? Number(props.value) : ""}
           min="0"

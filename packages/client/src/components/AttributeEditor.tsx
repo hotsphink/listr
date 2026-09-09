@@ -5,55 +5,65 @@ interface Props {
   definition: AttributeDefinition;
   value: unknown;
   onChange: (value: unknown) => void;
+  /**
+   * id for the control a caller's <label for> points at. Types drawn as a
+   * single control take it directly; duration and tags are several controls, so
+   * they are grouped and named by labelledBy instead.
+   */
+  id?: string;
+  /** id of the element naming this field, for the multi-control types. */
+  labelledBy?: string;
 }
 
 const AttributeEditor: Component<Props> = (props) => {
   return (
-    <Switch fallback={<TextInput value={props.value} onChange={props.onChange} />}>
+    <Switch fallback={<TextInput id={props.id} value={props.value} onChange={props.onChange} />}>
       <Match when={props.definition.type === "text"}>
-        <TextInput value={props.value} onChange={props.onChange} />
+        <TextInput id={props.id} value={props.value} onChange={props.onChange} />
       </Match>
       <Match when={props.definition.type === "number"}>
-        <NumberInput value={props.value} onChange={props.onChange} config={props.definition.config} />
+        <NumberInput id={props.id} value={props.value} onChange={props.onChange} config={props.definition.config} />
       </Match>
       <Match when={props.definition.type === "boolean"}>
-        <BooleanInput value={props.value} onChange={props.onChange} />
+        <BooleanInput id={props.id} value={props.value} onChange={props.onChange} />
       </Match>
       <Match when={props.definition.type === "date"}>
-        <DateInput value={props.value} onChange={props.onChange} />
+        <DateInput id={props.id} value={props.value} onChange={props.onChange} />
       </Match>
       <Match when={props.definition.type === "datetime"}>
-        <DateInput value={props.value} onChange={props.onChange} showTime />
+        <DateInput id={props.id} value={props.value} onChange={props.onChange} showTime />
       </Match>
       <Match when={props.definition.type === "enum"}>
-        <EnumInput value={props.value} onChange={props.onChange} options={props.definition.options ?? []} />
+        <EnumInput id={props.id} value={props.value} onChange={props.onChange} options={props.definition.options ?? []} />
       </Match>
       <Match when={props.definition.type === "tags"}>
-        <TagsInput value={props.value} onChange={props.onChange} options={props.definition.options ?? []} />
+        <TagsInput labelledBy={props.labelledBy} value={props.value} onChange={props.onChange} options={props.definition.options ?? []} />
       </Match>
       <Match when={props.definition.type === "url"}>
-        <TextInput value={props.value} onChange={props.onChange} type="url" />
+        <TextInput id={props.id} value={props.value} onChange={props.onChange} type="url" />
       </Match>
       <Match when={props.definition.type === "duration"}>
-        <DurationInput value={props.value} onChange={props.onChange} />
+        <DurationInput labelledBy={props.labelledBy} value={props.value} onChange={props.onChange} />
       </Match>
       <Match when={props.definition.type === "todo"}>
-        <TodoInput value={props.value} onChange={props.onChange} />
+        <TodoInput id={props.id} value={props.value} onChange={props.onChange} />
       </Match>
     </Switch>
   );
 };
 
-const TextInput: Component<{ value: unknown; onChange: (v: unknown) => void; type?: string }> = (props) => (
+const TextInput: Component<{ value: unknown; onChange: (v: unknown) => void; type?: string; id?: string }> = (props) => (
   <input
+    id={props.id}
     type={props.type ?? "text"}
     value={String(props.value ?? "")}
     onInput={(e) => props.onChange(e.currentTarget.value)}
   />
 );
 
-const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; config?: Record<string, unknown> }> = (props) => (
+const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; config?: Record<string, unknown>; id?: string }> = (props) => (
   <input
+    id={props.id}
     type="number"
     value={props.value != null ? Number(props.value) : ""}
     min={props.config?.min as number | undefined}
@@ -66,24 +76,27 @@ const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; c
   />
 );
 
-const BooleanInput: Component<{ value: unknown; onChange: (v: unknown) => void }> = (props) => (
+const BooleanInput: Component<{ value: unknown; onChange: (v: unknown) => void; id?: string }> = (props) => (
   <input
+    id={props.id}
     type="checkbox"
     checked={Boolean(props.value)}
     onChange={(e) => props.onChange(e.currentTarget.checked)}
   />
 );
 
-const DateInput: Component<{ value: unknown; onChange: (v: unknown) => void; showTime?: boolean }> = (props) => (
+const DateInput: Component<{ value: unknown; onChange: (v: unknown) => void; showTime?: boolean; id?: string }> = (props) => (
   <input
+    id={props.id}
     type={props.showTime ? "datetime-local" : "date"}
     value={String(props.value ?? "")}
     onInput={(e) => props.onChange(e.currentTarget.value || null)}
   />
 );
 
-const EnumInput: Component<{ value: unknown; onChange: (v: unknown) => void; options: string[] }> = (props) => (
+const EnumInput: Component<{ value: unknown; onChange: (v: unknown) => void; options: string[]; id?: string }> = (props) => (
   <select
+    id={props.id}
     value={String(props.value ?? "")}
     onChange={(e) => props.onChange(e.currentTarget.value || null)}
   >
@@ -92,7 +105,7 @@ const EnumInput: Component<{ value: unknown; onChange: (v: unknown) => void; opt
   </select>
 );
 
-const TagsInput: Component<{ value: unknown; onChange: (v: unknown) => void; options: string[] }> = (props) => {
+const TagsInput: Component<{ value: unknown; onChange: (v: unknown) => void; options: string[]; labelledBy?: string }> = (props) => {
   const selected = (): string[] => Array.isArray(props.value) ? props.value : [];
   const toggle = (tag: string) => {
     const current = selected();
@@ -102,16 +115,18 @@ const TagsInput: Component<{ value: unknown; onChange: (v: unknown) => void; opt
   };
 
   return (
-    <div class="tag-list">
+    <div class="tag-list" role="group" aria-labelledby={props.labelledBy}>
       <For each={props.options}>
         {(opt) => (
-          <span
-            class="tag"
+          <button
+            type="button"
+            class="btn-bare tag"
             classList={{ "tag-off": !selected().includes(opt) }}
+            aria-pressed={selected().includes(opt)}
             onClick={() => toggle(opt)}
           >
             {opt}
-          </span>
+          </button>
         )}
       </For>
     </div>
@@ -143,33 +158,36 @@ function formatDurationShort(totalMinutes: number): string {
   return `${m}m`;
 }
 
-const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void }> = (props) => {
+const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void; labelledBy?: string }> = (props) => {
   const totalMinutes = () => Number(props.value ?? 0);
   const hours = () => Math.floor(totalMinutes() / 60);
   const minutes = () => totalMinutes() % 60;
 
   return (
-    <div class="duration-input">
+    <div class="duration-input" role="group" aria-labelledby={props.labelledBy}>
       <input
         type="number"
         min="0"
         class="duration-num"
+        aria-label="Hours"
         value={hours()}
         onInput={(e) => props.onChange(e.currentTarget.valueAsNumber * 60 + minutes())}
       />
-      <span class="duration-unit">h</span>
+      <span class="duration-unit" aria-hidden="true">h</span>
       <input
         type="number"
         min="0"
         max="59"
         class="duration-num"
+        aria-label="Minutes"
         value={minutes()}
         onInput={(e) => props.onChange(hours() * 60 + (e.currentTarget.valueAsNumber || 0))}
       />
-      <span class="duration-unit">m</span>
+      <span class="duration-unit" aria-hidden="true">m</span>
       <input
         type="text"
         class="duration-text"
+        aria-label="Duration, as text"
         placeholder="e.g. 1h42m"
         value={totalMinutes() > 0 ? formatDurationShort(totalMinutes()) : ""}
         onBlur={(e) => {
@@ -181,8 +199,9 @@ const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void 
   );
 };
 
-const TodoInput: Component<{ value: unknown; onChange: (v: unknown) => void }> = (props) => (
+const TodoInput: Component<{ value: unknown; onChange: (v: unknown) => void; id?: string }> = (props) => (
   <select
+    id={props.id}
     value={typeof props.value === "string" ? props.value : "default"}
     onChange={(e) => props.onChange(e.currentTarget.value === "default" ? undefined : e.currentTarget.value)}
   >
