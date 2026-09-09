@@ -21,7 +21,7 @@
 
   --text: light-dark(#1a1a1a, #f0f0f0);
   --text-muted: light-dark(#666666, #999999);
-  --text-dim: light-dark(#aaaaaa, #888888);
+  --text-dim: light-dark(#aaaaaa, #888866);
 
   /* Intents. Each has a solid colour for text and fills, plus a soft tint for
    * backgrounds behind that colour. Wire them up through the tone-* classes in
