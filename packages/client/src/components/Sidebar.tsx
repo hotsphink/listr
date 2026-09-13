@@ -12,7 +12,7 @@ import BoardShareModal from "./BoardShareModal.js";
 import ScanShareModal from "./ScanShareModal.js";
 import ShareIcon from "./ShareIcon.js";
 import { syncStatus } from "../sync/syncStore.js";
-import { generateShareKey } from "../sync/shareToken.js";
+import { generateShareKey } from "../sync/syncKeys.js";
 import { collapsedGroups, toggleGroupCollapsed } from "../store/sidebarGroups.js";
 import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
 import { triggerDownload } from "../utils/download.js";

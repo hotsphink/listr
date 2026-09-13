@@ -26,10 +26,12 @@ test.describe("board groups", () => {
     const teamGroup = page.locator(".sidebar-group").filter({ has: page.locator(".sidebar-group-title", { hasText: "Team Trip" }) });
     await expect(teamGroup.locator(".sidebar-board", { hasText: "Team Trip" })).toBeVisible();
 
-    // The group heading itself is shareable using the group's key (no bid).
+    // The group heading itself is shareable. With no sync server configured at
+    // all there is nobody to issue the grant, so the dialog says so.
     await teamGroup.locator(".sidebar-group-share-btn").click();
     await expect(page.locator(".modal h2")).toHaveText('Share "Team Trip"');
-    await page.getByRole("button", { name: "Done" }).click();
+    await expect(page.locator(".modal")).toContainText("Sharing needs a sync server");
+    await page.getByRole("button", { name: "Cancel" }).click();
 
     // Sanity: the generated key round-trips onto the board itself (Edit shows the same key).
     await teamGroup.locator(".sidebar-board", { hasText: "Team Trip" }).click({ button: "right" });
@@ -51,7 +53,9 @@ test.describe("board groups", () => {
     await page.locator(".context-menu-item", { hasText: "Share" }).click();
     await expect(page.locator(".modal h2")).toHaveText('Share "Solo Board"');
     await expect(page.locator(".modal")).not.toContainText("boards added or removed later stay in sync");
-    await page.getByRole("button", { name: "Done" }).click();
+    // Opening the dialog is what mints the board's key, whether or not there is
+    // a server to issue a link on, so dismissing it still leaves the key behind.
+    await page.getByRole("button", { name: "Cancel" }).click();
 
     const sharedGroup = page.locator(".sidebar-group").filter({ has: page.locator(".sidebar-group-title", { hasText: "Shared Boards" }) });
     await expect(sharedGroup.locator(".sidebar-board", { hasText: "Solo Board" })).toBeVisible();
@@ -95,7 +99,7 @@ test.describe("board groups", () => {
     await expect(myBoardsHeader.locator(".sidebar-group-share-btn")).toBeVisible();
   });
 
-  test("sharing My Boards opens a group share link without navigating", async ({ page }) => {
+  test("sharing My Boards opens the share dialog without navigating", async ({ page }) => {
     await setDefaultSyncKey(page, "abcdef1234567890");
     await page.reload();
     await page.waitForSelector(".sidebar");
@@ -107,7 +111,12 @@ test.describe("board groups", () => {
     await expect(page.locator(".sidebar-group-boards-wrapper").first()).toHaveClass(/expanded/);
 
     await expect(page.locator(".modal h2")).toHaveText('Share "My Boards"');
-    await expect(page.locator(".modal")).toContainText("boards added or removed later stay in sync");
-    await expect(page.locator(".share-url-text")).toContainText("#/receive/");
+
+    // A share link is a grant issued by the server holding the boards, so with
+    // an identity but no live connection there is nothing to issue one on.
+    // Say that rather than spinning on a link that can never arrive.
+    await expect(page.locator(".modal")).toContainText("needs a live connection");
+    await expect(page.getByRole("button", { name: "Check sync" })).toBeVisible();
+    await expect(page.locator(".share-url-text")).toHaveCount(0);
   });
 });

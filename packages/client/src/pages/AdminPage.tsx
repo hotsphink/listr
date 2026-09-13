@@ -1,8 +1,14 @@
 import { type Component, For, Show, createSignal, createEffect, onCleanup } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { liveQuery } from "dexie";
-import { db, type ServerIdentity, type SyncEndpoint } from "../db/database.js";
+import { db, type SyncEndpoint } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
+import {
+  primaryEndpointId,
+  primaryIdentity,
+  serverIdentities as identities,
+  syncEndpoints as endpoints,
+} from "../sync/primaryConnection.js";
 import { PROTOCOL_VERSION } from "../sync/protocol.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { endpointStatuses } from "../store/endpointStatuses.js";
@@ -116,8 +122,6 @@ const ForceUpdateButton: Component = () => {
 
 const AdminPage: Component = () => {
   const navigate = useNavigate();
-  const [endpoints, setEndpoints] = createSignal<SyncEndpoint[]>([]);
-  const [identities, setIdentities] = createSignal<ServerIdentity[]>([]);
   const [showImport, setShowImport] = createSignal(false);
   const [showBackupHelp, setShowBackupHelp] = createSignal(false);
   const [showGrantModal, setShowGrantModal] = createSignal(false);
@@ -129,48 +133,6 @@ const AdminPage: Component = () => {
   const [renamingClientId, setRenamingClientId] = createSignal<string | null>(null);
   const [renameInput, setRenameInput] = createSignal("");
   const [deviceError, setDeviceError] = createSignal<string | null>(null);
-
-  createEffect(() => {
-    const sub = liveQuery(() => db.sync_endpoints.orderBy("position").toArray()).subscribe((eps) => {
-      setEndpoints(eps);
-    });
-    onCleanup(() => sub.unsubscribe());
-  });
-
-  // Per-server registration state. Identity comes from the server, via the
-  // `ok` message's fields, and never from anything typed into this page.
-  createEffect(() => {
-    const sub = liveQuery(() => db.server_identity.toArray()).subscribe(setIdentities);
-    onCleanup(() => sub.unsubscribe());
-  });
-
-  // The endpoint id currently reaching whichever server the active identity
-  // is on. Identity is keyed by server_id, while the wire calls
-  // (createGrant, listClients, setDisplayName) are made against a connection,
-  // which is keyed by endpoint id. This picks the first ready endpoint on that
-  // server, the same "pick one" convention SyncClient.getPrimaryServerId uses
-  // for the multi-server case.
-  const primaryIdentity = () => identities().find((i) => i.state === "active") ?? null;
-
-  // Only a connection that can be sent on right now qualifies, not merely one
-  // associated with this server. Neither `sync_endpoints.last_server_id` nor
-  // `EndpointStatus.serverId` is sufficient on its own, since both survive a
-  // dropped socket: last_server_id is persisted, and an EndpointStatus keeps
-  // the serverId from its last handshake even once the phase has gone to
-  // "error", because the close handler sets only phase and message. Either
-  // could hand back a dead endpoint, and every wire call here
-  // (setDisplayName, listClients, createGrant) throws "no open connection" on
-  // one. Requiring phase === "ready" is what makes this accurate, and it stays
-  // reactive because `statuses()` updates on connect and close.
-  const primaryEndpointId = (): string | null => {
-    const serverId = primaryIdentity()?.server_id;
-    if (!serverId) return null;
-    for (const ep of endpoints()) {
-      const status = statuses()[ep.id] as EndpointStatus | undefined;
-      if (status?.phase === "ready" && status.serverId === serverId) return ep.id;
-    }
-    return null;
-  };
 
   const needsGrantEndpoints = () =>
     endpoints().filter((ep) => ((statuses()[ep.id] as EndpointStatus | undefined)?.phase ?? (ep.enabled ? "connecting" : "disabled")) === "needs_grant");

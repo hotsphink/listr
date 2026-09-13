@@ -23,7 +23,8 @@
  *       one (i.e. it inherited suspension/revocation from an ancestor).
  *
  *   issue-grant --issuer=<user_id> --kind=<invite|device|share|guest>
- *               [--caps=cap1,cap2] [--payload=<sync_key>] [--greeting=text]
+ *               [--caps=cap1,cap2] [--payload=<sync_key>] [--payload-name=text]
+ *               [--greeting=text]
  *               [--ttl-ms=<n>] [--uses=<n>] [--app-url=<url>]
  *       Create a grant and print both the redemption secret and a ready-to-use
  *       join link ONCE. The server stores only the secret's SHA-256, never a
@@ -31,7 +32,9 @@
  *       to `invite` only, subject to the attenuation check against the
  *       issuer's own caps. `guest` always gets caps=[sync] regardless of
  *       --caps. `payload` is the sync_key to hand over for `share` and
- *       `guest`. --app-url is where the *client app* is served (default
+ *       `guest`, and `--payload-name` names it, so a shared board group
+ *       arrives on the recipient's device already named. --app-url is where
+ *       the *client app* is served (default
  *       ${DEFAULT_APP_URL}), not the sync server, so pass something like
  *       --app-url=https://localhost:3000/ when testing against a local Vite
  *       instance.
@@ -231,6 +234,7 @@ function runCommand(
             issuerUserId,
             caps: kind === "invite" ? caps : undefined,
             payload: named.payload,
+            payloadName: named["payload-name"],
             greeting: named.greeting,
             expiresAt: ttlMs !== undefined ? now + ttlMs : undefined,
             usesRemaining: uses,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hashServerId, parseJoinPath, parseJoinInput, SERVER_HASH_LENGTH } from "./joinLink.js";
+import { hashServerId, parseJoinPath, parseJoinInput, joinRoutePath, SERVER_HASH_LENGTH } from "./joinLink.js";
 
 describe("hashServerId", () => {
   it("is deterministic and the expected length", async () => {
@@ -81,8 +81,8 @@ describe("parseJoinInput", () => {
     });
   });
 
-  it("returns null for a share link (wrong route)", () => {
-    expect(parseJoinInput("https://listr.example/#/receive/sometoken")).toBeNull();
+  it("returns null for a URL on some other route", () => {
+    expect(parseJoinInput("https://listr.example/#/board/sometoken")).toBeNull();
   });
 
   it("returns null for garbage input", () => {
@@ -92,5 +92,53 @@ describe("parseJoinInput", () => {
 
   it("returns null for a malformed join URL missing the secret", () => {
     expect(parseJoinInput("https://listr.example/#/join/AbC123/grant-1")).toBeNull();
+  });
+});
+
+describe("board id in a share link", () => {
+  it("picks the board id out of a full URL's query string", () => {
+    const url = "https://listr.example/#/join/AbC123/grant-1.the-secret?b=board-9";
+    expect(parseJoinInput(url)).toEqual({
+      serverHash: "AbC123",
+      grantId: "grant-1",
+      secret: "the-secret",
+      boardId: "board-9",
+    });
+  });
+
+  it("picks it out of a bare fragment too", () => {
+    expect(parseJoinInput("AbC123/grant-1.the-secret?b=board-9")).toEqual({
+      serverHash: "AbC123",
+      grantId: "grant-1",
+      secret: "the-secret",
+      boardId: "board-9",
+    });
+  });
+
+  it("leaves boardId absent when there is no query, so a group share stays unchanged", () => {
+    expect(parseJoinInput("AbC123/grant-1.the-secret")).toEqual({
+      serverHash: "AbC123",
+      grantId: "grant-1",
+      secret: "the-secret",
+    });
+  });
+
+  it("ignores an empty or unrelated query rather than inventing a board", () => {
+    expect(parseJoinInput("AbC123/grant-1.the-secret?b=")?.boardId).toBeUndefined();
+    expect(parseJoinInput("AbC123/grant-1.the-secret?x=1")?.boardId).toBeUndefined();
+  });
+
+  it("keeps the secret intact when a query follows it", () => {
+    expect(parseJoinInput("AbC123/grant-1.the-secret?b=board-9")?.secret).toBe("the-secret");
+  });
+
+  it("round-trips through joinRoutePath", () => {
+    const link = parseJoinInput("AbC123/grant-1.the-secret?b=board-9")!;
+    expect(joinRoutePath(link)).toBe("/join/AbC123/grant-1.the-secret?b=board-9");
+  });
+
+  it("omits the query in a route path when there is no board", () => {
+    const link = parseJoinInput("AbC123/grant-1.the-secret")!;
+    expect(joinRoutePath(link)).toBe("/join/AbC123/grant-1.the-secret");
   });
 });

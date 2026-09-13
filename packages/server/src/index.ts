@@ -644,12 +644,17 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
           const accepted = dbApi.upsertIntegrationResult(data as any);
           if (accepted) broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
         } else {
-          const { accepted, previous } = dbApi.upsertEntity(entityType, data, syncKey);
+          const { accepted, previous, rekeyed } = dbApi.upsertEntity(entityType, data, syncKey);
           if (accepted) {
             broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
             if (entityType === "item") {
               integrationRunner.onItemUpserted(data as unknown as Item, previous as unknown as Item | null, syncKey);
             }
+          } else if (rekeyed) {
+            // Content was stale, but the entity just moved into this
+            // namespace. Anyone already listening on the new key needs it, and
+            // needs the stored version rather than the stale push.
+            broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data: rekeyed });
           }
         }
         pushCounts[entityType] = (pushCounts[entityType] ?? 0) + 1;
@@ -718,13 +723,14 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
           ? (msg.caps.filter((c: unknown) => typeof c === "string") as Cap[])
           : undefined;
         const payload = typeof msg.payload === "string" && msg.payload ? msg.payload : undefined;
+        const payloadName = typeof msg.payload_name === "string" && msg.payload_name ? msg.payload_name : undefined;
         const greeting = typeof msg.greeting === "string" && msg.greeting ? msg.greeting : null;
         const expiresAt = typeof msg.expires_at === "number" ? msg.expires_at : undefined;
         const usesRemaining = typeof msg.uses_remaining === "number" ? msg.uses_remaining : undefined;
 
         try {
           const { grantId, secret } = dbApi.createGrant(
-            { kind, issuerUserId: userId!, caps, payload, greeting, expiresAt, usesRemaining },
+            { kind, issuerUserId: userId!, caps, payload, payloadName, greeting, expiresAt, usesRemaining },
             Date.now(),
           );
           const grant = dbApi.getGrant(grantId)!;

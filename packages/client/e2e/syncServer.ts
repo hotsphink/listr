@@ -37,6 +37,9 @@ export interface GrantOptions {
   /** share and guest only: the sync key handed over on redemption. */
   payload?: string;
   greeting?: string;
+  /** invite only: the caps the new user gets. A sharer needs `invite` to be
+   * able to issue guest grants of their own. */
+  caps?: string[];
 }
 
 export interface TestSyncServer {
@@ -145,6 +148,7 @@ export async function startTestSyncServer(): Promise<TestSyncServer> {
       ];
       if (options.payload) args.push(`--payload=${options.payload}`);
       if (options.greeting) args.push(`--greeting=${options.greeting}`);
+      if (options.caps?.length) args.push(`--caps=${options.caps.join(",")}`);
       const out = execFileSync(TSX, args, { env, encoding: "utf8" });
       const link = out.match(/(#\/join\/\S+)/)?.[1];
       if (!link) throw new Error(`could not find a join link in:\n${out}`);

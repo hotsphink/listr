@@ -385,16 +385,6 @@ export async function discardUnboundLocalBoards(): Promise<void> {
   });
 }
 
-/**
- * Label a sync_key as a deliberate board group (as opposed to an ordinary
- * individually-shared board), so the sidebar gives it its own group heading.
- * Also tells the server so the name/association follows the user's other devices.
- */
-export async function markBoardGroup(key: string, name: string): Promise<void> {
-  await db.board_groups.put({ key, name, created_at: now() });
-  syncClient.associateKey(key, name);
-}
-
 // --- Lists ---
 
 export async function createList(

@@ -43,6 +43,7 @@ export interface GrantRow {
   issuer_user_id: string;
   caps: Cap[] | null;
   payload: string | null;
+  payload_name: string | null;
   greeting: string | null;
   expires_at: number;
   uses_remaining: number;
@@ -165,6 +166,9 @@ const SCHEMA_SQL = `
     secret_hash    TEXT NOT NULL,
     caps           TEXT,
     payload        TEXT,
+    -- Display name for the payload key, so a shared board group arrives on
+    -- the recipient's device already named rather than as a bare key.
+    payload_name   TEXT,
     greeting       TEXT,
     expires_at     INTEGER NOT NULL,
     uses_remaining INTEGER NOT NULL,
@@ -491,12 +495,22 @@ function migrateV5RekeyUserKeysToUserId(sql: Database.Database): void {
   sql.exec(`CREATE INDEX IF NOT EXISTS idx_user_keys ON user_keys(user_id)`);
 }
 
+// Migration 6: name the key a grant hands over. Without it a group share
+// redeemed through a grant lands as an unnamed key, since user_keys.name is
+// what the client turns into a named group in its sidebar.
+function migrateV6GrantPayloadName(sql: Database.Database): void {
+  if (!hasColumn(sql, "grants", "payload_name")) {
+    sql.exec(`ALTER TABLE grants ADD COLUMN payload_name TEXT`);
+  }
+}
+
 const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] = [
   { version: 1, run: migrateV1LegacyColumnBaseline },
   { version: 2, run: migrateV2AssetKeys },
   { version: 3, run: migrateV3RenameHomeKey },
   { version: 4, run: migrateV4Identity },
   { version: 5, run: migrateV5RekeyUserKeysToUserId },
+  { version: 6, run: migrateV6GrantPayloadName },
 ];
 
 /** Highest schema version this build knows how to migrate a database to. */
@@ -604,11 +618,42 @@ export function createDbApi(sql: Database.Database) {
     for (const id of extractAssetIds(dataJson)) insert.run(id, syncKey);
   }
 
+  /**
+   * Move an already-stored entity into `syncKey`'s namespace, leaving its
+   * content alone. Returns the stored row when it actually moved, so the
+   * caller can hand the authoritative version to the namespace that just
+   * gained it, and null when it was already there.
+   */
+  function applyRekey(
+    type: EntityType,
+    id: string,
+    syncKey: string,
+    storedJson: string,
+  ): Record<string, unknown> | null {
+    if (!syncKey) return null;
+    if (type === "asset") {
+      // Assets are many-to-many with namespaces (see asset_keys), so this
+      // grants access rather than moving it: the old namespace keeps its own.
+      const added = sql
+        .prepare(`INSERT OR IGNORE INTO asset_keys (asset_id, sync_key) VALUES (?, ?)`)
+        .run(id, syncKey);
+      return added.changes > 0 ? (JSON.parse(storedJson) as Record<string, unknown>) : null;
+    }
+    const moved = sql
+      .prepare(`UPDATE ${tableFor(type)} SET sync_key = ? WHERE id = ? AND sync_key != ?`)
+      .run(syncKey, id, syncKey);
+    if (moved.changes === 0) return null;
+    // Assets the moved row references have to follow it, or a shared board's
+    // images resolve to nothing for everyone in the new namespace.
+    associateReferencedAssets(storedJson, syncKey);
+    return JSON.parse(storedJson) as Record<string, unknown>;
+  }
+
   function upsertEntity(
     type: EntityType,
     data: Record<string, unknown>,
     syncKey: string,
-  ): { accepted: boolean; previous: unknown | null } {
+  ): { accepted: boolean; previous: unknown | null; rekeyed?: Record<string, unknown> | null } {
     // Format gate: refuse legacy/unversioned item blobs. The protocol version
     // gates the client BINARY, but a current client can still carry old-format
     // rows (the Dexie upgrade never touches sync-pulled data) and re-push them
@@ -630,7 +675,14 @@ export function createDbApi(sql: Database.Database) {
     const existingRow = sql
       .prepare(`SELECT updated_at, data FROM ${table} WHERE id = ?`)
       .get(data.id as string) as { updated_at: number; data: string } | undefined;
-    if (existingRow && existingRow.updated_at >= (data.updated_at as number)) return { accepted: false, previous: null };
+    if (existingRow && existingRow.updated_at >= (data.updated_at as number)) {
+      // Stale content, so the stored version stands. The namespace still has
+      // to move: sharing a board assigns it a sync_key, which bumps only the
+      // BOARD's updated_at, so its lists and items re-push carrying their
+      // original timestamps. Rejecting those outright strands them in the
+      // namespace the board just left, and the recipient sees an empty board.
+      return { accepted: false, previous: null, rekeyed: applyRekey(type, data.id as string, syncKey, existingRow.data) };
+    }
     // Reject if a newer tombstone already exists for this entity (tombstone wins on LWW).
     const tomb = sql
       .prepare(`SELECT deleted_at FROM tombstones WHERE entity_id = ? AND entity_type = ?`)
@@ -1169,7 +1221,8 @@ export function createDbApi(sql: Database.Database) {
 
   function rowToGrant(row: {
     id: string; kind: string; issuer_user_id: string; caps: string | null; payload: string | null;
-    greeting: string | null; expires_at: number; uses_remaining: number; attempts: number; created_at: number;
+    payload_name: string | null; greeting: string | null; expires_at: number; uses_remaining: number;
+    attempts: number; created_at: number;
   }): GrantRow {
     return {
       id: row.id,
@@ -1177,6 +1230,7 @@ export function createDbApi(sql: Database.Database) {
       issuer_user_id: row.issuer_user_id,
       caps: row.caps ? (JSON.parse(row.caps) as Cap[]) : null,
       payload: row.payload,
+      payload_name: row.payload_name,
       greeting: row.greeting,
       expires_at: row.expires_at,
       uses_remaining: row.uses_remaining,
@@ -1196,6 +1250,7 @@ export function createDbApi(sql: Database.Database) {
       issuerUserId: string;
       caps?: Cap[]; // invite only; guest's caps are fixed below
       payload?: string; // share/guest only: the sync_key being handed over
+      payloadName?: string; // share/guest only: display name for that key
       greeting?: string | null;
       expiresAt?: number;
       usesRemaining?: number;
@@ -1241,8 +1296,8 @@ export function createDbApi(sql: Database.Database) {
     const secret = generateGrantSecret();
     sql
       .prepare(
-        `INSERT INTO grants (id, kind, issuer_user_id, secret_hash, caps, payload, greeting, expires_at, uses_remaining, attempts, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        `INSERT INTO grants (id, kind, issuer_user_id, secret_hash, caps, payload, payload_name, greeting, expires_at, uses_remaining, attempts, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
       )
       .run(
         grantId,
@@ -1251,6 +1306,7 @@ export function createDbApi(sql: Database.Database) {
         hashSecret(secret),
         caps ? JSON.stringify(caps) : null,
         params.payload ?? null,
+        params.payloadName ?? null,
         params.greeting ?? null,
         params.expiresAt ?? now + DEFAULT_GRANT_TTL_MS,
         params.usesRemaining ?? 1,
@@ -1369,6 +1425,23 @@ export function createDbApi(sql: Database.Database) {
       if (!effect.clientId || !effect.pubkeyJwk) {
         throw new Error(`applyGrantEffect: ${grant.kind} requires clientId + pubkeyJwk`);
       }
+      // A guest grant carries a key as well as an identity, because it is how
+      // a shared board reaches someone with no account here. When the
+      // redeemer turns out to already have one, only the key half is needed,
+      // so fall through to the share effect rather than minting them a second
+      // identity. The sender cannot know which case they are in, and one link
+      // has to work for both.
+      const alreadyRegistered = grant.kind === "guest" ? getClientById(effect.clientId) : null;
+      if (alreadyRegistered) {
+        const user = getUser(alreadyRegistered.user_id);
+        if (!user) throw new Error("applyGrantEffect: redeeming client's user no longer exists");
+        if (grant.payload) associateUserKey(user.user_id, grant.payload, grant.payload_name);
+        logAuthEvent(
+          { kind: "grant_effect_share", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: null },
+          now,
+        );
+        return { user, syncKey: grant.payload ?? undefined };
+      }
       const user = createUser(
         {
           authorizedBy: grant.issuer_user_id,
@@ -1382,7 +1455,7 @@ export function createDbApi(sql: Database.Database) {
         now,
       );
       if (grant.kind === "guest" && grant.payload) {
-        associateUserKey(user.user_id, grant.payload, null);
+        associateUserKey(user.user_id, grant.payload, grant.payload_name);
       }
       logAuthEvent(
         { kind: `grant_effect_${grant.kind}`, actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: null },
@@ -1409,7 +1482,7 @@ export function createDbApi(sql: Database.Database) {
       if (!effect.existingUserId) throw new Error("applyGrantEffect: share requires existingUserId");
       const user = getUser(effect.existingUserId);
       if (!user) throw new Error("applyGrantEffect: no such user for share redemption");
-      if (grant.payload) associateUserKey(user.user_id, grant.payload, null);
+      if (grant.payload) associateUserKey(user.user_id, grant.payload, grant.payload_name);
       logAuthEvent({ kind: "grant_effect_share", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: null }, now);
       return { user, syncKey: grant.payload ?? undefined };
     }
@@ -1430,22 +1503,24 @@ export function createDbApi(sql: Database.Database) {
     // param, say) rolls back the decrement too, rather than burning a grant
     // for which no user/client/key ever actually got created.
     const run = sql.transaction(() => {
-      // Reject invite/guest redemption from a client that already has an
-      // identity on THIS server, before the atomic decrement. Without this
-      // check applyGrantEffect runs createUser() unconditionally.
+      // Reject invite redemption from a client that already has an identity on
+      // THIS server, before the atomic decrement. An invite exists to mint a
+      // new person and carries nothing else, so there is no useful effect left
+      // once the redeemer turns out to be someone the server already knows.
+      // Without this check applyGrantEffect runs createUser() unconditionally.
       // registerClient's ON CONFLICT(client_id) never reassigns user_id, so
       // identity cannot be hijacked and the client stays attached to its real
       // user, but the freshly minted user row ends up with no client attached
-      // to it: a permanent orphan, and for the 'invite' kind one that pruning
-      // by `provisional` cannot see, since createUser sets provisional only
-      // for 'guest'. The single-use grant would be burned anyway, denying
-      // whoever the link was meant for. Check before attemptRedeemGrant rather
-      // than after, so a misdirected tap costs nothing. device/share
-      // redemption from a known client stays legal, since both act on the
-      // caller's own existing identity rather than a new one.
+      // to it: a permanent orphan that pruning by `provisional` cannot see,
+      // since createUser sets provisional only for 'guest'. The single-use
+      // grant would be burned anyway, denying whoever the link was meant for.
+      // Check before attemptRedeemGrant rather than after, so a misdirected tap
+      // costs nothing. device/share redemption from a known client stays legal,
+      // since both act on the caller's own existing identity rather than a new
+      // one, and guest degrades to exactly that (see applyGrantEffect).
       if (effect.clientId) {
         const grantPeek = getGrant(grantId);
-        if (grantPeek && (grantPeek.kind === "invite" || grantPeek.kind === "guest") && getClientById(effect.clientId)) {
+        if (grantPeek && grantPeek.kind === "invite" && getClientById(effect.clientId)) {
           return { ok: false as const, reason: "already_registered" as const };
         }
       }

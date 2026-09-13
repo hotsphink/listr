@@ -40,6 +40,28 @@ export interface JoinLinkPayload {
   secret: string;
 }
 
+/** A parsed join link plus the optional board id its query string carries. */
+export interface ParsedJoinLink extends JoinLinkPayload {
+  /** Board to open once the join completes, from `?b=`. Absent on a group
+   * share, which has no single board to land on, and on a plain invite. */
+  boardId?: string;
+}
+
+/** Query-string key naming the board a share link points at. */
+const BOARD_PARAM = "b";
+
+function boardIdFromQuery(query: string | undefined): string | undefined {
+  if (!query) return undefined;
+  const value = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query).get(BOARD_PARAM);
+  return value || undefined;
+}
+
+function withBoardId(base: JoinLinkPayload | null, query: string | undefined): ParsedJoinLink | null {
+  if (!base) return null;
+  const boardId = boardIdFromQuery(query);
+  return boardId ? { ...base, boardId } : base;
+}
+
 /**
  * Parse a join link's path segments (as delivered by the router at
  * `#/join/:hash/:credentials`) into a payload, or null if malformed.
@@ -60,24 +82,43 @@ export function parseJoinPath(hash: string | undefined, credentials: string | un
 }
 
 /**
- * Parse a full join URL or a bare `<hash>/<grant_id>.<secret>` path fragment.
- * Mirrors shareToken.ts's parseShareInput, so a manual paste and a QR scan
- * share one entry point regardless of exactly what was captured.
+ * Parse a full join URL or a bare `<hash>/<grant_id>.<secret>` path fragment,
+ * so a manual paste and a QR scan share one entry point regardless of exactly
+ * what was captured.
  */
-export function parseJoinInput(raw: string): JoinLinkPayload | null {
+export function parseJoinInput(raw: string): ParsedJoinLink | null {
   const s = raw.trim();
-  const urlMatch = s.match(/#\/join\/([^/]+)\/([^/?#]+)/);
-  if (urlMatch) return parseJoinPath(urlMatch[1], urlMatch[2]);
+  const urlMatch = s.match(/#\/join\/([^/]+)\/([^/?#]+)(\?[^#]*)?/);
+  if (urlMatch) return withBoardId(parseJoinPath(urlMatch[1], urlMatch[2]), urlMatch[3]);
 
-  const bareMatch = s.match(/^([^/]+)\/([^/?#]+)$/);
-  if (bareMatch) return parseJoinPath(bareMatch[1], bareMatch[2]);
+  const bareMatch = s.match(/^([^/]+)\/([^/?#]+)(\?[^#]*)?$/);
+  if (bareMatch) return withBoardId(parseJoinPath(bareMatch[1], bareMatch[2]), bareMatch[3]);
 
   return null;
 }
 
-/** Build the full join URL for a grant, using the current page as the base. */
-export async function buildJoinUrl(serverId: string, grantId: string, secret: string): Promise<string> {
+/**
+ * The router path for a parsed link, so a scanner can hand a scanned link
+ * straight to JoinPage rather than reimplementing any of its resolution.
+ */
+export function joinRoutePath(link: ParsedJoinLink): string {
+  const query = link.boardId ? `?${BOARD_PARAM}=${encodeURIComponent(link.boardId)}` : "";
+  return `/join/${link.serverHash}/${link.grantId}.${link.secret}${query}`;
+}
+
+/**
+ * Build the full join URL for a grant, using the current page as the base.
+ * `boardId` names the board to open once the join lands, for a share link
+ * pointing at one specific board.
+ */
+export async function buildJoinUrl(
+  serverId: string,
+  grantId: string,
+  secret: string,
+  boardId?: string,
+): Promise<string> {
   const hash = await hashServerId(serverId);
   const base = window.location.href.split("#")[0];
-  return `${base}#/join/${hash}/${grantId}.${secret}`;
+  const query = boardId ? `?${BOARD_PARAM}=${encodeURIComponent(boardId)}` : "";
+  return `${base}#/join/${hash}/${grantId}.${secret}${query}`;
 }

@@ -6,7 +6,6 @@ import Sidebar from "./components/Sidebar.js";
 import ListView from "./pages/ListView.js";
 import AdminPage from "./pages/AdminPage.js";
 import TestRunner from "./pages/TestRunner.js";
-import ReceivePage from "./pages/ReceivePage.js";
 import JoinPage from "./pages/JoinPage.js";
 import { db } from "./db/database.js";
 import { healLegacyItems } from "./db/operations.js";
@@ -138,7 +137,6 @@ const App: Component = () => (
     <Route path="/" component={Home} />
     <Route path="/board/:id" component={ListView} />
     <Route path="/admin" component={AdminPage} />
-    <Route path="/receive/:token" component={ReceivePage} />
     <Route path="/join/:hash/:credentials" component={JoinPage} />
     <Route path="/test" component={TestRunner} />
   </HashRouter>

@@ -522,6 +522,25 @@ describe("schema_version migrations", () => {
     }
   });
 
+  it("adds grants.payload_name to a database whose grants table predates it", () => {
+    const { path, cleanup } = makeLegacyDbFile();
+    try {
+      // The legacy fixture's grants table is the one migration 4 creates,
+      // which has no payload_name, so this only works if migration 6 ran.
+      const db = openDb(path);
+      const issuer = db.createUser({ authorizedBy: null, caps: ["sync"] }, Date.now());
+      const recipient = db.createUser({ authorizedBy: null, caps: ["sync"] }, Date.now());
+      const { grantId, secret } = db.createGrant(
+        { kind: "share", issuerUserId: issuer.user_id, payload: "k", payloadName: "Team Trip" },
+        Date.now(),
+      );
+      db.redeemGrant(grantId, secret, { existingUserId: recipient.user_id }, Date.now());
+      expect(db.getUserKeys(recipient.user_id)).toEqual([{ key: "k", name: "Team Trip" }]);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("reopening an already-migrated database is a no-op (idempotent)", () => {
     const { path, cleanup } = makeLegacyDbFile();
     try {
@@ -843,6 +862,47 @@ describe("grants: redemption", () => {
     expect(db.getUserKeys(recipient.user_id)).toEqual([{ key: "shopping-list-key", name: null }]);
   });
 
+  it("carries payload_name through to user_keys, so a shared group arrives named", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const recipient = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const { grantId, secret } = db.createGrant(
+      { kind: "share", issuerUserId: issuer.user_id, payload: "trip-key", payloadName: "Team Trip" },
+      now,
+    );
+
+    const outcome = db.redeemGrant(grantId, secret, { existingUserId: recipient.user_id }, now);
+    expect(outcome.ok).toBe(true);
+    expect(db.getUserKeys(recipient.user_id)).toEqual([{ key: "trip-key", name: "Team Trip" }]);
+  });
+
+  it("names a guest's key too, since a guest link is how a group reaches someone with no account", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant(
+      { kind: "guest", issuerUserId: issuer.user_id, payload: "trip-key", payloadName: "Team Trip" },
+      now,
+    );
+
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "guest-client", pubkeyJwk: "{}" }, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(db.getUserKeys(outcome.result.user.user_id)).toEqual([{ key: "trip-key", name: "Team Trip" }]);
+  });
+
+  it("leaves the key unnamed when no payload_name is given, so an individual board share stays in the generic bucket", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const recipient = db.createUser({ authorizedBy: null, caps: ["sync"] }, now);
+    const { grantId, secret } = db.createGrant(
+      { kind: "share", issuerUserId: issuer.user_id, payload: "solo-board-key" },
+      now,
+    );
+
+    db.redeemGrant(grantId, secret, { existingUserId: recipient.user_id }, now);
+    expect(db.getUserKeys(recipient.user_id)).toEqual([{ key: "solo-board-key", name: null }]);
+  });
+
   it("guest grants create a provisional user with caps=['sync'] only, with no invite cap, by construction", () => {
     const now = Date.now();
     const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
@@ -890,17 +950,56 @@ describe("grants: redemption", () => {
     expect(retry.ok).toBe(true);
   });
 
-  it("rejects guest redemption from a client that already has an identity, the same as invite", () => {
+  // A guest grant is what a board share issues, and the sender cannot know
+  // whether the recipient already has an account here. One link has to work
+  // either way, so guest degrades to the share effect rather than failing.
+  it("hands a guest grant's key to a client that already has an identity, minting nobody", () => {
     const now = Date.now();
     const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
     const alreadyUserId = db.createUser({ authorizedBy: null, caps: ["sync"] }, now).user_id;
     db.registerClient({ clientId: "already-registered", userId: alreadyUserId, pubkeyJwk: "{}" }, now);
-    const { grantId, secret } = db.createGrant({ kind: "guest", issuerUserId: issuer.user_id, payload: "k" }, now);
+    const { grantId, secret } = db.createGrant(
+      { kind: "guest", issuerUserId: issuer.user_id, payload: "k", payloadName: "Camping Trip" },
+      now,
+    );
+    const usersBefore = db.listAllUsers().length;
 
     const outcome = db.redeemGrant(grantId, secret, { clientId: "already-registered", pubkeyJwk: "{}" }, now);
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.reason).toBe("already_registered");
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    // The key landed on their existing account, and no second identity appeared.
+    expect(outcome.result.user.user_id).toBe(alreadyUserId);
+    expect(outcome.result.syncKey).toBe("k");
+    expect(db.listAllUsers().length).toBe(usersBefore);
+    expect(db.getUserKeys(alreadyUserId)).toEqual([{ key: "k", name: "Camping Trip" }]);
+  });
+
+  it("does not touch an existing redeemer's caps or provisional flag when a guest grant degrades", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const existing = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    db.registerClient({ clientId: "full-user-client", userId: existing.user_id, pubkeyJwk: "{}" }, now);
+    const { grantId, secret } = db.createGrant({ kind: "guest", issuerUserId: issuer.user_id, payload: "k" }, now);
+
+    db.redeemGrant(grantId, secret, { clientId: "full-user-client", pubkeyJwk: "{}" }, now);
+
+    // Redeeming a guest link must not demote an account that already exists.
+    const after = db.getUser(existing.user_id)!;
+    expect(after.caps).toEqual(["sync", "invite"]);
+    expect(after.provisional).toBe(existing.provisional);
+  });
+
+  it("still mints a guest account for a client the server has never seen", () => {
+    const now = Date.now();
+    const issuer = db.createUser({ authorizedBy: null, caps: ["sync", "invite"] }, now);
+    const { grantId, secret } = db.createGrant({ kind: "guest", issuerUserId: issuer.user_id, payload: "k" }, now);
+
+    const outcome = db.redeemGrant(grantId, secret, { clientId: "brand-new-client", pubkeyJwk: "{}" }, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.user.provisional).toBeTruthy();
+    expect(outcome.result.user.caps).toEqual(["sync"]);
   });
 
   it("device/share redemption from an already-registered client stays legal", () => {
@@ -1052,5 +1151,69 @@ describe("reset-server-id", () => {
     const fixed = db.resetServerId("my-fixed-id");
     expect(fixed).toBe("my-fixed-id");
     expect(db.getServerId()).toBe("my-fixed-id");
+  });
+});
+
+// -- re-keying an entity into a new namespace --------------------------------
+//
+// Sharing a board that had no sync_key assigns one, which bumps only the
+// BOARD's updated_at. Its lists and items are untouched, so they re-push
+// carrying their original timestamps. The LWW guard has to let those move
+// namespace anyway, or the recipient subscribes to the new key and receives an
+// empty board while every later addition lands somewhere they cannot see.
+describe("re-keying an entity into a different namespace", () => {
+  const OLD = "home-key";
+  const NEW = "shared-key";
+  let db: DbApi;
+
+  beforeEach(() => {
+    db = openDb(":memory:");
+  });
+
+  it("moves a list whose updated_at has not changed", () => {
+    db.upsertEntity("list", makeList("l1", 100), OLD);
+    expect(db.getEntitiesSince("list", OLD, 0)).toHaveLength(1);
+
+    db.upsertEntity("list", makeList("l1", 100), NEW);
+
+    expect(db.getEntitiesSince("list", NEW, 0)).toHaveLength(1);
+    expect(db.getEntitiesSince("list", OLD, 0)).toHaveLength(0);
+  });
+
+  it("moves an item whose updated_at has not changed", () => {
+    db.upsertEntity("item", makeItem("i1", 100), OLD);
+    db.upsertEntity("item", makeItem("i1", 100), NEW);
+
+    expect(db.getEntitiesSince("item", NEW, 0)).toHaveLength(1);
+    expect(db.getEntitiesSince("item", OLD, 0)).toHaveLength(0);
+  });
+
+  it("keeps the newer stored content when a stale re-key arrives", () => {
+    db.upsertEntity("list", { ...makeList("l1", 200), name: "Current" }, OLD);
+    db.upsertEntity("list", { ...makeList("l1", 100), name: "Stale" }, NEW);
+
+    // The move happens, but the stale push must not overwrite the newer name.
+    const rows = db.getEntitiesSince("list", NEW, 0) as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe("Current");
+    expect(rows[0].updated_at).toBe(200);
+  });
+
+  it("associates an asset with the new namespace without unsharing the old one", () => {
+    db.upsertEntity("asset", makeAsset("a1", 100), OLD);
+    db.upsertEntity("asset", makeAsset("a1", 100), NEW);
+
+    // Assets are many-to-many with namespaces, so both keep access.
+    expect(db.getEntitiesSince("asset", NEW, 0)).toHaveLength(1);
+    expect(db.getEntitiesSince("asset", OLD, 0)).toHaveLength(1);
+  });
+
+  it("still rejects a stale push that is not a re-key, so LWW is unchanged", () => {
+    db.upsertEntity("list", { ...makeList("l1", 200), name: "Current" }, OLD);
+    const outcome = db.upsertEntity("list", { ...makeList("l1", 100), name: "Stale" }, OLD);
+
+    expect(outcome.accepted).toBe(false);
+    const rows = db.getEntitiesSince("list", OLD, 0) as any[];
+    expect(rows[0].name).toBe("Current");
   });
 });

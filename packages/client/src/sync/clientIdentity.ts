@@ -24,8 +24,7 @@ function utf8(s: string): Uint8Array {
 }
 
 /** ArrayBuffer/Uint8Array -> unpadded base64url, the encoding used for both
- * JWK thumbprints and ECDSA signatures on the wire (matches the pattern
- * shareToken.ts already uses for its own base64url encoding). */
+ * JWK thumbprints and ECDSA signatures on the wire. */
 export function base64UrlFromBytes(bytes: ArrayBuffer | Uint8Array): string {
   const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let bin = "";

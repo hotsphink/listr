@@ -1,5 +1,6 @@
 import { type Component, createMemo, createSignal, createEffect, onCleanup, Show } from "solid-js";
-import { useParams, useNavigate } from "@solidjs/router";
+import { useParams, useNavigate, useSearchParams } from "@solidjs/router";
+import { liveQuery } from "dexie";
 import { db } from "../db/database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { parseJoinPath, hashServerId, type JoinLinkPayload } from "../sync/joinLink.js";
@@ -8,6 +9,7 @@ import { endpointStatuses } from "../store/endpointStatuses.js";
 import type { EndpointStatus } from "../store/endpointStatuses.js";
 import { countUnboundLocalBoards, discardUnboundLocalBoards } from "../db/operations.js";
 import { setSidebarOpen } from "../store/sidebarStore.js";
+import { serverIdentities } from "../sync/primaryConnection.js";
 
 type Step =
   | "invalid"
@@ -41,9 +43,13 @@ function reasonMessage(reason: string | undefined, fallback: string): string {
 
 const JoinPage: Component = () => {
   const params = useParams<{ hash: string; credentials: string }>();
+  const [searchParams] = useSearchParams<{ b?: string }>();
   const navigate = useNavigate();
 
   const payload = createMemo<JoinLinkPayload | null>(() => parseJoinPath(params.hash, params.credentials));
+  /** The board a share link points at, if any. A group share and a plain
+   * invite carry none, and go straight to the app. */
+  const targetBoardId = () => searchParams.b || null;
 
   const [step, setStep] = createSignal<Step>("resolving");
   const [endpointId, setEndpointId] = createSignal<string | null>(null);
@@ -60,6 +66,16 @@ const JoinPage: Component = () => {
   const speculativeEndpointIds = new Set<string>();
 
   const status = () => (endpointId() ? (endpointStatuses()[endpointId()!] as EndpointStatus | undefined) : undefined);
+
+  /** Whether this client already has an account on the server the link
+   * resolved to. A share link is issued as a `guest` grant because the sender
+   * cannot know the answer; the server hands over just the key when it is
+   * yes, so the screen should not promise an account either. */
+  const alreadyRegistered = (): boolean => {
+    const serverId = status()?.serverId;
+    if (!serverId) return false;
+    return serverIdentities().some((i) => i.server_id === serverId && i.state === "active");
+  };
 
   async function cleanupSpeculative(exceptId?: string): Promise<void> {
     for (const id of [...speculativeEndpointIds]) {
@@ -217,6 +233,24 @@ const JoinPage: Component = () => {
     if (s?.phase === "ready") setStep("success");
   });
 
+  // A share link names the board it is for, so watch for that one board to
+  // land rather than scanning everything the first sync pulls down, then go
+  // straight there. Nothing at this point needs confirming, so a landing
+  // screen would only sit between the user and what the link promised.
+  createEffect(() => {
+    if (step() !== "success") return;
+    const boardId = targetBoardId();
+    if (!boardId) return;
+    let navigated = false;
+    const sub = liveQuery(() => db.boards.get(boardId)).subscribe((board) => {
+      if (!board || navigated) return;
+      navigated = true;
+      setSidebarOpen(true);
+      navigate(`/board/${board.id}`);
+    });
+    onCleanup(() => sub.unsubscribe());
+  });
+
   const doJoin = async () => {
     const p = payload();
     const epId = endpointId();
@@ -298,8 +332,9 @@ const JoinPage: Component = () => {
                 <div class="offer-name">"{info().greeting}"</div>
               </Show>
               <p class="field-hint">
-                Tapping Join creates an account for you on this server — this is not anonymous, and the person who
-                invited you can see that you joined.
+                {alreadyRegistered()
+                  ? "You already have an account on this server, so tapping Join just adds what this link shares to it."
+                  : "Tapping Join creates an account for you on this server. This is not anonymous, and the person who invited you can see that you joined."}
               </p>
               <Show when={unboundBoards() > 0}>
                 <div class="form-field join-keep-choice">
@@ -335,13 +370,21 @@ const JoinPage: Component = () => {
         </Show>
 
         <Show when={step() === "success"}>
-          <div class="receive-saved">
-            <div class="receive-saved-icon">✓</div>
-            <div>You're in!</div>
-          </div>
-          <div class="actions actions-center">
-            <button class="btn-primary" type="button" onClick={goHome}>Go to app</button>
-          </div>
+          <Show when={!targetBoardId()} fallback={
+            <div class="receive-syncing">
+              <div class="spinner" />
+              <div>Syncing board…</div>
+              <div class="field-hint">Waiting for data from server</div>
+            </div>
+          }>
+            <div class="receive-saved">
+              <div class="receive-saved-icon">✓</div>
+              <div>You're in!</div>
+            </div>
+            <div class="actions actions-center">
+              <button class="btn-primary" type="button" onClick={goHome}>Go to app</button>
+            </div>
+          </Show>
         </Show>
 
         <Show when={step() === "error"}>

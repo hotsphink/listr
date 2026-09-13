@@ -550,6 +550,8 @@ class SyncClient {
       kind: "invite" | "device" | "share" | "guest";
       caps?: string[];
       payload?: string;
+      /** Display name for `payload`, so a shared group arrives named. */
+      payloadName?: string;
       greeting?: string | null;
       expiresAt?: number;
       usesRemaining?: number;
@@ -562,6 +564,7 @@ class SyncClient {
       kind: params.kind,
       caps: params.caps,
       payload: params.payload,
+      payload_name: params.payloadName,
       greeting: params.greeting ?? null,
       expires_at: params.expiresAt,
       uses_remaining: params.usesRemaining,
