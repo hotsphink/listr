@@ -19,9 +19,12 @@
   position: relative;
 }
 
+/* `contain` keeps the overscroll bounce but stops the scroll from chaining out
+ * to the viewport once this reaches its top, so pull-to-refresh stays quiet. */
 .main {
   flex: 1;
   overflow: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
 }
@@ -66,6 +69,7 @@
 .sidebar-content {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-4);
 }
 
@@ -355,6 +359,7 @@
   max-width: 560px;
   max-height: 85vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-7);
 }
 
