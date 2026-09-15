@@ -3,7 +3,7 @@ import { createServer as createHttpServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, X509Certificate } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { getProductionDb } from "./db.js";
@@ -44,6 +44,30 @@ type DbApi = ReturnType<typeof createDbApi>;
 
 const PORT = config.port ?? 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
+
+// certs/tailscale.crt is a static snapshot with a 90-day lifetime and nothing
+// renews it, so it goes stale silently. Tailscale Funnel on 443 serves the
+// tailscaled cert, which auto-renews, so Funnel keeps working and only the
+// direct port breaks. Warn before that happens rather than leaving a failed
+// client connection as the first symptom.
+const CERT_WARN_DAYS = 7;
+const CERT_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+
+export function warnIfCertExpiring(certPath: string): void {
+  let validTo: Date;
+  try {
+    validTo = new Date(new X509Certificate(readFileSync(certPath)).validTo);
+  } catch (err) {
+    console.warn(`[cert] ${ts()} cannot read ${certPath}: ${(err as Error).message}`);
+    return;
+  }
+  const msLeft = validTo.getTime() - Date.now();
+  if (msLeft > CERT_WARN_DAYS * 86_400_000) return;
+  const days = Math.floor(Math.abs(msLeft) / 86_400_000);
+  const state = msLeft < 0 ? `expired ${days}d ago` : `expires in ${days}d`;
+  console.warn(`[cert] ${ts()} ${certPath} ${state} (${validTo.toISOString()}).`);
+  console.warn(`[cert] ${ts()}   Fix: pnpm certs:refresh, then restart this server.`);
+}
 
 async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (config.tiers.length === 0) {
@@ -166,15 +190,25 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     res.end("Listr sync server running\n");
   });
 
+  const certPath = join(opts.certDir ?? CERT_DIR, "tailscale.crt");
   const httpServer = opts.tls === false
     ? createHttpServer(requestHandler)
     : createHttpsServer(
         {
           key: readFileSync(join(opts.certDir ?? CERT_DIR, "tailscale.key")),
-          cert: readFileSync(join(opts.certDir ?? CERT_DIR, "tailscale.crt")),
+          cert: readFileSync(certPath),
         },
         requestHandler,
       );
+
+  // Check on a slow timer as well as at startup, since this process can outlive
+  // the cert and a boot-only warning would scroll away long before it matters.
+  let certTimer: ReturnType<typeof setInterval> | undefined;
+  if (opts.tls !== false) {
+    warnIfCertExpiring(certPath);
+    certTimer = setInterval(() => warnIfCertExpiring(certPath), CERT_CHECK_INTERVAL_MS);
+    certTimer.unref(); // a warning must never hold the process open
+  }
 
   // The app and the sync server are permanently different origins
   // (listr.aapx.org vs listr-sync.aapx.org), so Origin is a meaningful signal
@@ -856,6 +890,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     httpServer,
     wss,
     stop() {
+      if (certTimer) clearInterval(certTimer);
       integrationRunner.stop();
       wss.close();
       httpServer.close();

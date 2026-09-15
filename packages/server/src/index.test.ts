@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WebSocket } from "ws";
 import { webcrypto } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { openDb } from "./db.js";
-import { createSyncServer, type SyncServerHandle } from "./index.js";
+import { createSyncServer, warnIfCertExpiring, type SyncServerHandle } from "./index.js";
 import { MAX_PROTOCOL_VERSION } from "./protocol.js";
 import { jwkThumbprint, buildAuthPayload } from "./authCrypto.js";
 
@@ -989,5 +991,50 @@ describe("sync server: first-run bootstrap", () => {
     expect(result.type).toBe("needs_grant");
     expect(db.countUsers()).toBe(0);
     ws.close();
+  });
+});
+
+
+// cert-expired.crt is a self-signed fixture valid 2024-01-01 to 2024-04-01. Every
+// case below moves the clock around that fixed window instead of minting a new
+// cert per case, so the fixture stays static and no private key is committed.
+describe("cert expiry warnings", () => {
+  const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/cert-expired.crt");
+  let warnings: string[];
+
+  beforeEach(() => {
+    warnings = [];
+    vi.spyOn(console, "warn").mockImplementation((msg: string) => void warnings.push(msg));
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("stays quiet while the cert is comfortably valid", () => {
+    vi.setSystemTime(new Date("2024-01-15T00:00:00Z")); // 77 days left
+    warnIfCertExpiring(FIXTURE);
+    expect(warnings).toEqual([]);
+  });
+
+  it("warns inside the last week and names the fix", () => {
+    vi.setSystemTime(new Date("2024-03-28T00:00:00Z")); // 4 days left
+    warnIfCertExpiring(FIXTURE);
+    expect(warnings.join("\n")).toContain("expires in 4d");
+    expect(warnings.join("\n")).toContain("pnpm certs:refresh");
+  });
+
+  it("reports how long ago an expired cert lapsed", () => {
+    vi.setSystemTime(new Date("2024-04-03T00:00:00Z")); // 2 days past
+    warnIfCertExpiring(FIXTURE);
+    expect(warnings.join("\n")).toContain("expired 2d ago");
+  });
+
+  it("warns rather than throwing when the cert is missing", () => {
+    vi.setSystemTime(new Date("2024-01-15T00:00:00Z"));
+    expect(() => warnIfCertExpiring(join(dirname(FIXTURE), "nope.crt"))).not.toThrow();
+    expect(warnings.join("\n")).toContain("cannot read");
   });
 });

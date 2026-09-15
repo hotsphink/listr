@@ -32,6 +32,21 @@ tailscale cert --cert-file certs/tailscale.crt --key-file certs/tailscale.key fi
 ```
 Vite reads `../../certs/` relative to `packages/client/vite.config.ts`. The sync server reads `../../../certs/` relative to `packages/server/src/index.ts` (both resolve to repo root `certs/`).
 
+These certs last 90 days and nothing renews them on its own. The sync server checks
+`tailscale.crt` at startup and every 12 hours after that, and warns once it is within a
+week of expiry or already past it. Refresh with:
+```
+pnpm certs:refresh
+```
+That runs `scripts/refresh-certs.sh`, which refetches only when fewer than 14 days
+remain, so it is cheap to run at any time. Certs are read at startup, so restart the
+server afterwards. Without Tailscale the script warns and leaves `certs/` alone, so a
+machine that cannot issue certs still works with `tls: false`.
+
+Note that Tailscale Funnel on port 443 serves the tailscaled cert, which auto-renews.
+Funnel therefore keeps working after `certs/` goes stale, and only port 3000 breaks,
+which makes an expired Funnel the natural but wrong first guess.
+
 ---
 
 ## Data Model
