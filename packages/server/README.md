@@ -43,9 +43,46 @@ optional, and a missing file just means defaults.
 | `port` | Defaults to 10000. |
 | `tls` | HTTPS is the default. It reads `certs/tailscale.key` and `certs/tailscale.crt` from the repo root, so a fresh checkout with no certs needs `tls: false`. |
 | `db_path` | Directory holding `listr.db`. Defaults to `data/` under the working directory. |
-| `gemini`, `gemini_model` | API key and model for screenshot import. With no key, `/api/import` answers 503 and everything else works fine. |
+| `services.model_families` | What a group of models shares, one entry per family. `name` identifies it, `models` lists the models it covers, and `api_key` plus a `url` template are the usual shared contents, though any key may go here. |
+| `services.vision.tiers` | Which models answer a screenshot import, as a list of tiers. Tiers are tried in order, and the models within one tier all run at once. With none configured, `/api/import` answers 503 and everything else works fine. |
 | `allow_bootstrap` | Let the first client to connect claim an empty server as root. See below. `LISTR_ALLOW_BOOTSTRAP` overrides it. |
-| `integrations` | Per-integration settings, keyed by integration id. |
+| `services.<id>` | Settings for the integration with that id, such as `services.omdb.api_key`. Any key other than `model_families` and `vision` names an integration. `refresh_interval` is in seconds, and 0 or missing means no periodic refresh. |
+| `integrations` | Older spelling of the same per-integration settings, keyed by integration id. `services` wins where both name one id. |
+
+A model inherits its family's keys and may override any of them. A `url` is a
+template whose every `{placeholder}` names a field of the resolved model, so
+the merged family and model keys are what it draws on:
+
+```yaml
+services:
+  model_families:
+  - name: gemini
+    api_key: "..."
+    url: "https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={api_key}"
+    version: v1beta
+    models:
+      - "gemini-3.5-flash": {}
+      - "gemini-2.5-flash":
+          version: v1          # overrides the family
+  vision:
+    tiers:
+    - ["gemini-3.5-flash"]                        # asked first, on its own
+    - ["gemini-2.5-flash", "gemini-3.8-flash"]    # both at once if that failed
+```
+
+A tier's models race, the first usable answer wins, and the losers are
+cancelled so a straggler neither delays the import nor spends quota on an
+answer already in hand. Only when every model in a tier fails does the next
+tier run, and the error reported to the client names each model that failed.
+
+A `models` list entry names one model and carries its overrides underneath, so
+`- "name": {}`, a bare `- "name"`, and a plain `name:` mapping of models all
+work. An entry with a second top-level key is rejected, which is what an
+override written at the model's own indent rather than under it looks like.
+Entries that cannot be called, such as a tier naming a model no family
+declares, are logged and skipped rather than failing the whole config. Fields whose name
+looks like a credential are redacted from logs and from the error text
+`/api/import` returns.
 
 The variant is also announced to clients during the handshake, and a client
 built for one variant refuses to sync with a server running another, so a

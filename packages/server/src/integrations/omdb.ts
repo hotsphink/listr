@@ -42,7 +42,7 @@ export class OmdbIntegration implements IntegrationModule {
     serverConfig: Record<string, unknown>,
     _listConfig?: Record<string, unknown>,
   ): Promise<IntegrationRunResult> {
-    const apiKey = serverConfig.omdb_api_key as string | undefined;
+    const apiKey = serverConfig.api_key as string | undefined;
     if (!apiKey) {
       return { status: "error", attribute_values: {}, error: "OMDb API key not configured" };
     }

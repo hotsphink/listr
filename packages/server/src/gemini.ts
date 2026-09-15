@@ -84,19 +84,62 @@ function buildPrompt(scope: ImportScope): string {
   return lines.join("\n");
 }
 
-function apiUrl(model: string, apiKey: string): string {
-  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+/** Endpoint template used when a family does not supply one. Placeholders name
+ * fields of the entry, so a provider with a different URL shape or auth field
+ * joins the chain by setting its own template. */
+export const DEFAULT_MODEL_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}";
+
+/** One link in the ordered fallback chain. `fields` holds the model's own keys
+ * merged over its family's, and `url` expands against those same fields. */
+export interface ModelConfig {
+  model: string;
+  url: string;
+  fields: Record<string, string>;
 }
 
-export async function extractFromImage(
+function expandUrl(entry: ModelConfig, fields: Record<string, string>): string {
+  return entry.url.replace(/\{(\w+)\}/g, (_match, key: string) => {
+    const value = fields[key];
+    if (value === undefined) {
+      throw new Error(`model '${entry.model}' url references unknown key '${key}'`);
+    }
+    return value;
+  });
+}
+
+// Return a copy of a dict with all secret values replaced with "<redacted>".
+function sanitize(fields: Record<string, string>): Record<string, string> {
+  const safe: Record<string, string> = { ...fields };
+  for (const key of Object.keys(safe)) {
+    if (/key|token|secret|password/i.test(key)) safe[key] = "<redacted>";
+  }
+  return safe;
+}
+
+// Credentials ride in the URL and in provider error bodies, so redact them in
+// anything headed for a log or for the browser. index.ts forwards error text to
+// the client.
+function redact(err: unknown, fields: Record<string, string>): string {
+  let message = err instanceof Error ? err.message : String(err);
+  for (const [k, v] of Object.entries(sanitize(fields))) {
+    if (v === "<redacted>" && fields[k]) {
+      message = message.replaceAll(fields[k], v);
+    }
+  }
+  return message;
+}
+
+async function requestExtraction(
+  entry: ModelConfig,
   imageBase64: string,
   mimeType: string,
   scope: ImportScope,
-  apiKey: string,
-  model = "gemini-2.0-flash-lite",
+  signal: AbortSignal,
 ): Promise<ImportResult> {
-  console.log(`[gemini] POST ${apiUrl(model, "<key>")}`);
-  const response = await fetch(apiUrl(model, apiKey), {
+  console.log(`[gemini] POST ${expandUrl(entry, sanitize(entry.fields))}`);
+  const response = await fetch(expandUrl(entry, entry.fields), {
+    signal,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -110,19 +153,74 @@ export async function extractFromImage(
 
   console.log(`[gemini] response status ${response.status}`);
   if (!response.ok) {
-    throw new Error(`Gemini API ${response.status}: ${await response.text()}`);
+    throw new Error(`${entry.model} API ${response.status}: ${await response.text()}`);
   }
 
   const result = await response.json() as any;
   const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
   console.log(`[gemini] response text length ${text?.length ?? 0}`);
-  if (!text) throw new Error("Empty response from Gemini");
+  if (!text) throw new Error(`Empty response from ${entry.model}`);
 
   // Strip markdown fences if present (v1 models sometimes wrap JSON in ```json ... ```)
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
   try {
     return JSON.parse(cleaned) as ImportResult;
   } catch {
-    throw new Error(`Gemini returned invalid JSON: ${cleaned.slice(0, 300)}`);
+    throw new Error(`${entry.model} returned invalid JSON: ${cleaned.slice(0, 300)}`);
   }
+}
+
+// Run a tier's models against each other and keep the first usable answer.
+// Abort the rest, so a slow straggler neither holds up the import nor burns
+// quota once the result is already in hand.
+async function runTier(
+  tier: ModelConfig[],
+  imageBase64: string,
+  mimeType: string,
+  scope: ImportScope,
+  failures: string[],
+): Promise<ImportResult> {
+  const controller = new AbortController();
+  const attempts = tier.map(async (entry) => {
+    try {
+      return await requestExtraction(entry, imageBase64, mimeType, scope, controller.signal);
+    } catch (err) {
+      // Losing a race is not a failure worth reporting.
+      if (controller.signal.aborted) throw err;
+      const message = redact(err, entry.fields);
+      console.error(`[gemini] ${entry.model} failed: ${message}`);
+      failures.push(`${entry.model}: ${message}`);
+      throw err;
+    }
+  });
+
+  try {
+    const result = await Promise.any(attempts);
+    console.log(`[gemini] tier answered from ${tier.length} model(s)`);
+    return result;
+  } finally {
+    controller.abort();
+  }
+}
+
+/** Try each tier in order, racing the models within a tier, and return the
+ * first usable answer. */
+export async function extractFromImage(
+  imageBase64: string,
+  mimeType: string,
+  scope: ImportScope,
+  tiers: ModelConfig[][],
+): Promise<ImportResult> {
+  const usable = tiers.filter((tier) => tier.length > 0);
+  if (usable.length === 0) throw new Error("No import model configured");
+
+  const failures: string[] = [];
+  for (const tier of usable) {
+    try {
+      return await runTier(tier, imageBase64, mimeType, scope, failures);
+    } catch {
+      // Whole tier failed, so drop to the next one.
+    }
+  }
+  throw new Error(`All models failed. ${failures.join("; ")}`);
 }

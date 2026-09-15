@@ -46,9 +46,9 @@ const PORT = config.port ?? 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
 
 async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!config.gemini) {
+  if (config.tiers.length === 0) {
     res.writeHead(503, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Gemini API key not configured on server" }));
+    res.end(JSON.stringify({ error: "No import model configured on server" }));
     return;
   }
   const body = await new Promise<string>((resolve, reject) => {
@@ -59,9 +59,10 @@ async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<
   });
   const { image, mime_type, scope } = JSON.parse(body);
   const imageKB = Math.round(image.length * 0.75 / 1024);
-  console.log(`[import] ${new Date().toISOString()} scope=${scope.type} model=${config.gemini_model ?? "gemini-2.0-flash-lite"} image=${imageKB}KB`);
+  const chain = config.tiers.map((t) => `[${t.map((m) => m.model).join(", ")}]`).join(" -> ");
+  console.log(`[import] ${new Date().toISOString()} scope=${scope.type} tiers=${chain} image=${imageKB}KB`);
   const t0 = Date.now();
-  const result = await extractFromImage(image, mime_type, scope, config.gemini, config.gemini_model);
+  const result = await extractFromImage(image, mime_type, scope, config.tiers);
   console.log(`[import] done in ${((Date.now() - t0) / 1000).toFixed(1)}s, ${result.boards?.length ?? 0} boards`);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify(result));
@@ -94,9 +95,10 @@ const handler = (req: IncomingMessage, res: ServerResponse) => {
     setCorsHeaders(req, res);
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
     if (req.method === "GET" && req.url === "/api/models") {
-      if (!config.gemini) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "No API key" })); return; }
+      const apiKey = config.tiers.flat()[0]?.fields.api_key;
+      if (!apiKey) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "No API key" })); return; }
       (async () => {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${config.gemini}`);
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
         const data = await r.json();
         res.writeHead(r.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(data));
