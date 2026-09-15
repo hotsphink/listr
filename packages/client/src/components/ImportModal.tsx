@@ -1,23 +1,19 @@
-import { type Component, createSignal, Show, For, createMemo, onMount, onCleanup } from "solid-js";
-import type { AttributeDefinition } from "@listr/shared";
-import { db } from "../db/database.js";
+import { type Component, createSignal, Show, For, createMemo, createEffect, onMount, onCleanup } from "solid-js";
+import { db, type ImportScope, type PendingImport } from "../db/database.js";
 import { createBoard, createList, bulkCreateItems } from "../db/operations.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { isNativeExport, previewNativeImport, applyNativeImport, computeAiImportOrder } from "../db/exportImport.js";
 import type { NativeExport, ImportStats } from "../db/exportImport.js";
 import Modal from "./Modal.js";
 
-export type ImportScope =
-  | { type: "global" }
-  | { type: "board"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> }
-  | { type: "list"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> };
+export type { ImportScope };
 
 interface ImportedItem { title: string; attributes: Record<string, unknown>; }
 interface ImportedList { name: string; items: ImportedItem[]; }
 interface ImportedBoard { name: string; lists: ImportedList[]; }
 
-interface PreviewItem extends ImportedItem { skip: boolean; }
-interface PreviewList { name: string; existingId?: string; items: PreviewItem[]; newCount: number; }
+interface PreviewItem extends ImportedItem { skip: boolean; keep: boolean; }
+interface PreviewList { name: string; existingId?: string; items: PreviewItem[]; }
 interface PreviewBoard { name: string; existingId?: string; lists: PreviewList[]; }
 
 interface Props {
@@ -36,7 +32,7 @@ async function getApiUrl(): Promise<string | null> {
 
 async function fetchExtraction(imageBase64: string, mimeType: string, scope: ImportScope): Promise<{ boards: ImportedBoard[]; raw: string }> {
   const apiUrl = await getApiUrl();
-  if (!apiUrl) throw new Error("No sync server configured. Set up a sync server first — the AI key lives there.");
+  if (!apiUrl) throw new Error("No sync server configured. Set up a sync server first, since the AI key lives there.");
 
   const resp = await fetch(`${apiUrl}/api/import`, {
     method: "POST",
@@ -87,6 +83,16 @@ function normalizeExtraction(data: any, scope: ImportScope): ImportedBoard[] {
   return (data.boards ?? []) as ImportedBoard[];
 }
 
+// An unchecked item is dropped outright: not created, and not merged into an
+// existing item either.
+function kept(items: PreviewItem[]): PreviewItem[] {
+  return items.filter((i) => i.keep);
+}
+
+function newCountOf(items: PreviewItem[]): number {
+  return kept(items).filter((i) => !i.skip).length;
+}
+
 async function buildPreview(extracted: ImportedBoard[], scope: ImportScope): Promise<PreviewBoard[]> {
   const [allBoards, allLists, allItems] = await Promise.all([
     db.boards.toArray(),
@@ -103,11 +109,12 @@ async function buildPreview(extracted: ImportedBoard[], scope: ImportScope): Pro
       ...item,
       attributes: item.attributes ?? {},
       skip: existingTitles.has(item.title.toLowerCase()),
+      keep: true,
     }));
     return [{
       name: scope.name,
       existingId: scope.id,
-      lists: [{ name: scope.name, existingId: scope.id, items, newCount: items.filter((i) => !i.skip).length }],
+      lists: [{ name: scope.name, existingId: scope.id, items }],
     }];
   }
 
@@ -124,12 +131,12 @@ async function buildPreview(extracted: ImportedBoard[], scope: ImportScope): Pro
         ...item,
         attributes: item.attributes ?? {},
         skip: !!existingList && existingTitles.has(item.title.toLowerCase()),
+        keep: true,
       }));
       return {
         name: list.name,
         existingId: existingList?.id,
         items,
-        newCount: items.filter((i) => !i.skip).length,
       };
     });
 
@@ -182,7 +189,7 @@ async function applyImportOrder(listId: string, allPreviewItems: PreviewItem[]):
 
 async function performImport(preview: PreviewBoard[], scope: ImportScope): Promise<number> {
   if (scope.type === "list") {
-    const allPreviewItems = preview.flatMap((b) => b.lists.flatMap((l) => l.items));
+    const allPreviewItems = kept(preview.flatMap((b) => b.lists.flatMap((l) => l.items)));
     const newItems = allPreviewItems.filter((i) => !i.skip);
     if (newItems.length > 0) await bulkCreateItems(scope.id, newItems);
     await applyAttributeMerge(scope.id, allPreviewItems);
@@ -206,13 +213,14 @@ async function performImport(preview: PreviewBoard[], scope: ImportScope): Promi
         const newList = await createList(list.name, boardId);
         listId = newList.id;
       }
-      const newItems = list.items.filter((i) => !i.skip);
+      const keptItems = kept(list.items);
+      const newItems = keptItems.filter((i) => !i.skip);
       if (newItems.length > 0) {
         await bulkCreateItems(listId, newItems);
         total += newItems.length;
       }
-      await applyAttributeMerge(listId, list.items);
-      await applyImportOrder(listId, list.items);
+      await applyAttributeMerge(listId, keptItems);
+      await applyImportOrder(listId, keptItems);
     }
   }
   return total;
@@ -242,6 +250,37 @@ function resizeAndEncodeImage(file: File): Promise<{ base64: string; mimeType: s
     img.onerror = reject;
     img.src = url;
   });
+}
+
+const PENDING_ID = "default";
+
+async function loadPending(): Promise<PendingImport | null> {
+  return (await db.pending_import.get(PENDING_ID)) ?? null;
+}
+
+// Only one capture may be pending, so this replaces whatever was held before.
+async function savePending(image: string, mimeType: string, scope: ImportScope, reason: string): Promise<PendingImport> {
+  const row: PendingImport = { id: PENDING_ID, image, mime_type: mimeType, scope, created_at: Date.now(), reason };
+  await db.pending_import.put(row);
+  return row;
+}
+
+async function clearPending(): Promise<void> {
+  await db.pending_import.delete(PENDING_ID);
+}
+
+function scopeName(scope: ImportScope): string {
+  return scope.type === "global" ? "globally" : `into "${scope.name}"`;
+}
+
+function whenLabel(ts: number): string {
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function statsLabel(stats: ImportStats): string {
@@ -275,10 +314,17 @@ const ImportModal: Component<Props> = (props) => {
   const [nativeDoc, setNativeDoc] = createSignal<NativeExport | null>(null);
   const [nativeStats, setNativeStats] = createSignal<ImportStats | null>(null);
   const [nativeResult, setNativeResult] = createSignal<ImportStats | null>(null);
+  const [pending, setPending] = createSignal<PendingImport | null>(null);
 
   let fileInputRef!: HTMLInputElement;
   let cameraInputRef!: HTMLInputElement;
   const isTouchDevice = "ontouchstart" in window;
+
+  // Reread on each open, since another tab or an earlier session may have left
+  // a capture behind.
+  createEffect(() => {
+    if (props.open) void loadPending().then(setPending);
+  });
 
   onMount(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -290,8 +336,20 @@ const ImportModal: Component<Props> = (props) => {
     onCleanup(() => document.removeEventListener("paste", onPaste));
   });
 
-  const totalNew = createMemo(() => preview().flatMap((c) => c.lists).reduce((s, l) => s + l.newCount, 0));
-  const totalSkip = createMemo(() => preview().flatMap((c) => c.lists.flatMap((l) => l.items)).filter((i) => i.skip).length);
+  const allItems = createMemo(() => preview().flatMap((c) => c.lists.flatMap((l) => l.items)));
+  const totalNew = createMemo(() => newCountOf(allItems()));
+  const totalSkip = createMemo(() => kept(allItems()).filter((i) => i.skip).length);
+  const totalDropped = createMemo(() => allItems().filter((i) => !i.keep).length);
+
+  const toggleKeep = (boardIndex: number, listIndex: number, itemIndex: number) => {
+    setPreview((boards) => boards.map((board, b) => b !== boardIndex ? board : {
+      ...board,
+      lists: board.lists.map((list, l) => l !== listIndex ? list : {
+        ...list,
+        items: list.items.map((item, i) => i !== itemIndex ? item : { ...item, keep: !item.keep }),
+      }),
+    }));
+  };
 
   const reset = () => {
     setPhase("idle");
@@ -327,6 +385,37 @@ const ImportModal: Component<Props> = (props) => {
     }
   };
 
+  // Extraction can fail for reasons the image is not at fault for: every model
+  // down, or no network. Park the capture so it can go again rather than
+  // making the user find the screenshot a second time.
+  const submitImage = async (image: string, mimeType: string, scope: ImportScope, retryingPending: boolean) => {
+    setError(null);
+    setPhase("extracting");
+
+    const park = async (reason: string) => {
+      setPending(await savePending(image, mimeType, scope, reason));
+      setError(reason);
+      setPhase("idle");
+    };
+
+    if (!navigator.onLine) {
+      await park("Offline, so this screenshot is saved. Retry it when you are back online.");
+      return;
+    }
+    try {
+      const { boards: extracted, raw } = await fetchExtraction(image, mimeType, scope);
+      setRawJson(raw);
+      setPreview(await buildPreview(extracted, scope));
+      if (retryingPending) {
+        await clearPending();
+        setPending(null);
+      }
+      setPhase("preview");
+    } catch (e) {
+      await park(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const processFile = async (file: File) => {
     const isJson = file.type === "application/json" || file.name.endsWith(".json");
     if (isJson) { await processNativeJson(file); return; }
@@ -335,15 +424,21 @@ const ImportModal: Component<Props> = (props) => {
     setPhase("extracting");
     try {
       const { base64, mimeType } = await resizeAndEncodeImage(file);
-      const { boards: extracted, raw } = await fetchExtraction(base64, mimeType, props.scope);
-      setRawJson(raw);
-      const prev = await buildPreview(extracted, props.scope);
-      setPreview(prev);
-      setPhase("preview");
+      await submitImage(base64, mimeType, props.scope, false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("idle");
     }
+  };
+
+  const retryPending = async () => {
+    const p = pending();
+    if (p) await submitImage(p.image, p.mime_type, p.scope, true);
+  };
+
+  const discardPending = async () => {
+    await clearPending();
+    setPending(null);
   };
 
   const handleConfirm = async () => {
@@ -398,6 +493,24 @@ const ImportModal: Component<Props> = (props) => {
         <p class="field-hint field-hint-lead">
           Drop a screenshot to extract with AI {scopeLabel()}, or drop a Listr JSON export to apply directly.
         </p>
+        <Show when={pending()}>
+          {(p) => (
+            <div class="import-pending" data-testid="pending-import">
+              <img class="import-pending-thumb" src={`data:${p().mime_type};base64,${p().image}`} alt="Screenshot waiting to be imported" />
+              <div class="import-pending-body">
+                <div class="import-pending-title">
+                  Screenshot waiting, captured {whenLabel(p().created_at)} {scopeName(p().scope)}
+                </div>
+                <div class="field-hint">{p().reason}</div>
+                <div class="field-hint">Importing another screenshot replaces this one.</div>
+              </div>
+              <div class="import-pending-actions">
+                <button class="btn-primary btn-xs" disabled={phase() === "extracting"} onClick={retryPending}>Retry</button>
+                <button class="btn-ghost btn-xs" disabled={phase() === "extracting"} onClick={discardPending}>Discard</button>
+              </div>
+            </div>
+          )}
+        </Show>
         <div
           class="dropzone import-dropzone"
           classList={{ dragging: dragging(), loading: phase() === "extracting" }}
@@ -455,7 +568,7 @@ const ImportModal: Component<Props> = (props) => {
                   <tr><td>Lists</td><td>{s().lists.updated}</td><td>{s().lists.created}</td><td>{s().lists.deleted}</td></tr>
                   <tr><td>Items</td><td>{s().items.updated}</td><td>{s().items.created}</td><td>{s().items.deleted}</td></tr>
                   <Show when={s().assets.created + s().assets.skipped > 0}>
-                    <tr><td>Assets</td><td>{s().assets.skipped} present</td><td>{s().assets.created}</td><td>—</td></tr>
+                    <tr><td>Assets</td><td>{s().assets.skipped} present</td><td>{s().assets.created}</td><td>&mdash;</td></tr>
                   </Show>
                 </tbody>
               </table>
@@ -473,14 +586,17 @@ const ImportModal: Component<Props> = (props) => {
 
       <Show when={phase() === "preview" || phase() === "importing"}>
         <div class="import-summary">
-          <strong>{totalNew()}</strong> new item{totalNew() !== 1 ? "s" : ""} to add
+          <strong>{totalNew()}</strong> new item{totalNew() !== 1 ? "s" : ""} to add.
           <Show when={totalSkip() > 0}>
-            {" "}&mdash; <span class="text-muted">{totalSkip()} already exist, will be skipped</span>
+            {" "}<span class="text-muted">{totalSkip()} already exist{totalSkip() === 1 ? "s" : ""} and will be skipped.</span>
+          </Show>
+          <Show when={totalDropped() > 0}>
+            {" "}<span class="text-muted">{totalDropped()} unchecked and will be dropped.</span>
           </Show>
         </div>
         <div class="import-preview">
           <For each={preview()}>
-            {(board) => (
+            {(board, boardIndex) => (
               <>
                 <Show when={props.scope.type !== "list"}>
                   <div class="import-preview-board">
@@ -491,7 +607,7 @@ const ImportModal: Component<Props> = (props) => {
                   </div>
                 </Show>
                 <For each={board.lists}>
-                  {(list) => (
+                  {(list, listIndex) => (
                     <>
                       <div class="import-preview-list">
                         {list.name}
@@ -499,11 +615,19 @@ const ImportModal: Component<Props> = (props) => {
                           {" "}<span class="badge tone-accent">new list</span>
                         </Show>
                         {" "}
-                        <span class="text-muted">({list.newCount} new{list.items.length - list.newCount > 0 ? `, ${list.items.length - list.newCount} skip` : ""})</span>
+                        <span class="text-muted">({newCountOf(list.items)} new{list.items.length - newCountOf(list.items) > 0 ? `, ${list.items.length - newCountOf(list.items)} skip` : ""})</span>
                       </div>
                       <For each={list.items}>
-                        {(item) => (
-                          <div class="import-preview-item" classList={{ skip: item.skip }}>
+                        {(item, itemIndex) => (
+                          <div class="import-preview-item" classList={{ skip: item.skip, dropped: !item.keep }}>
+                            <input
+                              type="checkbox"
+                              class="import-keep-checkbox"
+                              checked={item.keep}
+                              aria-label={`Keep ${item.title}`}
+                              disabled={phase() === "importing"}
+                              onChange={() => toggleKeep(boardIndex(), listIndex(), itemIndex())}
+                            />
                             <span class={item.skip ? "badge tone-muted" : "badge tone-accent"}>
                               {item.skip ? "skip" : "new"}
                             </span>

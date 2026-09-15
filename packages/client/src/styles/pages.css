@@ -263,12 +263,62 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* A screenshot held back after a failed extraction, offered for another try. */
+.import-pending {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+}
+
+.import-pending-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.import-pending-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.import-pending-title {
+  margin-bottom: var(--space-1);
+}
+
+.import-pending-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
 .import-preview-item {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-4) var(--space-2) 30px;
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
+}
+
+/* Unchecking drops the item from the import entirely. */
+.import-keep-checkbox {
+  flex: none;
+  margin: 0;
+  cursor: pointer;
+}
+
+.import-preview-item.dropped .import-item-title {
+  text-decoration: line-through;
+}
+
+.import-preview-item.dropped {
+  opacity: 0.45;
 }
 
 .import-preview-item:last-child {

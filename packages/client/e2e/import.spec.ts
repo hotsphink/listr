@@ -49,6 +49,33 @@ function mockImportRoute(page: Page, response: object) {
   );
 }
 
+function mockImportFailure(page: Page, status = 500, error = "All models failed. gemini-3.5-flash: API 500") {
+  return page.route("**/api/import", (route) =>
+    route.fulfill({
+      status,
+      contentType: "application/json",
+      body: JSON.stringify({ error }),
+    }),
+  );
+}
+
+async function getPendingImport(page: Page): Promise<{ mime_type: string; reason: string } | null> {
+  return page.evaluate(() =>
+    new Promise((resolve) => {
+      const req = indexedDB.open("listr2");
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains("pending_import")) { db.close(); resolve(null); return; }
+        const tx = db.transaction("pending_import", "readonly");
+        const get = tx.objectStore("pending_import").get("default");
+        get.onsuccess = () => { db.close(); resolve(get.result ?? null); };
+        get.onerror = () => { db.close(); resolve(null); };
+      };
+      req.onerror = () => resolve(null);
+    }),
+  );
+}
+
 async function uploadFakeImage(page: Page) {
   // The primary file input accepts both images and JSON; target it specifically
   // (a separate camera input uses accept="image/*").
@@ -247,6 +274,115 @@ test.describe("import modal", () => {
     const titles = await getItemTitles(page);
     expect(titles).toContain("Inception");
     expect(titles).toContain("The Matrix");
+  });
+
+
+  test("an item unchecked in the preview is not imported", async ({ page }) => {
+    await createBoard(page, "Movies");
+    await setupSyncConfig(page);
+    await mockImportRoute(page, {
+      boards: [{
+        name: "Movies",
+        lists: [{ name: "Watchlist", items: [{ title: "Inception" }, { title: "The Matrix" }] }],
+      }],
+    });
+
+    await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
+    await uploadFakeImage(page);
+    await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
+
+    // Every item starts checked.
+    await expect(page.getByRole("checkbox", { name: "Keep Inception" })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Keep The Matrix" })).toBeChecked();
+
+    await page.getByRole("checkbox", { name: "Keep The Matrix" }).uncheck();
+    await expect(page.locator(".import-summary")).toContainText("1 new item");
+    await expect(page.locator(".import-summary")).toContainText("1 unchecked");
+
+    await page.getByRole("button", { name: /Import 1 item/ }).click();
+    await expect(page.locator(".modal")).toContainText("Imported 1 item successfully");
+
+    const titles = await getItemTitles(page);
+    expect(titles).toContain("Inception");
+    expect(titles).not.toContain("The Matrix");
+  });
+
+  test("unchecking every item leaves nothing to import", async ({ page }) => {
+    await createBoard(page, "Movies");
+    await setupSyncConfig(page);
+    await mockImportRoute(page, {
+      boards: [{ name: "Movies", lists: [{ name: "Watchlist", items: [{ title: "Inception" }] }] }],
+    });
+
+    await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
+    await uploadFakeImage(page);
+    await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole("checkbox", { name: "Keep Inception" }).uncheck();
+    await expect(page.locator(".import-summary")).toContainText("0 new items");
+    await page.getByRole("button", { name: /Import 0 items/ }).click();
+    await expect(page.locator(".modal")).toContainText("Imported 0 items successfully");
+    expect(await getItemTitles(page)).not.toContain("Inception");
+  });
+
+  test("a failed extraction keeps the screenshot pending instead of losing it", async ({ page }) => {
+    await createBoard(page, "Movies");
+    await setupSyncConfig(page);
+    await mockImportFailure(page);
+
+    await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
+    await uploadFakeImage(page);
+
+    const banner = page.getByTestId("pending-import");
+    await expect(banner).toBeVisible({ timeout: 10_000 });
+    await expect(banner).toContainText("All models failed");
+
+    const row = await getPendingImport(page);
+    expect(row).not.toBeNull();
+    expect(row!.mime_type).toBe("image/jpeg");
+  });
+
+  test("a pending screenshot can be retried and then imports normally", async ({ page }) => {
+    await createBoard(page, "Movies");
+    await setupSyncConfig(page);
+    await mockImportFailure(page);
+
+    await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
+    await uploadFakeImage(page);
+    await expect(page.getByTestId("pending-import")).toBeVisible({ timeout: 10_000 });
+
+    // The models come back.
+    await page.unroute("**/api/import");
+    await mockImportRoute(page, {
+      boards: [{ name: "Movies", lists: [{ name: "Watchlist", items: [{ title: "Inception" }] }] }],
+    });
+
+    await page.getByRole("button", { name: "Retry" }).click();
+    await expect(page.locator(".import-preview")).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: /Import 1 item/ }).click();
+    await expect(page.locator(".modal")).toContainText("Imported 1 item successfully");
+
+    // A successful retry releases the capture.
+    expect(await getPendingImport(page)).toBeNull();
+  });
+
+  test("a pending screenshot survives a reload and can be discarded", async ({ page }) => {
+    await createBoard(page, "Movies");
+    await setupSyncConfig(page);
+    await mockImportFailure(page);
+
+    await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
+    await uploadFakeImage(page);
+    await expect(page.getByTestId("pending-import")).toBeVisible({ timeout: 10_000 });
+
+    await page.reload();
+    await page.locator(".sidebar-item", { hasText: "↓ Import" }).click();
+    const banner = page.getByTestId("pending-import");
+    await expect(banner).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "Discard" }).click();
+    await expect(banner).toHaveCount(0);
+    expect(await getPendingImport(page)).toBeNull();
   });
 
   test("Back button returns to the upload screen", async ({ page }) => {

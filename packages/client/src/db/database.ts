@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
-import type { Asset, Board, Item, List, IntegrationResult } from "@listr/shared";
+import type { Asset, AttributeDefinition, Board, Item, List, IntegrationResult } from "@listr/shared";
 
 const DB_NAME = "listr2";
 const LEGACY_DB_NAME = "listr";
@@ -113,6 +113,33 @@ export interface ServerIdentity {
   updated_at: number;
 }
 
+/**
+ * Where an import lands. Defined here rather than in ImportModal so a stored
+ * pending capture can be typed without the database depending on a component;
+ * ImportModal re-exports it as its own `ImportScope`.
+ */
+export type ImportScope =
+  | { type: "global" }
+  | { type: "board"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> }
+  | { type: "list"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> };
+
+/**
+ * A screenshot that could not be extracted, held for resubmission. Saved when
+ * every model fails or the device is offline, so the capture outlives the
+ * failure. Local-only and never synced: the image is already on the device
+ * that took it, and it is worthless once imported.
+ *
+ * At most one row exists, under the id "default".
+ */
+export interface PendingImport {
+  id: string; // always "default"
+  image: string; // base64, already resized by the modal
+  mime_type: string;
+  scope: ImportScope; // where it was headed, so a retry targets the same place
+  created_at: number;
+  reason: string; // what stopped it, shown to the user
+}
+
 export class ListrDB extends Dexie {
   boards!: EntityTable<Board, "id">;
   lists!: EntityTable<List, "id">;
@@ -128,6 +155,7 @@ export class ListrDB extends Dexie {
   board_server_binding!: Table<BoardServerBinding, string>;
   client_identity!: Table<ClientIdentity, string>;
   server_identity!: Table<ServerIdentity, string>;
+  pending_import!: Table<PendingImport, string>;
 
   constructor() {
     super(DB_NAME);
@@ -252,6 +280,27 @@ export class ListrDB extends Dexie {
       board_server_binding: "board_id",
       client_identity: "id",
       server_identity: "server_id",
+    });
+
+    // pending_import holds a screenshot whose extraction failed, so the
+    // capture survives to be retried. Adds a table only, and an absent row
+    // already means "nothing pending", so there is nothing to back-fill.
+    this.version(5).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
+      board_groups: "key",
+      board_server_binding: "board_id",
+      client_identity: "id",
+      server_identity: "server_id",
+      pending_import: "id",
     });
   }
 }
