@@ -8,6 +8,7 @@
 
 /* ── Columns ──────────────────────────────────────────────────────────────*/
 .multi-list-view {
+  --column-width: 260px;
   flex: 1;
   display: flex;
   gap: var(--space-6);
@@ -16,6 +17,19 @@
   align-items: flex-start;
   scroll-snap-type: x mandatory;
   cursor: grab;
+}
+
+/* Tail spacer, so scrolling stops on the last list rather than running on until
+ * that list sits half cut behind the "+ New list" button. Mandatory snapping
+ * rests on the last column only when that column's snap position is reachable,
+ * which needs a viewport's worth of content past it; this makes up whatever the
+ * column and the button do not cover. ListView measures the shortfall, since a
+ * board that already fits must not gain scrollable slack. */
+.multi-list-view::after {
+  content: "";
+  flex: 0 0 auto;
+  width: var(--board-tail, 0px);
+  height: 1px;
 }
 
 /* Dragging the background scrolls the board sideways. */
@@ -31,14 +45,20 @@
   cursor: default;
 }
 
-.multi-list-vertical .multi-list-column {
+.multi-list-vertical .multi-list-column,
+.multi-list-vertical .multi-list-new-column {
   flex: none;
   width: 100%;
   max-height: none;
 }
 
+/* Nothing to scroll past, so no tail. */
+.multi-list-vertical::after {
+  display: none;
+}
+
 .multi-list-column {
-  flex: 0 0 260px;
+  flex: 0 0 var(--column-width);
   scroll-snap-align: start;
   display: flex;
   flex-direction: column;
@@ -91,9 +111,10 @@
   margin-left: auto;
 }
 
+/* Matches a column in width, and deliberately not a snap target: the board
+ * stops on the last list with the button sitting beside it. */
 .multi-list-new-column {
-  flex: 0 0 160px;
-  scroll-snap-align: start;
+  flex: 0 0 var(--column-width);
   display: flex;
   align-items: flex-start;
   padding: var(--space-4) var(--space-5);

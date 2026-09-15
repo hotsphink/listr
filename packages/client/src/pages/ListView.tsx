@@ -190,7 +190,8 @@ const ListView: Component = () => {
     // edge-scroll-end behavior: scrollSnapType stays "none" until the animation completes).
     const el = multiListViewEl;
     const sl = el.scrollLeft;
-    const cols = Array.from(el.children) as HTMLElement[];
+    // Columns only; the trailing "+ New list" button is not a snap target.
+    const cols = Array.from(el.querySelectorAll<HTMLElement>(":scope > .multi-list-column"));
     const nearestLeft = cols.reduce(
       (best, col) => Math.abs(col.offsetLeft - sl) < Math.abs(best - sl) ? col.offsetLeft : best,
       cols[0]?.offsetLeft ?? sl,
@@ -310,6 +311,38 @@ const ListView: Component = () => {
   });
 
   const visibleLists = allLists;
+
+  // Cap horizontal scrolling at the last list. Mandatory snapping rests on that
+  // column only when its snap position is reachable, which takes a viewport's
+  // worth of content past it; the column itself and the "+ New list" button
+  // cover part of that, and the tail spacer makes up the rest. Measured rather
+  // than expressed in CSS, so a board that already fits gains no slack.
+  const updateBoardTail = () => {
+    const el = multiListViewEl;
+    if (!el) return;
+    el.style.setProperty("--board-tail", "0px");
+    const cols = el.querySelectorAll<HTMLElement>(":scope > .multi-list-column");
+    const last = cols[cols.length - 1];
+    if (!last) return;
+    const overflow = el.scrollWidth - el.clientWidth; // measured with no tail
+    if (overflow <= 0) return;
+    el.style.setProperty("--board-tail", `${Math.max(0, last.offsetLeft - overflow)}px`);
+  };
+
+  let boardResizeObs: ResizeObserver | undefined;
+  const observeBoardWidth = (el: HTMLElement) => {
+    boardResizeObs?.disconnect();
+    boardResizeObs = new ResizeObserver(updateBoardTail);
+    boardResizeObs.observe(el);
+  };
+  onCleanup(() => boardResizeObs?.disconnect());
+
+  // Columns come and go, and each view mode lays them out differently.
+  createEffect(() => {
+    visibleLists();
+    appViewMode();
+    updateBoardTail();
+  });
 
   const headerTitle = () => board()?.name ?? "";
 
@@ -835,7 +868,7 @@ const ListView: Component = () => {
             <div
               class="multi-list-view"
               classList={{ "multi-list-vertical": appViewMode() !== "list" }}
-              ref={(el) => { multiListViewEl = el; }}
+              ref={(el) => { multiListViewEl = el; observeBoardWidth(el); }}
               onMouseDown={handleBoardBackgroundDown}
             >
               <For each={visibleLists()}>

@@ -88,7 +88,9 @@ export function useSortable(
     // Reading these per-frame forces repeated layout recalcs (getBoundingClientRect,
     // getComputedStyle, offsetLeft) that cause jank on mobile.
     const cancelZoneEl = document.getElementById("drag-cancel-zone");
-    const columns = scrollEl ? (Array.from(scrollEl.children) as HTMLElement[]) : [];
+    const columns = scrollEl
+      ? Array.from(scrollEl.querySelectorAll<HTMLElement>(":scope > .multi-list-column"))
+      : [];
     const colOffsets = columns.map((col) => ({ left: col.offsetLeft, width: col.offsetWidth }));
     const vertEls = columns.map(
       (col) =>
@@ -275,7 +277,8 @@ export function useSortable(
       // Restore it via scrollend once the animation completes.
       if (!cancelled && scrollEl) {
         const sl = scrollEl.scrollLeft;
-        const cols = Array.from(scrollEl.children) as HTMLElement[];
+        // Columns only; the trailing "+ New list" button is not a snap target.
+        const cols = Array.from(scrollEl.querySelectorAll<HTMLElement>(":scope > .multi-list-column"));
         if (cols.length > 0) {
           const nearestLeft = cols.reduce(
             (best, col) => Math.abs(col.offsetLeft - sl) < Math.abs(best - sl) ? col.offsetLeft : best,
