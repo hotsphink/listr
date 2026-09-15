@@ -16,6 +16,9 @@
  *   bootstrap-root
  *       Create the root user (all caps including admin, authorized_by=null)
  *       if one does not already exist. Idempotent, so it is safe to re-run.
+ *       Follow it with `issue-grant --kind=device` to attach your first
+ *       client, or skip both and start the server once with
+ *       LISTR_ALLOW_BOOTSTRAP=1 to let the first client to connect claim it.
  *
  *   list-users [--tree]
  *       List every user. With --tree, indent by authorized_by and annotate

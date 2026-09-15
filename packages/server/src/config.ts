@@ -15,6 +15,10 @@ export interface Config {
   port?: number;
   db_path?: string;
   variant: string;
+  /** Let the first client to authenticate against a database with no users at
+   * all claim it as the root user. Off unless asked for: on a reachable
+   * server it hands root to whoever connects first. See index.ts. */
+  allow_bootstrap?: boolean;
   integrations?: Record<string, IntegrationServerConfig>;
 }
 
@@ -81,6 +85,12 @@ export function loadConfig(): Config {
   if (typeof raw.tls === "string") config.tls = raw.tls === "true";
   if (typeof raw.port === "string") config.port = parseInt(raw.port, 10);
   if (typeof raw.db_path === "string") config.db_path = raw.db_path;
+  if (typeof raw.allow_bootstrap === "string") config.allow_bootstrap = raw.allow_bootstrap === "true";
+  // Env override, so provisioning a new server is one restart rather than a
+  // config edit and a revert.
+  if (process.env.LISTR_ALLOW_BOOTSTRAP !== undefined) {
+    config.allow_bootstrap = process.env.LISTR_ALLOW_BOOTSTRAP !== "" && process.env.LISTR_ALLOW_BOOTSTRAP !== "0";
+  }
   if (typeof raw.integrations === "object" && raw.integrations !== null) {
     const integrations: Record<string, IntegrationServerConfig> = {};
     for (const [id, cfg] of Object.entries(raw.integrations as Record<string, Record<string, string>>)) {

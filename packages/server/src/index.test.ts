@@ -922,3 +922,72 @@ describe("basic limits", () => {
     ws.close();
   });
 });
+
+// First-run bootstrap. A database with no users can register nobody, because
+// registration needs a grant and a grant needs an issuer, so the operator can
+// opt into letting the first client to authenticate claim the server as root.
+describe("sync server: first-run bootstrap", () => {
+  let db: DbApi;
+  let handle: SyncServerHandle;
+  let port: number;
+
+  async function start(allowBootstrap: boolean): Promise<void> {
+    db = openDb(":memory:");
+    handle = createSyncServer(db, { tls: false, allowBootstrap });
+    await new Promise<void>((resolve) => handle.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    port = (handle.httpServer.address() as AddressInfo).port;
+  }
+
+  afterEach(() => {
+    handle.stop();
+  });
+
+  async function handshake(client: TestClient): Promise<{ ws: WebSocket; result: any }> {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/sync`);
+    await waitForOpen(ws);
+    const challengePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({
+      type: "hello",
+      protocol_version: MAX_PROTOCOL_VERSION,
+      client_id: client.clientId,
+      pubkey_jwk: client.pubkeyJwk,
+      keys: [],
+    }));
+    const challenge = await challengePromise;
+    const sig = await signFor(client, challenge.server_id, challenge.nonce);
+    const resultPromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig }));
+    return { ws, result: await resultPromise };
+  }
+
+  it("lets the first client claim an empty server as root when bootstrap is enabled", async () => {
+    await start(true);
+    const client = await makeTestClient();
+    const { ws, result } = await handshake(client);
+    expect(result.type).toBe("ok");
+    expect(result.caps).toContain("admin");
+    expect(db.findRootUser()?.user_id).toBe(result.user_id);
+    expect(db.getUserForClient(client.clientId)?.user.user_id).toBe(result.user_id);
+    ws.close();
+  });
+
+  it("disarms itself: the second client gets needs_grant rather than a second root", async () => {
+    await start(true);
+    const first = await handshake(await makeTestClient());
+    expect(first.result.type).toBe("ok");
+    first.ws.close();
+
+    const second = await handshake(await makeTestClient());
+    expect(second.result.type).toBe("needs_grant");
+    expect(db.countUsers()).toBe(1);
+    second.ws.close();
+  });
+
+  it("leaves an empty server unclaimable when bootstrap is disabled", async () => {
+    await start(false);
+    const { ws, result } = await handshake(await makeTestClient());
+    expect(result.type).toBe("needs_grant");
+    expect(db.countUsers()).toBe(0);
+    ws.close();
+  });
+});

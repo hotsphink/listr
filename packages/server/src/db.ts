@@ -973,6 +973,12 @@ export function createDbApi(sql: Database.Database) {
     return (sql.prepare(`SELECT * FROM users ORDER BY created_at`).all() as Parameters<typeof rowToUser>[0][]).map(rowToUser);
   }
 
+  // "Does this server know anybody at all?" Cheaper than listAllUsers for the
+  // two callers that only ask that: the startup warning and claimEmptyServer.
+  function countUsers(): number {
+    return (sql.prepare(`SELECT count(*) AS n FROM users`).get() as { n: number }).n;
+  }
+
   function setUserCaps(userId: string, caps: Cap[], now: number, actorUserId?: string | null): UserRow {
     const result = sql.prepare(`UPDATE users SET caps = ? WHERE user_id = ?`).run(JSON.stringify(caps), userId);
     if (result.changes === 0) throw new Error(`setUserCaps: no such user ${userId}`);
@@ -1066,6 +1072,40 @@ export function createDbApi(sql: Database.Database) {
       )
       .run(ROOT_USER_CONFIG_KEY, root.user_id);
     return root;
+  }
+
+  // First-run claim: mint the root user and attach the calling client to it,
+  // but only on a database with no users at all. Registration needs a grant
+  // and a grant needs an issuer, so a server with an empty users table hands
+  // every client `needs_grant` with no in-band way out. That is the state a
+  // brand-new deployment starts in, and also the state migration 5 leaves
+  // behind when there were no pre-existing home keys to mint users from.
+  //
+  // The caller gates this (index.ts's ALLOW_BOOTSTRAP), because on a reachable
+  // server it gives root to whoever connects first. It disarms itself either
+  // way: once this succeeds the users table is no longer empty.
+  //
+  // Returns null when the server already has a user. The check and the writes
+  // share one transaction, so two clients racing to claim the same empty
+  // server cannot both win.
+  function claimEmptyServer(
+    params: { clientId: string; pubkeyJwk: string; label?: string | null },
+    now: number,
+  ): { user: UserRow; client: ClientRow } | null {
+    const run = sql.transaction(() => {
+      if (countUsers() > 0) return null;
+      const user = bootstrapRootUser(now);
+      const client = registerClient(
+        { clientId: params.clientId, userId: user.user_id, pubkeyJwk: params.pubkeyJwk, label: params.label ?? null },
+        now,
+      );
+      logAuthEvent(
+        { kind: "bootstrap_claimed", actorUserId: null, subjectUserId: user.user_id, detail: JSON.stringify({ clientId: params.clientId }) },
+        now,
+      );
+      return { user, client };
+    });
+    return run();
   }
 
   // Cycle guard for setAuthorizedBy: does `candidateAncestorId` appear on the
@@ -1561,8 +1601,8 @@ export function createDbApi(sql: Database.Database) {
     getEntityById, upsertIntegrationResult, getIntegrationResultsSince, getIntegrationResultsForRefresh,
     associateUserKey, removeUserKey, getUserKeys, getOrCreateUserByHomeKey, getSchemaVersion: getSchemaVersionApi, close,
     // Identity & authorization:
-    getUser, findRootUser, createUser, listChildren, listAllUsers, setUserCaps, setUserNote, setUserDisplayName,
-    setUserState, getEffectiveState, promoteProvisionalUser, setAuthorizedBy, bootstrapRootUser, grantAdminCap,
+    getUser, findRootUser, createUser, listChildren, listAllUsers, countUsers, setUserCaps, setUserNote, setUserDisplayName,
+    setUserState, getEffectiveState, promoteProvisionalUser, setAuthorizedBy, bootstrapRootUser, claimEmptyServer, grantAdminCap,
     getClientById, getClientsForUser, setClientLabel, registerClient, touchClientLastSeen, getUserForClient,
     createGrant, getGrant, attemptRedeemGrant, peekGrant, applyGrantEffect, redeemGrant,
     logAuthEvent, listAuthEvents, resetServerId,

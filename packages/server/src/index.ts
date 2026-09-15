@@ -126,6 +126,10 @@ export interface SyncServerOptions {
    * `challenge` so clients can refuse to talk to the wrong one. Defaults to the
    * process config's variant; tests override it directly. */
   variant?: string;
+  /** Let the first client to authenticate against a database with no users at
+   * all claim it as root. Defaults to the process config's `allow_bootstrap`
+   * (see config.ts); tests override it directly. */
+  allowBootstrap?: boolean;
 }
 
 export interface SyncServerHandle {
@@ -140,6 +144,21 @@ export interface SyncServerHandle {
 export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): SyncServerHandle {
   const SERVER_ID = dbApi.getServerId();
   const SERVER_VARIANT = opts.variant ?? config.variant;
+  const ALLOW_BOOTSTRAP = opts.allowBootstrap ?? config.allow_bootstrap ?? false;
+
+  // A database with no users rejects every client with `needs_grant`, and
+  // nothing in the protocol can dig it out, since issuing the grant that
+  // registration needs requires a user to issue it. Say so here rather than
+  // leaving it to be diagnosed from a client-side "Not registered".
+  if (dbApi.countUsers() === 0) {
+    if (ALLOW_BOOTSTRAP) {
+      console.warn(`[startup] ${ts()} no users in this database and bootstrap is enabled: the next client to authenticate becomes root.`);
+    } else {
+      console.warn(`[startup] ${ts()} no users in this database; every client will sit in "Not registered" until one is registered.`);
+      console.warn(`[startup] ${ts()}   Fix: pnpm --filter @listr/server auth bootstrap-root --apply, then auth issue-grant --issuer=<root> --kind=device --apply`);
+      console.warn(`[startup] ${ts()}   Or restart with LISTR_ALLOW_BOOTSTRAP=1 to let the first client to connect claim this server.`);
+    }
+  }
   const requestHandler = opts.requestHandler ?? ((_req: IncomingMessage, res: ServerResponse) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("Listr sync server running\n");
@@ -458,6 +477,21 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
 
             const record = dbApi.getUserForClient(capturedClientId);
             if (!record) {
+              // Nobody here yet? Then this client can become the root user,
+              // if the operator asked for that. claimEmptyServer re-checks
+              // emptiness inside its transaction, so two clients racing on a
+              // fresh server cannot both claim it.
+              const claimed = ALLOW_BOOTSTRAP
+                ? dbApi.claimEmptyServer(
+                    { clientId: capturedClientId, pubkeyJwk: JSON.stringify(capturedPubkey) },
+                    Date.now(),
+                  )
+                : null;
+              if (claimed) {
+                console.warn(`[ws] ${ts()} bootstrap: client=${capturedClientId.slice(0, 8)} claimed this empty server as root user=${claimed.user.user_id.slice(0, 8)}`);
+                completeAuthentication(claimed.user);
+                return;
+              }
               ws.send(JSON.stringify({ type: "needs_grant" }));
               return;
             }
