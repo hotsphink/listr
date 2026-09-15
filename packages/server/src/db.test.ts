@@ -1217,3 +1217,42 @@ describe("re-keying an entity into a different namespace", () => {
     expect(rows[0].name).toBe("Current");
   });
 });
+
+// The orphaned-data question after an identity rebuild: a key can hold plenty
+// of rows and still be unreachable, because a client only ever pulls keys it
+// already knows about, and it learns them from ok.user_keys.
+describe("listSyncKeysWithData", () => {
+  let db: DbApi;
+
+  beforeEach(() => {
+    db = openDb(":memory:");
+  });
+
+  it("counts rows per key and reports a key no user can reach as unclaimed", () => {
+    db.upsertEntity("board", makeBoard("b1", 100), "orphan");
+    db.upsertEntity("list", makeList("l1", 100), "orphan");
+    db.upsertEntity("item", makeItem("i1", 100), "orphan");
+    db.upsertEntity("item", makeItem("i2", 100), "orphan");
+
+    const keys = db.listSyncKeysWithData();
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatchObject({ key: "orphan", boards: 1, lists: 1, items: 2, users: [] });
+  });
+
+  it("counts both an explicit association and a home key as a claim", () => {
+    const root = db.bootstrapRootUser(Date.now());
+    db.upsertEntity("board", makeBoard("b1", 100), "shared");
+    db.upsertEntity("board", makeBoard("b2", 100), root.home_key);
+    db.associateUserKey(root.user_id, "shared", "Shared");
+
+    const byKey = new Map(db.listSyncKeysWithData().map((k) => [k.key, k.users]));
+    expect(byKey.get("shared")).toEqual([root.user_id]);
+    expect(byKey.get(root.home_key)).toEqual([root.user_id]);
+  });
+
+  it("ignores a key that is associated but holds no data", () => {
+    const root = db.bootstrapRootUser(Date.now());
+    db.associateUserKey(root.user_id, "empty", null);
+    expect(db.listSyncKeysWithData()).toEqual([]);
+  });
+});

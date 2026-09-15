@@ -849,6 +849,38 @@ export function createDbApi(sql: Database.Database) {
       .all(userId) as { key: string; name: string | null }[];
   }
 
+  // Every sync key that actually holds data, with whoever claims it. The
+  // question after an identity rebuild is "what keys hold data that no user
+  // can reach?", and nothing else answers it: user_keys holds associations and
+  // the entity tables hold keys, with no join between them until an operator
+  // makes one. A key claimed by nobody is data no client will ever ask for,
+  // since a client only pulls keys it already knows.
+  function listSyncKeysWithData(): { key: string; boards: number; lists: number; items: number; users: string[] }[] {
+    const rows = sql
+      .prepare(
+        `SELECT sync_key AS key,
+                sum(kind = 'board') AS boards,
+                sum(kind = 'list') AS lists,
+                sum(kind = 'item') AS items
+           FROM (SELECT sync_key, 'board' AS kind FROM boards
+                 UNION ALL SELECT sync_key, 'list' FROM lists
+                 UNION ALL SELECT sync_key, 'item' FROM items)
+          GROUP BY sync_key
+          ORDER BY sync_key`,
+      )
+      .all() as { key: string; boards: number; lists: number; items: number }[];
+    // A user reaches a key either through an explicit association or by it
+    // being their own home key, so both count as a claim.
+    const claimants = sql.prepare(
+      `SELECT user_id FROM user_keys WHERE key = ?
+       UNION SELECT user_id FROM users WHERE home_key = ?`,
+    );
+    return rows.map((r) => ({
+      ...r,
+      users: (claimants.all(r.key, r.key) as { user_id: string }[]).map((u) => u.user_id),
+    }));
+  }
+
   // An unauthenticated `hello` carries only a home key, no user_id, while user
   // records are keyed by user_id. Resolve one from the other here, minting a
   // user the first time a key is seen. Minted users are unparented with
@@ -1599,7 +1631,7 @@ export function createDbApi(sql: Database.Database) {
   return {
     getServerId, upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince,
     getEntityById, upsertIntegrationResult, getIntegrationResultsSince, getIntegrationResultsForRefresh,
-    associateUserKey, removeUserKey, getUserKeys, getOrCreateUserByHomeKey, getSchemaVersion: getSchemaVersionApi, close,
+    associateUserKey, removeUserKey, getUserKeys, listSyncKeysWithData, getOrCreateUserByHomeKey, getSchemaVersion: getSchemaVersionApi, close,
     // Identity & authorization:
     getUser, findRootUser, createUser, listChildren, listAllUsers, countUsers, setUserCaps, setUserNote, setUserDisplayName,
     setUserState, getEffectiveState, promoteProvisionalUser, setAuthorizedBy, bootstrapRootUser, claimEmptyServer, grantAdminCap,

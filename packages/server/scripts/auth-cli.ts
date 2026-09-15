@@ -42,6 +42,20 @@
  *       --app-url=https://localhost:3000/ when testing against a local Vite
  *       instance.
  *
+ *   list-keys
+ *       List every sync key that holds data, with row counts and which users
+ *       can reach it. A key with no claimant is data no client will ever pull,
+ *       because a client only asks for keys it already knows about.
+ *
+ *   add-key --user=<user_id> --key=<sync_key> [--name=text]
+ *       Associate an existing sync key with a user, so their clients learn it
+ *       from `ok.user_keys` and pull its data. The in-band equivalent is a
+ *       `share` grant; this is the operator's version, for a key already
+ *       sitting on the server with nobody attached to it.
+ *
+ *   remove-key --user=<user_id> --key=<sync_key>
+ *       Drop one association. The key's data is left untouched.
+ *
  *   set-state --user=<user_id> --state=<active|suspended|revoked>
  *       One UPDATE on one row. Suspending or revoking cuts off the user's
  *       whole subtree in the same statement, since effective state is computed
@@ -129,7 +143,9 @@ function main(): void {
   const command = process.argv[2];
   if (!command || command.startsWith("--")) {
     console.error("Usage: auth-cli.ts <command> [options] [--apply] [--db=/path]");
-    console.error("Commands: bootstrap-root, list-users, issue-grant, set-state, promote, grant-admin, set-parent, reset-server-id");
+    console.error(
+      "Commands: bootstrap-root, list-users, issue-grant, list-keys, add-key, remove-key, set-state, promote, grant-admin, set-parent, reset-server-id",
+    );
     process.exit(1);
   }
 
@@ -248,6 +264,53 @@ function runCommand(
         console.log(`[auth-cli] secret (shown once, not recoverable; hand this to the recipient): ${secret}`);
         console.log(`[auth-cli] join link (shown once; the secret is in it):`);
         console.log(`  ${buildJoinUrl(named["app-url"] ?? DEFAULT_APP_URL, db.getServerId(), grantId, secret)}`);
+        break;
+      }
+
+      case "list-keys": {
+        const keys = db.listSyncKeysWithData();
+        if (keys.length === 0) {
+          console.log("[auth-cli] no sync keys hold any data");
+          break;
+        }
+        for (const k of keys) {
+          const claim = k.users.length ? k.users.join(", ") : "(UNCLAIMED: no user can reach this)";
+          console.log(`${k.key}  boards=${k.boards} lists=${k.lists} items=${k.items}  ${claim}`);
+        }
+        break;
+      }
+
+      case "add-key": {
+        const userId = requireArg(named, "user");
+        const key = requireArg(named, "key");
+        const user = db.getUser(userId);
+        if (!user) throw new Error(`No such user: ${userId}`);
+        // user_keys holds keys a user reaches IN ADDITION to their home key,
+        // and associateUserKey's callers are expected to have filtered that
+        // one out, so refuse rather than write a row nothing reads.
+        if (key === user.home_key) throw new Error(`${key} is already ${userId}'s home key`);
+        const withData = db.listSyncKeysWithData().find((k) => k.key === key);
+        if (!withData) console.warn(`[auth-cli] warning: no data on this server under '${key}' (typo?)`);
+        if (!apply) {
+          console.log(`[auth-cli] dry-run: would associate '${key}' with ${userId}`);
+          break;
+        }
+        db.associateUserKey(userId, key, named.name ?? null);
+        console.log(`[auth-cli] associated '${key}' with ${userId}${named.name ? ` as "${named.name}"` : ""}`);
+        console.log(`[auth-cli] their clients pick it up from ok.user_keys on their next connect`);
+        break;
+      }
+
+      case "remove-key": {
+        const userId = requireArg(named, "user");
+        const key = requireArg(named, "key");
+        if (!db.getUser(userId)) throw new Error(`No such user: ${userId}`);
+        if (!apply) {
+          console.log(`[auth-cli] dry-run: would drop '${key}' from ${userId}`);
+          break;
+        }
+        db.removeUserKey(userId, key);
+        console.log(`[auth-cli] dropped '${key}' from ${userId} (data untouched)`);
         break;
       }
 
