@@ -364,21 +364,25 @@ const ListView: Component = () => {
     return b ? upgradeBoardRecord(b).format.text : "[title]";
   });
 
-  // Compile each distinct format once per schema, not once per item.
+  // Compile the board format and each distinct list override once per
+  // board format and schema, not once per item. An override inherits the
+  // board's directives and definitions.
   const compiledFormat = createMemo(() => {
     const sch = schema();
-    const cache = new Map<string, CompiledFormat>();
-    return (text: string): CompiledFormat => {
-      let c = cache.get(text);
-      if (!c) cache.set(text, (c = compileFormat(text, sch)));
+    const base = boardFormatText();
+    const board = compileFormat(base, sch);
+    const overrides = new Map<string, CompiledFormat>();
+    return (override: string | undefined): CompiledFormat => {
+      if (override === undefined) return board;
+      let c = overrides.get(override);
+      if (!c) overrides.set(override, (c = compileFormat(override, sch, base)));
       return c;
     };
   });
 
   const formatItem = (item: Item, list: List): RenderedFormat => {
     const urls = assetUrls();
-    const text = list.format?.text ?? boardFormatText();
-    return compiledFormat()(text).render(item, { urlResolver: (url) => urls[url] ?? url });
+    return compiledFormat()(list.format?.text).render(item, { urlResolver: (url) => urls[url] ?? url });
   };
 
   const ItemText: Component<{ item: Item; list: List }> = (p) => {

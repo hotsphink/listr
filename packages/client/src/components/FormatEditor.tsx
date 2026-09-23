@@ -1,5 +1,5 @@
 import { type Component, createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
-import { compileFormat, escapeFormatText, formatDiagnostic, type AttributeDefinition, type Item } from "@listr/shared";
+import { compileFormat, escapeFormatText, formatDiagnostic, isSet, type AttributeDefinition, type Item } from "@listr/shared";
 import FormattedText from "./FormattedText.js";
 import { createAsset } from "../db/assets.js";
 import { assetUrls } from "../sync/assetStore.js";
@@ -9,8 +9,10 @@ interface Props {
   value: string;
   onInput: (text: string) => void;
   schema: AttributeDefinition[];
-  /** Item to render as a live preview. */
-  sampleItem?: Item;
+  /** Board format that this list format inherits from. */
+  base?: string;
+  /** Items to choose a live preview from, best first (see rankSampleItems). */
+  sampleItems?: Item[];
   placeholder?: string;
 }
 
@@ -22,9 +24,18 @@ export function appendDefinition(text: string, line: string): string {
   return `${trimmed}${hasDefinitions ? "\n" : "\n\n"}${line}`;
 }
 
+/** Order items for the preview: those with the most attributes set come first. */
+export function rankSampleItems(items: Item[]): Item[] {
+  const setCount = (item: Item) => Object.values(item.attributes).filter(isSet).length;
+  return items
+    .map((item) => ({ item, n: setCount(item) }))
+    .sort((a, b) => b.n - a.n || a.item.title.localeCompare(b.item.title))
+    .map(({ item }) => item);
+}
+
 /** Whether `text` has errors that should block saving. */
-export function formatHasErrors(text: string, schema: AttributeDefinition[]): boolean {
-  return compileFormat(text, schema).hasErrors;
+export function formatHasErrors(text: string, schema: AttributeDefinition[], base?: string): boolean {
+  return compileFormat(text, schema, base).hasErrors;
 }
 
 const FormatEditor: Component<Props> = (props) => {
@@ -50,7 +61,7 @@ const FormatEditor: Component<Props> = (props) => {
     });
   });
 
-  const compiled = createMemo(() => compileFormat(checked(), props.schema));
+  const compiled = createMemo(() => compileFormat(checked(), props.schema, props.base));
   const rows = () => Math.min(16, Math.max(2, props.value.split("\n").length + 1));
 
   createEffect(on(() => props.value, (value) => {
@@ -138,8 +149,14 @@ const FormatEditor: Component<Props> = (props) => {
     }
   };
 
+  const [sampleId, setSampleId] = createSignal<string | undefined>();
+  const sampleItem = () => {
+    const items = props.sampleItems ?? [];
+    return items.find((i) => i.id === sampleId()) ?? items[0];
+  };
+
   const preview = createMemo(() => {
-    const item = props.sampleItem;
+    const item = sampleItem();
     if (!item) return undefined;
     const urls = assetUrls();
     return compiled().render(item, { urlResolver: (url) => urls[url] ?? url });
@@ -204,9 +221,23 @@ const FormatEditor: Component<Props> = (props) => {
       </div>
       <Show when={preview()}>
         {(p) => (
-          <div class="format-preview">
-            <FormattedText html={p().html} tooltip={p().tooltip} />
-          </div>
+          <>
+            <div class="control-row format-sample">
+              <label for={`${props.id}-sample`}>Sample</label>
+              <select
+                id={`${props.id}-sample`}
+                value={sampleItem()?.id}
+                onChange={(e) => setSampleId(e.currentTarget.value)}
+              >
+                <For each={props.sampleItems}>
+                  {(item) => <option value={item.id}>{item.title}</option>}
+                </For>
+              </select>
+            </div>
+            <div class="format-preview">
+              <FormattedText html={p().html} tooltip={p().tooltip} />
+            </div>
+          </>
         )}
       </Show>
     </>

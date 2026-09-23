@@ -58,10 +58,10 @@ class Converter {
   readonly defs: string[] = [];
   private counter = 0;
 
-  constructor(private readonly macroNames: Set<string>) {}
+  constructor(private readonly macroNames: Set<string>, private readonly prefix: string) {}
 
   private define(body: string): string {
-    const name = `legacy_${++this.counter}`;
+    const name = `${this.prefix}${++this.counter}`;
     this.defs.push(`${name}=${body}`);
     return `[${name}]`;
   }
@@ -126,7 +126,7 @@ class Converter {
 /** Convert a legacy format string plus its macros to format language text. */
 export function convertLegacyFormat(formatString: string | null | undefined, macros?: Record<string, string> | null): string {
   const macroEntries = Object.entries(macros ?? {});
-  const conv = new Converter(new Set(macroEntries.map(([k]) => k)));
+  const conv = new Converter(new Set(macroEntries.map(([k]) => k)), "legacy_");
   const toplevel = conv.convertText((formatString ?? "").split("\n")[0] || "{title}");
   const macroDefs = macroEntries.map(([name, value]) => `${name}=${quote(conv.convertText(value))}`);
   const defs = [...macroDefs, ...conv.defs];
@@ -150,14 +150,23 @@ export function upgradeBoardRecord<T extends LegacyFields>(board: T): T {
 }
 
 /**
- * Upgrade a list record. A legacy list override replaced only the board's
- * first line and still used the board's macros, so those come along.
+ * Convert a legacy list override. It replaced only the board's first line, and
+ * a list override inherits the board's definitions, which include the board's
+ * converted macros. Generated names get their own prefix so they cannot
+ * replace the board's.
  */
+function convertLegacyListFormat(formatString: string, boardMacros?: Record<string, string> | null): string {
+  const conv = new Converter(new Set(Object.keys(boardMacros ?? {})), "legacy_list_");
+  const toplevel = conv.convertText(formatString.split("\n")[0] || "{title}");
+  return conv.defs.length ? `${toplevel}\n\n${conv.defs.join("\n")}` : toplevel;
+}
+
+/** Upgrade a list record. `boardMacros` are the legacy macros of the list's board. */
 export function upgradeListRecord<T extends LegacyFields>(list: T, boardMacros?: Record<string, string> | null): T {
   if (list.format !== undefined) return list;
   const { format_string, macros: _unused, ...rest } = list;
   const format = format_string != null && format_string !== ""
-    ? { version: 2, text: convertLegacyFormat(format_string, boardMacros) }
+    ? { version: 2, text: convertLegacyListFormat(format_string, boardMacros) }
     : null;
   return { ...rest, format } as unknown as T;
 }

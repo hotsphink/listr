@@ -336,13 +336,16 @@ describe("convertLegacyFormat", () => {
 });
 
 describe("record upgrades", () => {
-  it("upgrades boards and lists, carrying board macros into list overrides", () => {
+  it("upgrades boards, and lists without copying the board's macros", () => {
     const board = upgradeBoardRecord({ id: "b", format_string: "{title}{m}", macros: { m: "!" } });
     expect(board).toEqual({ id: "b", format: { version: 2, text: "[title][m]\n\nm=q( ! )" } });
     expect(upgradeBoardRecord(board)).toBe(board);
     expect(upgradeBoardRecord({ id: "b" })).toEqual({ id: "b", format: { version: 2, text: "[title]" } });
-    const list = upgradeListRecord({ id: "l", format_string: "{m}" }, { m: "!" });
-    expect(list).toEqual({ id: "l", format: { version: 2, text: "[m]\n\nm=q( ! )" } });
+    const list = upgradeListRecord({ id: "l", format_string: "{m}{m:?a:b}" }, { m: "!" });
+    expect(list).toEqual({
+      id: "l",
+      format: { version: 2, text: "[m][legacy_list_1]\n\nlegacy_list_1=cond([?m], q( a ), q( b ))" },
+    });
     expect(upgradeListRecord({ id: "l", format_string: null })).toEqual({ id: "l", format: null });
   });
 });
@@ -361,5 +364,34 @@ describe("integer attributes", () => {
     expect(html("[count] [count:stars]", { count: 3 })).toBe("3 \u2605\u2605\u2605\u2606\u2606");
     expect(html("[t]\n\nt=cond(@count >= 2.5, \"many\", \"few\")", { count: 3 })).toBe("many");
     expect(errors("[x]\n\nx=cond(@count == \"3\", \"a\")")[0]).toMatch(/cannot compare/);
+  });
+});
+
+describe("list formats inherit from the board", () => {
+  const board = [
+    "[title]",
+    "tooltip: \"board tip\" end",
+    "",
+    "a=\"A\"",
+    "b=\"B\"",
+  ].join("\n");
+  const listHtml = (text: string) => compileFormat(text, S, board).render(item("Alien")).html;
+
+  it("uses the list's toplevel with the board's definitions and directives", () => {
+    expect(listHtml("[title] [a][b]")).toBe("Alien AB");
+    expect(compileFormat("[a]", S, board).render(item("Alien")).tooltip).toBe("board tip");
+  });
+
+  it("lets the list add and redefine definitions and directives", () => {
+    const text = "[a][b][c]\ntooltip: \"list tip\" end\n\nb=\"b2\"\nc=\"C\"";
+    expect(listHtml(text)).toBe("Ab2C");
+    expect(compileFormat(text, S, board).render(item("Alien")).tooltip).toBe("list tip");
+  });
+
+  it("reports only the list's own problems", () => {
+    const badBoard = "[title]\n\nbroken=\"[nope]\"";
+    expect(compileFormat("[title]", S, badBoard).diagnostics).toEqual([]);
+    expect(compileFormat("[broken][nope2]", S, badBoard).diagnostics.map(formatDiagnostic))
+      .toEqual(["1:9: unknown attribute 'nope2'"]);
   });
 });

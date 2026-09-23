@@ -4,6 +4,8 @@
 export interface Pos {
   line: number;
   col: number;
+  /** Set when the position is in an inherited base format (a list's board). */
+  base?: true;
 }
 
 export interface Diagnostic {

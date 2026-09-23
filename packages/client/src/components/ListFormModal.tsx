@@ -2,7 +2,7 @@ import { type Component, createSignal, createEffect, For, Show } from "solid-js"
 import { FORMAT_VERSION, type Board, type FormatSpec, type Integration, type Item, type List } from "@listr/shared";
 import Modal from "./Modal.js";
 import IntegrationsEditor from "./IntegrationsEditor.js";
-import FormatEditor, { formatHasErrors } from "./FormatEditor.js";
+import FormatEditor, { formatHasErrors, rankSampleItems } from "./FormatEditor.js";
 import { db } from "../db/database.js";
 
 export interface ListFormData {
@@ -31,7 +31,7 @@ const ListFormModal: Component<Props> = (props) => {
   const [formatOverride, setFormatOverride] = createSignal("");
   const [overrideFormat, setOverrideFormat] = createSignal(false);
   const [formatError, setFormatError] = createSignal<string | null>(null);
-  const [sampleItem, setSampleItem] = createSignal<Item | undefined>();
+  const [sampleItems, setSampleItems] = createSignal<Item[]>([]);
   const [overrideIntegrations, setOverrideIntegrations] = createSignal(false);
   const [integrations, setIntegrations] = createSignal<Integration[]>([]);
 
@@ -42,9 +42,11 @@ const ListFormModal: Component<Props> = (props) => {
       setOverrideFormat(props.initial?.format != null);
       setFormatOverride(props.initial?.format?.text ?? "");
       setFormatError(null);
-      setSampleItem(undefined);
+      setSampleItems([]);
       if (props.initial) {
-        db.items.where("list_id").equals(props.initial.id).first().then(setSampleItem).catch(console.error);
+        db.items.where("list_id").equals(props.initial.id).toArray()
+          .then((items) => setSampleItems(rankSampleItems(items)))
+          .catch(console.error);
       }
       const hasIntegrationOverride = props.initial?.integrations != null;
       setOverrideIntegrations(hasIntegrationOverride);
@@ -57,7 +59,8 @@ const ListFormModal: Component<Props> = (props) => {
   const handleSubmit = (e: Event) => {
     e.preventDefault();
     if (!name().trim() || !boardId()) return;
-    if (overrideFormat() && formatHasErrors(formatOverride(), selectedBoard()?.schema ?? [])) {
+    const board = selectedBoard();
+    if (overrideFormat() && formatHasErrors(formatOverride(), board?.schema ?? [], board?.format.text)) {
       setFormatError("Fix the errors in the format before saving.");
       return;
     }
@@ -104,19 +107,27 @@ const ListFormModal: Component<Props> = (props) => {
                   onChange={(e) => {
                     setOverrideFormat(e.currentTarget.checked);
                     if (e.currentTarget.checked && !formatOverride()) {
-                      setFormatOverride(board().format.text);
+                      setFormatOverride(board().format.text.split("\n")[0]);
                     }
                   }}
                 />
                 Override board format
               </label>
               <Show when={overrideFormat()}>
+                <div class="field-hint">
+                  Replaces the board's first line. The board's directives and definitions still
+                  apply, and definitions here add to or replace them.
+                </div>
+              </Show>
+              <Show when={overrideFormat()}>
+                <label class="sr-only" for={`${uid}-format`}>Format</label>
                 <FormatEditor
                   id={`${uid}-format`}
                   value={formatOverride()}
                   onInput={(v) => { setFormatOverride(v); setFormatError(null); }}
                   schema={board().schema}
-                  sampleItem={sampleItem()}
+                  base={board().format.text}
+                  sampleItems={sampleItems()}
                   placeholder={board().format.text.split("\n")[0]}
                 />
                 <Show when={formatError()}>

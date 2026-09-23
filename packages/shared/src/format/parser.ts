@@ -28,8 +28,9 @@ export interface ParseResult {
   diagnostics: Diagnostic[];
 }
 
-export function parseProgram(source: string): ParseResult {
-  return new Parser(source.replace(/\r\n?/g, "\n")).parse();
+/** Parse a format. With `base`, positions are marked as coming from an inherited format. */
+export function parseProgram(source: string, base = false): ParseResult {
+  return new Parser(source.replace(/\r\n?/g, "\n"), base).parse();
 }
 
 class Parser {
@@ -37,7 +38,7 @@ class Parser {
   private readonly lineStarts: number[] = [0];
   readonly diagnostics: Diagnostic[] = [];
 
-  constructor(private readonly src: string) {
+  constructor(private readonly src: string, private readonly base = false) {
     for (let j = 0; j < src.length; j++) {
       if (src[j] === "\n") this.lineStarts.push(j + 1);
     }
@@ -53,7 +54,9 @@ class Parser {
       if (this.lineStarts[mid] <= index) lo = mid;
       else hi = mid - 1;
     }
-    return { line: lo + 1, col: index - this.lineStarts[lo] + 1 };
+    const pos: Pos = { line: lo + 1, col: index - this.lineStarts[lo] + 1 };
+    if (this.base) pos.base = true;
+    return pos;
   }
 
   private error(message: string, index: number): void {
@@ -283,7 +286,7 @@ class Parser {
 
     const saved = this.src;
     // Parse the region as if the source ended at `end`.
-    const sub = new Parser(saved.slice(0, end));
+    const sub = new Parser(saved.slice(0, end), this.base);
     sub.i = bodyStart;
     let expr: Expr;
     try {

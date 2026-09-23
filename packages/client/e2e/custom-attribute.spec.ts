@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { clearDatabase, createBoard, createListInBoard, addItemViaModal } from "./helpers.js";
+import { clearDatabase, createBoard, createListInBoard, addItemToList, addItemViaModal } from "./helpers.js";
 
 test.describe("custom attributes", () => {
   test.beforeEach(async ({ page }) => {
@@ -106,6 +106,76 @@ test.describe("custom attributes", () => {
     });
 
     await expect(page.locator(".list-view-item:not(.inline-add-item)").first()).toContainText("Chess 7.85 1200");
+  });
+
+  test("a list format override inherits the board's definitions", async ({ page }) => {
+    await createBoard(page, "Inherit", [], '[title] [tag]\n\ntag="(board)"');
+    await createListInBoard(page, "Mine", "Inherit");
+    await expect(page.locator(".page-header h1")).toHaveText("Inherit");
+    await addItemToList(page, "Alien");
+    const text = page.locator(".list-view-item:not(.inline-add-item) .formatted-text").first();
+    await expect(text).toHaveText("Alien (board)");
+
+    await page.locator(".multi-list-column-header", { hasText: "Mine" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit" }).click();
+    const modal = page.locator(".modal");
+    await modal.getByLabel("Override board format").check();
+    // The override starts from the board's first line only.
+    const format = modal.getByLabel("Format", { exact: true });
+    await expect(format).toHaveValue("[title] [tag]");
+    await format.fill("[tag] [title]");
+    await modal.getByRole("button", { name: "Save" }).click();
+
+    await expect(text).toHaveText("(board) Alien");
+  });
+
+  test("the board editor warns before breaking a list's format", async ({ page }) => {
+    await createBoard(page, "Warn", [], '[title]\n\ntag="(board)"');
+    await createListInBoard(page, "Mine", "Warn");
+    await expect(page.locator(".page-header h1")).toHaveText("Warn");
+
+    await page.locator(".multi-list-column-header", { hasText: "Mine" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit" }).click();
+    let modal = page.locator(".modal");
+    await modal.getByLabel("Override board format").check();
+    await modal.getByLabel("Format", { exact: true }).fill("[title] [tag]");
+    await modal.getByRole("button", { name: "Save" }).click();
+    await expect(modal).toHaveCount(0);
+
+    await page.locator(".sidebar-board", { hasText: "Warn" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit" }).click();
+    modal = page.locator(".modal");
+    await expect(modal.locator(".field-warning")).toHaveCount(0);
+    await modal.getByLabel("Format", { exact: true }).fill("[title]");
+    await expect(modal.locator(".field-warning")).toContainText('list "Mine"');
+
+    // Declining the confirmation keeps the editor open; accepting saves.
+    page.once("dialog", (d) => d.dismiss());
+    await modal.getByRole("button", { name: "Save" }).click();
+    await expect(page.locator(".modal h2")).toHaveText("Edit Board");
+    page.once("dialog", (d) => d.accept());
+    await modal.getByRole("button", { name: "Save" }).click();
+    await expect(page.locator(".modal")).toHaveCount(0);
+  });
+
+  test("the format preview defaults to the fullest item and can switch items", async ({ page }) => {
+    await createBoard(page, "Preview", [
+      { key: "year", label: "Year", type: "integer" },
+    ], "[title] ([year/?])");
+    await createListInBoard(page, "Films", "Preview");
+    await expect(page.locator(".page-header h1")).toHaveText("Preview");
+    await addItemToList(page, "Plain");
+    await addItemViaModal(page, "Rich", async (modal) => {
+      await modal.getByLabel("Year").fill("1979");
+    });
+
+    await page.locator(".sidebar-board", { hasText: "Preview" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit" }).click();
+    const modal = page.locator(".modal");
+    const preview = modal.locator(".format-preview");
+    await expect(preview).toHaveText("Rich (1979)");
+    await modal.getByLabel("Sample").selectOption({ label: "Plain" });
+    await expect(preview).toHaveText("Plain (?)");
   });
 
   test("board format applies styles and a tooltip and sanitizes markup", async ({ page }) => {

@@ -45,6 +45,16 @@
   color: var(--danger);
 }
 
+.format-sample {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.format-sample select {
+  flex: 1;
+  min-width: 0;
+}
+
 .format-preview {
   margin-top: var(--space-3);
   padding: var(--space-3) var(--space-4);

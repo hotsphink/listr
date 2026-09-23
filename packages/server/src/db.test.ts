@@ -559,9 +559,9 @@ describe("schema_version migrations", () => {
         expect(board).not.toHaveProperty("format_string");
         expect(board).not.toHaveProperty("macros");
         expect(board.updated_at).toBe(100);
-        // A list override brings along the board macros it used to share.
+        // A list override inherits the board's definitions, including its macros.
         const [list] = db.getEntitiesSince("list", "sharedKey", 0) as any[];
-        expect(list.format).toEqual({ version: 2, text: "[m]\n\nm=q( ! )" });
+        expect(list.format).toEqual({ version: 2, text: "[m]" });
         expect(list.updated_at).toBe(100);
       };
       const db = openDb(path);

@@ -1,23 +1,43 @@
-import { type Component, createSignal, createEffect, Show } from "solid-js";
-import { FORMAT_VERSION, type AttributeDefinition, type Board, type FormatSpec, type Integration, type Item } from "@listr/shared";
+import { type Component, createSignal, createEffect, createMemo, Show } from "solid-js";
+import { compileFormat, FORMAT_VERSION, type AttributeDefinition, type Board, type FormatSpec, type Integration, type Item } from "@listr/shared";
 import Modal from "./Modal.js";
 import SchemaEditor from "./SchemaEditor.js";
 import IntegrationsEditor from "./IntegrationsEditor.js";
-import FormatEditor, { formatHasErrors } from "./FormatEditor.js";
+import FormatEditor, { formatHasErrors, rankSampleItems } from "./FormatEditor.js";
 import { db } from "../db/database.js";
 
 function generateFormat(schema: AttributeDefinition[]): string {
   return ["[title]", ...schema.map((a) => `?[${a.key}]`)].join(" ");
 }
 
-/** The first item of the board's first list, for the format preview. */
-export async function sampleItemForBoard(boardId: string): Promise<Item | undefined> {
-  const lists = await db.lists.where("board_id").equals(boardId).sortBy("position");
-  for (const list of lists) {
-    const item = await db.items.where("list_id").equals(list.id).first();
-    if (item) return item;
-  }
-  return undefined;
+interface ListOverride {
+  name: string;
+  text: string;
+  /** Whether the override compiled cleanly against the board as saved. */
+  okBefore: boolean;
+}
+
+/** The board's lists that have their own format, for spotting edits that break them. */
+async function listOverridesForBoard(board: Board): Promise<ListOverride[]> {
+  const lists = await db.lists.where("board_id").equals(board.id).sortBy("position");
+  return lists.flatMap((l) => l.format == null ? [] : [{
+    name: l.name,
+    text: l.format.text,
+    okBefore: !compileFormat(l.format.text, board.schema, board.format.text).hasErrors,
+  }]);
+}
+
+/** The board's items, ranked for the format preview. */
+async function sampleItemsForBoard(boardId: string): Promise<Item[]> {
+  const listIds = await db.lists.where("board_id").equals(boardId).primaryKeys();
+  return rankSampleItems(await db.items.where("list_id").anyOf(listIds).toArray());
+}
+
+function brokenListsMessage(names: string[]): string {
+  const quoted = names.map((n) => `"${n}"`).join(", ");
+  return names.length === 1
+    ? `These changes break the custom format of list ${quoted}.`
+    : `These changes break the custom formats of lists ${quoted}.`;
 }
 
 export interface BoardFormData {
@@ -45,7 +65,8 @@ const BoardFormModal: Component<Props> = (props) => {
   const [name, setName] = createSignal("");
   const [color, setColor] = createSignal("#5b8def");
   const [formatText, setFormatText] = createSignal("[title]");
-  const [sampleItem, setSampleItem] = createSignal<Item | undefined>();
+  const [sampleItems, setSampleItems] = createSignal<Item[]>([]);
+  const [listOverrides, setListOverrides] = createSignal<ListOverride[]>([]);
   const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
   const [boardSyncKey, setBoardSyncKey] = createSignal("");
   const [integrations, setIntegrations] = createSignal<Integration[]>([]);
@@ -60,8 +81,12 @@ const BoardFormModal: Component<Props> = (props) => {
       setName(props.initial?.name ?? "");
       setColor(props.initial?.color ?? "#5b8def");
       setFormatText(props.initial?.format.text ?? "[title]");
-      setSampleItem(undefined);
-      if (props.initial) sampleItemForBoard(props.initial.id).then(setSampleItem).catch(console.error);
+      setSampleItems([]);
+      setListOverrides([]);
+      if (props.initial) {
+        sampleItemsForBoard(props.initial.id).then(setSampleItems).catch(console.error);
+        listOverridesForBoard(props.initial).then(setListOverrides).catch(console.error);
+      }
       setSchema(props.initial?.schema ?? []);
       setBoardSyncKey(props.initial?.sync_key ?? props.defaultSyncKey ?? "");
       setIntegrations(props.initial?.integrations ?? []);
@@ -99,6 +124,8 @@ const BoardFormModal: Component<Props> = (props) => {
       setFormatError("Fix the errors in the format before saving.");
       return;
     }
+    const broken = brokenLists();
+    if (broken.length > 0 && !confirm(`${brokenListsMessage(broken)} Save anyway?`)) return;
 
     setSaving(true);
     try {
@@ -116,6 +143,11 @@ const BoardFormModal: Component<Props> = (props) => {
       setSaving(false);
     }
   };
+
+  // Lists whose own format worked with the saved board but not with these edits.
+  const brokenLists = createMemo(() => listOverrides()
+    .filter((l) => l.okBefore && compileFormat(l.text, schema(), formatText()).hasErrors)
+    .map((l) => l.name));
 
   return (
     <Modal open={props.open} onClose={props.onClose} class="board-form">
@@ -171,7 +203,7 @@ const BoardFormModal: Component<Props> = (props) => {
             value={formatText()}
             onInput={handleFormatInput}
             schema={schema()}
-            sampleItem={sampleItem()}
+            sampleItems={sampleItems()}
             placeholder="[title]"
           />
           <Show when={formatError()}>
@@ -190,6 +222,9 @@ const BoardFormModal: Component<Props> = (props) => {
             <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
           </div>
         </div>
+        <Show when={brokenLists().length > 0}>
+          <div class="field-warning" role="status">{brokenListsMessage(brokenLists())}</div>
+        </Show>
         <Show when={saveError()}>
           {(err) => <div class="field-error" role="alert">{err()}</div>}
         </Show>

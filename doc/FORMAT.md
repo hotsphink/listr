@@ -330,7 +330,14 @@ set in others. The definition of unset is: `undefined`, `null`, `""`, `[]`, or
 ## Overrides
 
 Formats will normally be defined at a board level, though individual lists can
-override. This override is total; nothing is inherited from the board format.
+override. A list format always replaces the board's toplevel line. It inherits
+all of the board's directives and definitions. Its own definitions add to them
+or replace board definitions with the same name, and its own `wrap` or `tooltip`
+replaces the board's.
+
+Diagnostics for a list format cover only the list's own text. Changing or
+removing a board definition that a list format uses can break the list format,
+and that shows up only when viewing or editing the list format.
 
 ## Migration
 
@@ -352,9 +359,10 @@ override. This override is total; nothing is inherited from the board format.
   Conditionals `{body|fallback}` become `ifdef` definitions and ternaries
   `{key:?yes:no}` become `cond` definitions, named `legacy_1`, `legacy_2`,
   and so on. Macros become definitions. A literal `[` that is not part of a
-  Markdown link is escaped. A list override used to replace only the first
-  line and still used the board's macros, so a converted override includes
-  the board's macros as its own definitions.
+  Markdown link is escaped. A list override replaced only the first line, which
+  still matches, and it inherits the board's converted macros. Definitions
+  generated for a list override are named `legacy_list_1`, `legacy_list_2`,
+  and so on, so they do not replace the board's.
 
 ## Implementation Notes
 

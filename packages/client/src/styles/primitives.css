@@ -289,6 +289,12 @@ button:disabled,
   white-space: pre-wrap;
 }
 
+.field-warning {
+  font-size: var(--text-xs);
+  color: var(--warning-dim);
+  margin-top: var(--space-1);
+}
+
 /* Wins over the focus rule, so a bad value stays flagged while being retyped. */
 .input-error,
 .input-error:focus {
