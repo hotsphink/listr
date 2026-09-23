@@ -520,11 +520,6 @@ const ListView: Component = () => {
     setItemCtxMenu(null);
   };
 
-  const handleItemEditFromCtx = () => {
-    const ctx = itemCtxMenu();
-    if (ctx) { setEditingItem(ctx.item); setItemCtxMenu(null); }
-  };
-
   const listCtxMenuItems = createMemo((): MenuItem[] => {
     const ctx = listCtxMenu();
     if (!ctx) return [];
@@ -600,7 +595,10 @@ const ListView: Component = () => {
     const menuItems: MenuItem[] = [];
     const n = selectedItemIds().size;
     if (ctx && n === 1 && selectedItemIds().has(ctx.item.id)) {
-      menuItems.push({ label: "Edit Item", action: handleItemEditFromCtx });
+      // Capture the item now: ContextMenu closes the menu, clearing
+      // itemCtxMenu, before it runs the action.
+      const { item } = ctx;
+      menuItems.push({ label: "Edit Item", action: () => { setEditingItem(item); setItemCtxMenu(null); } });
     }
     if (n > 1) {
       menuItems.push({ label: `Edit ${n} items`, action: () => { setShowMultiEdit(true); setItemCtxMenu(null); } });

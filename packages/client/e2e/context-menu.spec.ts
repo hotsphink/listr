@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { clearDatabase, createBoard, createListInBoard } from "./helpers.js";
+import { addItemToList, clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 
 test.describe("sidebar board context menu", () => {
   test.beforeEach(async ({ page }) => {
@@ -96,5 +96,24 @@ test.describe("list column header context menu", () => {
 
     await expect(page.locator(".multi-list-column-name", { hasText: "Watchlist" })).toHaveCount(0);
     await expect(page.locator(".multi-list-column-name", { hasText: "Books" })).toBeVisible();
+  });
+});
+
+test.describe("item context menu", () => {
+  test.beforeEach(async ({ page }) => {
+    await clearDatabase(page);
+    await createBoard(page, "Movies");
+    await createListInBoard(page, "Watchlist", "Movies");
+    await expect(page.locator(".page-header h1")).toHaveText("Movies");
+    await addItemToList(page, "Alien");
+  });
+
+  test("Edit Item opens the edit modal for that item", async ({ page }) => {
+    const item = page.locator(".list-view-item:not(.inline-add-item)", { hasText: "Alien" });
+    await item.click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit Item" }).click();
+
+    await expect(page.locator(".modal h2")).toHaveText("Edit Item");
+    await expect(page.locator(".modal input").first()).toHaveValue("Alien");
   });
 });
