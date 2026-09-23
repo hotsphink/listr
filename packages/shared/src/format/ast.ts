@@ -18,7 +18,16 @@ export interface Diagnostic {
 
 export type TextPart =
   | { k: "lit"; text: string }
-  | { k: "ref"; name: string; variant?: string; fallback?: TextPart[]; optSpace: boolean; pos: Pos }
+  | {
+      k: "ref";
+      name: string;
+      /** Arguments of a call to a parameterized definition. */
+      args?: Expr[];
+      variant?: string;
+      fallback?: TextPart[];
+      optSpace: boolean;
+      pos: Pos;
+    }
   | { k: "link"; text: TextPart[]; url: TextPart[] }
   | { k: "img"; alt: TextPart[]; url: TextPart[] };
 
@@ -78,6 +87,8 @@ export type Expr =
 
 export interface Definition {
   name: string;
+  /** Parameter names, bound to the call's arguments within `expr`. */
+  params: string[];
   expr: Expr;
   pos: Pos;
 }

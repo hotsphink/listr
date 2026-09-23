@@ -178,6 +178,34 @@ test.describe("custom attributes", () => {
     await expect(preview).toHaveText("Plain (?)");
   });
 
+  test("Ctrl-Enter in the format editor saves", async ({ page }) => {
+    await createBoard(page, "Keys");
+    await createListInBoard(page, "Things", "Keys");
+    await expect(page.locator(".page-header h1")).toHaveText("Keys");
+    await addItemToList(page, "Alien");
+
+    await page.locator(".sidebar-board", { hasText: "Keys" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit" }).click();
+    const format = page.locator(".modal").getByLabel("Format", { exact: true });
+    await format.fill("[title]!");
+    await format.press("Control+Enter");
+
+    await expect(page.locator(".modal")).toHaveCount(0);
+    await expect(page.locator(".list-view-item:not(.inline-add-item) .formatted-text").first()).toHaveText("Alien!");
+  });
+
+  test("Ctrl-Enter does not save a format with errors", async ({ page }) => {
+    await createBoard(page, "Keys2");
+    await page.locator(".sidebar-board", { hasText: "Keys2" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit" }).click();
+    const format = page.locator(".modal").getByLabel("Format", { exact: true });
+    await format.fill("[nope]");
+    await format.press("Control+Enter");
+
+    await expect(page.locator(".modal .field-error")).toContainText("Fix the errors");
+    await expect(page.locator(".modal h2")).toHaveText("Edit Board");
+  });
+
   test("board format applies styles and a tooltip and sanitizes markup", async ({ page }) => {
     const format = [
       '[title] <img src=x onerror="window.__xss = 1"><span class="modal-overlay">[year]</span>',

@@ -21,6 +21,15 @@ export interface RenderOptions {
 
 const MAX_DEPTH = 64;
 
+/** A name bound by `wrap as` or by a call's parameters, with the scope it is evaluated in. */
+interface Binding {
+  expr: Expr;
+  env: Env;
+}
+type Env = Map<string, Binding>;
+
+type Ref = Extract<TextPart, { k: "ref" }>;
+
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -51,11 +60,18 @@ export function runsToHtml(runs: Run[]): string {
   return html;
 }
 
+/** Apply `fn` to a run's text, skipping HTML tags and entities in raw runs. */
+function mapText(run: Run, fn: (text: string) => string): string {
+  if (!run.raw) return fn(run.text);
+  return run.text.replace(/<[^>]*>|&[#A-Za-z0-9]+;|[^<&]+|[<&]/g, (m) =>
+    m.startsWith("<") && m.length > 1 || (m.startsWith("&") && m.length > 1) ? m : fn(m));
+}
+
 /** Refs that `ifdef` checks: those used directly in the body without their own fallback. */
-function collectRequiredRefs(expr: Expr, out: Set<string>): void {
+function collectRequiredRefs(expr: Expr, out: Ref[]): void {
   const fromText = (parts: TextPart[]) => {
     for (const p of parts) {
-      if (p.k === "ref" && !p.fallback && !p.optSpace) out.add(p.name);
+      if (p.k === "ref" && !p.fallback && !p.optSpace) out.push(p);
       else if (p.k === "link") { fromText(p.text); fromText(p.url); }
       else if (p.k === "img") { fromText(p.alt); fromText(p.url); }
     }
@@ -83,7 +99,8 @@ export class Evaluator {
     const out: Run[] = [];
     const wrap = this.program.wrap;
     if (wrap) {
-      this.evalExpr(wrap.body, out, new Map([[wrap.name, this.program.toplevel]]));
+      const top: Binding = { expr: { k: "text", parts: this.program.toplevel }, env: new Map() };
+      this.evalExpr(wrap.body, out, new Map([[wrap.name, top]]));
     } else {
       this.evalText(this.program.toplevel, out, new Map());
     }
@@ -117,16 +134,25 @@ export class Evaluator {
     return out;
   }
 
-  /** Evaluate a derived attribute or wrap binding in place. Returns false if `name` is neither. */
-  private evalNamed(name: string, out: Run[], locals: Map<string, TextPart[]>): boolean {
+  /**
+   * Evaluate a binding or derived attribute in place, binding a definition's
+   * parameters to `args` evaluated in the caller's scope. Returns false if
+   * `name` is neither.
+   */
+  private evalNamed(name: string, args: Expr[] | undefined, out: Run[], env: Env): boolean {
     if (this.depth > MAX_DEPTH) return true;
-    const local = locals.get(name);
-    const def = this.isAttribute(name) ? undefined : this.program.defs.get(name);
+    const local = env.get(name);
+    const def = local || this.isAttribute(name) ? undefined : this.program.defs.get(name);
     if (!local && !def) return false;
     this.depth++;
     try {
-      if (local) this.evalText(local, out, new Map());
-      else this.evalExpr(def!.expr, out, new Map());
+      if (local) {
+        this.evalExpr(local.expr, out, local.env);
+      } else {
+        const empty: Expr = { k: "text", parts: [] };
+        const callEnv: Env = new Map(def!.params.map((p, i) => [p, { expr: args?.[i] ?? empty, env }]));
+        this.evalExpr(def!.expr, out, callEnv);
+      }
     } finally {
       this.depth--;
     }
@@ -134,18 +160,18 @@ export class Evaluator {
   }
 
   /** Whether `name` is set: an attribute with a value, or a derived value that renders non-empty. */
-  private nameIsSet(name: string, locals: Map<string, TextPart[]>): boolean {
-    if (this.isAttribute(name)) {
+  private nameIsSet(name: string, env: Env, args?: Expr[]): boolean {
+    if (!env.has(name) && this.isAttribute(name)) {
       const type = attrType(name, this.schema);
       return isSet(rawValue(this.item, name, type));
     }
-    const runs = this.sandbox((out) => this.evalNamed(name, out, locals));
+    const runs = this.sandbox((out) => this.evalNamed(name, args, out, env));
     return !isEmptyRuns(runs);
   }
 
   // -- Text ------------------------------------------------------------------
 
-  evalText(parts: TextPart[], out: Run[], locals: Map<string, TextPart[]>): void {
+  evalText(parts: TextPart[], out: Run[], locals: Env): void {
     for (const part of parts) {
       switch (part.k) {
         case "lit":
@@ -171,16 +197,16 @@ export class Evaluator {
     }
   }
 
-  private resolveUrl(parts: TextPart[], locals: Map<string, TextPart[]>): string {
+  private resolveUrl(parts: TextPart[], locals: Env): string {
     const runs = this.sandbox((o) => this.evalText(parts, o, locals));
     const url = runs.map((r) => r.text).join("").trim();
     return this.opts.urlResolver ? this.opts.urlResolver(url) : url;
   }
 
-  private evalRef(ref: Extract<TextPart, { k: "ref" }>, out: Run[], locals: Map<string, TextPart[]>): void {
+  private evalRef(ref: Ref, out: Run[], locals: Env): void {
     let value: Run[] = [];
     let set: boolean;
-    const type = attrType(ref.name, this.schema);
+    const type = locals.has(ref.name) ? undefined : attrType(ref.name, this.schema);
     if (type !== undefined) {
       const raw = rawValue(this.item, ref.name, type);
       set = isSet(raw);
@@ -188,7 +214,7 @@ export class Evaluator {
         this.emit(value, renderValue(raw, type, ref.name, ref.variant), false);
       }
     } else {
-      this.evalNamed(ref.name, value, locals);
+      this.evalNamed(ref.name, ref.args, value, locals);
       if (ref.variant) value = this.applyTextVariant(value, ref.variant);
       set = !isEmptyRuns(value);
     }
@@ -203,8 +229,8 @@ export class Evaluator {
 
   private applyTextVariant(runs: Run[], variant: string): Run[] {
     switch (variant) {
-      case "upper": return runs.map((r) => (r.raw ? r : { ...r, text: r.text.toUpperCase() }));
-      case "lower": return runs.map((r) => (r.raw ? r : { ...r, text: r.text.toLowerCase() }));
+      case "upper": return runs.map((r) => ({ ...r, text: mapText(r, (t) => t.toUpperCase()) }));
+      case "lower": return runs.map((r) => ({ ...r, text: mapText(r, (t) => t.toLowerCase()) }));
       case "url": {
         const text = plainText(runs);
         return text ? [{ text: encodeURIComponent(text), raw: false, styles: runs[0].styles }] : [];
@@ -219,7 +245,7 @@ export class Evaluator {
 
   // -- Expressions -----------------------------------------------------------
 
-  evalExpr(expr: Expr, out: Run[], locals: Map<string, TextPart[]>): void {
+  evalExpr(expr: Expr, out: Run[], locals: Env): void {
     switch (expr.k) {
       case "text":
         this.evalText(expr.parts, out, locals);
@@ -235,9 +261,9 @@ export class Evaluator {
         else if (expr.else) this.evalExpr(expr.else, out, locals);
         break;
       case "ifdef": {
-        const refs = new Set<string>();
+        const refs: Ref[] = [];
         collectRequiredRefs(expr.body, refs);
-        const ok = [...refs].every((n) => this.nameIsSet(n, locals));
+        const ok = refs.every((r) => this.nameIsSet(r.name, locals, r.args));
         if (ok) this.evalExpr(expr.body, out, locals);
         else if (expr.else) this.evalExpr(expr.else, out, locals);
         break;
@@ -285,7 +311,7 @@ export class Evaluator {
 
   // -- Conditions ------------------------------------------------------------
 
-  private operandValue(op: Operand, locals: Map<string, TextPart[]>): TypedValue {
+  private operandValue(op: Operand, locals: Env): TypedValue {
     switch (op.k) {
       case "attr": {
         const type = attrType(op.name, this.schema);
@@ -300,7 +326,7 @@ export class Evaluator {
     }
   }
 
-  evalCond(cond: Cond, locals: Map<string, TextPart[]>): boolean {
+  evalCond(cond: Cond, locals: Env): boolean {
     switch (cond.k) {
       case "truthy": {
         const type = attrType(cond.name, this.schema);

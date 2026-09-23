@@ -174,7 +174,7 @@ class Parser {
   }
 
   private looksLikeDefinition(index: number): boolean {
-    return /^[A-Za-z_][A-Za-z0-9_]*[ \t]*=(?!=)/.test(this.src.slice(index, this.eolIndex(index)));
+    return /^[A-Za-z_][A-Za-z0-9_]*(?:[ \t]*\([^)]*\))?[ \t]*=(?!=)/.test(this.src.slice(index, this.eolIndex(index)));
   }
 
   private parseDirectives(program: Program): void {
@@ -245,17 +245,38 @@ class Parser {
       try {
         const name = this.readIdent();
         this.skipInline();
+        const params = this.src[this.i] === "(" ? this.parseParams() : [];
+        this.skipInline();
         if (this.src[this.i] !== "=") this.fail("expected '=' after definition name");
         this.i++;
         const expr = this.parseDefinitionBody();
         if (program.defs.has(name)) this.error(`duplicate definition of '${name}'`, start);
-        else program.defs.set(name, { name, expr, pos: this.pos(start) } satisfies Definition);
+        else program.defs.set(name, { name, params, expr, pos: this.pos(start) } satisfies Definition);
       } catch (e) {
         if (!(e instanceof ParseError)) throw e;
         this.error(e.message, e.index);
         this.i = start;
         this.recover();
       }
+    }
+  }
+
+  /** Parse `(a, b, ...)` after a definition name. */
+  private parseParams(): string[] {
+    this.i++;
+    const params: string[] = [];
+    this.skipInline();
+    if (this.src[this.i] === ")") { this.i++; return params; }
+    for (;;) {
+      this.skipInline();
+      const start = this.i;
+      const name = this.readIdent();
+      if (params.includes(name)) this.fail(`duplicate parameter '${name}'`, start);
+      params.push(name);
+      this.skipInline();
+      if (this.src[this.i] === ",") { this.i++; continue; }
+      if (this.src[this.i] === ")") { this.i++; return params; }
+      this.fail("expected ',' or ')' in parameter list");
     }
   }
 
@@ -334,7 +355,25 @@ class Parser {
     if (this.isWordAt("join")) return this.parseJoin();
     if (this.isWordAt("style")) return this.parseStyle();
     if (this.isWordAt("else") || this.isWordAt("end")) this.fail(`unexpected '${this.isWordAt("end") ? "end" : "else"}'`);
+    if (IDENT_START.test(c)) return this.parseBareCall();
     this.fail(`unexpected '${c}'`);
+  }
+
+  /** `name(expr, ...)`: a call to a parameterized definition in expression position. */
+  private parseBareCall(): Expr {
+    const start = this.i;
+    const name = this.readIdent();
+    if (this.src[this.i] !== "(") this.fail(`unexpected name '${name}'; write "[${name}]" to insert it`, start);
+    let args: Expr[] = [];
+    this.i++;
+    this.skipWs(true);
+    if (this.src[this.i] === ")") {
+      this.i++;
+    } else {
+      this.i--;
+      args = this.parseArgs();
+    }
+    return { k: "text", parts: [{ k: "ref", name, args, optSpace: false, pos: this.pos(start) }] };
   }
 
   private isFlexQuoteAt(index: number): boolean {
@@ -741,16 +780,51 @@ class Parser {
   }
 
   /** Parse `name[:variant][/fallback]` between `start` and `end` (exclusive). */
+  /** Parse `name[(args)][:variant][/fallback]` between `start` and `end` (exclusive). */
   private parseRef(start: number, end: number, optSpace: boolean): TextPart | null {
-    const inner = this.src.slice(start, end);
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)(?::([A-Za-z_][A-Za-z0-9_]*))?/.exec(inner);
-    const rest = m ? inner.slice(m[0].length) : inner;
-    if (!m || (rest && rest[0] !== "/")) {
-      if (inner.startsWith("?")) this.error("[?name] is only allowed in conditions", start - 1);
-      else this.error("invalid reference; expected [name], [name:variant], or [name/fallback] (write \\[ for a literal bracket)", start - 1);
+    const invalid = () => {
+      if (this.src[start] === "?") this.error("[?name] is only allowed in conditions", start - 1);
+      else this.error("invalid reference; expected [name], [name(args)], [name:variant], or [name/fallback] (write \\[ for a literal bracket)", start - 1);
       return null;
+    };
+    const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(this.src.slice(start, end))?.[0];
+    if (!name) return invalid();
+    let j = start + name.length;
+    let args: Expr[] | undefined;
+    if (this.src[j] === "(") {
+      const close = this.matchClose(j, end, "(", ")");
+      if (close < 0) return invalid();
+      args = this.splitArgs(j + 1, close).map(([s, e]): Expr => ({ k: "text", parts: this.parseText(s, e) }));
+      j = close + 1;
     }
-    const fallback = rest ? this.parseText(start + m[0].length + 1, end) : undefined;
-    return { k: "ref", name: m[1], variant: m[2], fallback, optSpace, pos: this.pos(start - 1) };
+    const variant = /^:([A-Za-z_][A-Za-z0-9_]*)/.exec(this.src.slice(j, end));
+    if (variant) j += variant[0].length;
+    if (j < end && this.src[j] !== "/") return invalid();
+    const fallback = j < end ? this.parseText(j + 1, end) : undefined;
+    return { k: "ref", name, args, variant: variant?.[1], fallback, optSpace, pos: this.pos(start - 1) };
+  }
+
+  /**
+   * Split call arguments between `start` and `end` at top-level commas,
+   * trimming unescaped spaces around each. Returns [start, end) ranges.
+   */
+  private splitArgs(start: number, end: number): [number, number][] {
+    const ranges: [number, number][] = [];
+    let depth = 0;
+    let from = start;
+    const push = (s: number, e: number) => {
+      while (s < e && (this.src[s] === " " || this.src[s] === "\t")) s++;
+      while (e > s && (this.src[e - 1] === " " || this.src[e - 1] === "\t") && this.src[e - 2] !== "\\") e--;
+      ranges.push([s, e]);
+    };
+    for (let j = start; j < end; j++) {
+      const c = this.src[j];
+      if (c === "\\") { j++; continue; }
+      if (c === "[" || c === "(") depth++;
+      else if (c === "]" || c === ")") depth--;
+      else if (c === "," && depth === 0) { push(from, j); from = j + 1; }
+    }
+    push(from, end);
+    return ranges.length === 1 && ranges[0][0] === ranges[0][1] ? [] : ranges;
   }
 }

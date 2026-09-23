@@ -24,6 +24,11 @@ export function checkProgram(program: Program, schemaList: AttributeDefinition[]
     if (typeOf(def.name) !== undefined) {
       error(`'${def.name}' is already an attribute; a derived attribute cannot shadow it`, def.pos);
     }
+    for (const p of def.params) {
+      if (typeOf(p) !== undefined || program.defs.has(p)) {
+        error(`parameter '${p}' of '${def.name}' shadows an attribute or definition`, def.pos);
+      }
+    }
   }
   if (program.wrap && (typeOf(program.wrap.name) !== undefined || program.defs.has(program.wrap.name))) {
     error(`wrap name '${program.wrap.name}' shadows an attribute or definition`, program.wrap.pos);
@@ -40,10 +45,24 @@ export function checkProgram(program: Program, schemaList: AttributeDefinition[]
     return false;
   };
 
+  /** Check that a reference passes a definition the arguments it takes. */
+  const checkArity = (ref: Extract<TextPart, { k: "ref" }>, scope: Scope): void => {
+    const nargs = ref.args?.length ?? 0;
+    const def = typeOf(ref.name) === undefined && !scope.locals.has(ref.name) ? program.defs.get(ref.name) : undefined;
+    const nparams = def?.params.length ?? 0;
+    if (nargs > 0 && nparams === 0) {
+      error(`'${ref.name}' is not a parameterized definition and takes no arguments`, ref.pos);
+    } else if (def && nargs !== nparams) {
+      error(`'${ref.name}' takes ${nparams} argument${nparams === 1 ? "" : "s"} (${def.params.join(", ")}) but got ${nargs}`, ref.pos);
+    }
+  };
+
   const checkText = (parts: TextPart[], scope: Scope): void => {
     for (const p of parts) {
       if (p.k === "ref") {
         if (!checkName(p.name, p.pos, scope)) continue;
+        checkArity(p, scope);
+        for (const arg of p.args ?? []) checkExpr(arg, scope);
         if (p.variant) {
           const type = typeOf(p.name);
           const err = type !== undefined
@@ -86,9 +105,12 @@ export function checkProgram(program: Program, schemaList: AttributeDefinition[]
         break;
       case "set":
         for (const n of cond.names) {
-          if (checkName(n, cond.pos, scope) && typeOf(n) === "boolean") {
+          if (!checkName(n, cond.pos, scope)) continue;
+          if (typeOf(n) === "boolean") {
             warn(`booleans are always set, so [?${n}] is always true; use @${n} to test the value`, cond.pos);
           }
+          const nparams = scope.locals.has(n) ? 0 : program.defs.get(n)?.params.length ?? 0;
+          if (nparams > 0) error(`'${n}' needs arguments; test "[${n}(...)]" != "" instead`, cond.pos);
         }
         break;
       case "cmp": {
@@ -167,7 +189,7 @@ export function checkProgram(program: Program, schemaList: AttributeDefinition[]
 
   const deps = new Map<string, Set<string>>();
   for (const def of program.defs.values()) {
-    const scope: Scope = { locals: new Set(), deps: new Set() };
+    const scope: Scope = { locals: new Set(def.params), deps: new Set() };
     checkExpr(def.expr, scope);
     deps.set(def.name, scope.deps);
   }

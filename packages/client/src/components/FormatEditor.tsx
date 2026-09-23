@@ -177,6 +177,13 @@ const FormatEditor: Component<Props> = (props) => {
           classList={{ "input-error": compiled().hasErrors }}
           value={props.value}
           onInput={(e) => handleInput(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            // Ctrl-Enter (Cmd-Enter on Mac) saves, through the form's own checks.
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              e.currentTarget.form?.requestSubmit();
+            }
+          }}
           onPaste={handlePaste}
           placeholder={props.placeholder}
           rows={rows()}
@@ -217,7 +224,7 @@ const FormatEditor: Component<Props> = (props) => {
         Line 1 is the display format. Available: [title]
         {props.schema.length > 0 ? ", " + props.schema.map((a) => `[${a.key}]`).join(", ") : ""}.
         After a blank line, <code>name="..."</code> defines a derived attribute. Drop, paste, or upload
-        images to insert them as assets. See doc/FORMAT.md for the full language.
+        images to insert them as assets. Ctrl-Enter saves. See doc/FORMAT.md for the full language.
       </div>
       <Show when={preview()}>
         {(p) => (

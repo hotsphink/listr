@@ -178,6 +178,10 @@ and be ignored at display time.
   * An unknown variant, or one that does not apply to the attribute's type, is
     an error.
 * `[name/fallback]` - like `[name]` if `name` is set, else `fallback` (expanded)
+* `[name(arg1, arg2)]` - call a parameterized derived attribute (see
+  "Definitions"). Arguments are text, like fallbacks, so `[name([title])]`
+  works. Spaces around each argument are trimmed; write `\,` for a literal
+  comma. Variants and fallbacks still apply: `[name(arg):upper/fallback]`.
 * ` ?[name]` - conditional space: if the `[...]` resolves to the empty string,
   suppress a single space. A backslash (`\?`) will suppress this special meaning.
 * ` ?[name:variant/fallback]` - all of the above combined
@@ -222,6 +226,19 @@ indent ends itself immediately and produces the empty string as an expression.
 
 Otherwise, `EXPRESSION` ends at the end of the first line it is syntactically
 complete.
+
+`name(param1, param2)=EXPRESSION` - define a parameterized derived attribute.
+Within `EXPRESSION`, each parameter is bound to the corresponding argument of
+the call, and is used like a derived attribute: `[param]` to insert it and
+`[?param]` to test whether it is non-empty. Arguments are evaluated where the
+call is written, so they can refer to the caller's own parameters. A call must
+pass exactly as many arguments as there are parameters. A parameter may not
+have the same name as an attribute or definition. For example:
+
+    [title_dpy] [imdb_link(IMDb)]
+
+    imdb_link(text)=if @imdb_id: "<a href=\"https://www.imdb.com/title/[imdb_id]/\">[text]</a>" end
+    title_dpy=imdb_link([title])
 
 #### Values
 
@@ -283,6 +300,15 @@ set in others. The definition of unset is: `undefined`, `null`, `""`, `[]`, or
   (note the lack of `:`). This is a permanent update and can leak out into
   containing expressions. The other form should be used if a limited scope is
   desired.
+
+* `name(EXPR1, EXPR2, ...)` - call a parameterized derived attribute. Unlike
+  the `[name(...)]` form, the arguments are expressions, so write
+  `imdb_link([title])` or `imdb_link("IMDb")`. There is no `:variant` or
+  `/fallback` in this form; use `[name(...)]` for those. A bare name without
+  parentheses is an error, so write `"[name]"` or `[name]` to insert a derived
+  attribute. Definitions named `q` or `v` cannot be called this way, since
+  `q(` and `v(` start quoted strings, and names like `cond` or `join` call the
+  built-in.
 
 * `EXPRESSION EXPRESSION` - adjacent expression values are concatenated.
 

@@ -143,9 +143,9 @@ type LegacyFields = {
  * Upgrade a board record from `format_string` + `macros` to `format`. A
  * record that already has `format` is returned unchanged.
  */
-export function upgradeBoardRecord<T extends LegacyFields>(board: T): T {
-  if (board.format !== undefined) return board;
-  const { format_string, macros, ...rest } = board;
+export function upgradeBoardRecord<T extends object>(board: T): T {
+  if ((board as LegacyFields).format !== undefined) return board;
+  const { format_string, macros, ...rest } = board as LegacyFields;
   return { ...rest, format: { version: 2, text: convertLegacyFormat(format_string, macros) } } as unknown as T;
 }
 
@@ -162,9 +162,9 @@ function convertLegacyListFormat(formatString: string, boardMacros?: Record<stri
 }
 
 /** Upgrade a list record. `boardMacros` are the legacy macros of the list's board. */
-export function upgradeListRecord<T extends LegacyFields>(list: T, boardMacros?: Record<string, string> | null): T {
-  if (list.format !== undefined) return list;
-  const { format_string, macros: _unused, ...rest } = list;
+export function upgradeListRecord<T extends object>(list: T, boardMacros?: Record<string, string> | null): T {
+  if ((list as LegacyFields).format !== undefined) return list;
+  const { format_string, macros: _unused, ...rest } = list as LegacyFields;
   const format = format_string != null && format_string !== ""
     ? { version: 2, text: convertLegacyListFormat(format_string, boardMacros) }
     : null;

@@ -395,3 +395,81 @@ describe("list formats inherit from the board", () => {
       .toEqual(["1:9: unknown attribute 'nope2'"]);
   });
 });
+
+describe("parameterized definitions", () => {
+  it("binds parameters to the call's arguments", () => {
+    const text = [
+      "[imdb_link(IMDb)] [imdb_link([title:upper])]",
+      "",
+      'imdb_link(text)=if @imdb_id: "<a href=\\"https://imdb.com/title/[imdb_id]/\\">[text]</a>" end',
+    ].join("\n");
+    expect(errors(text)).toEqual([]);
+    expect(html(text, { imdb_id: "tt1" }))
+      .toBe('<a href="https://imdb.com/title/tt1/">IMDb</a> <a href="https://imdb.com/title/tt1/">ALIEN</a>');
+    expect(html(text)).toBe(" ");
+  });
+
+  it("supports several parameters, trimming, escaped commas, variants, and fallbacks", () => {
+    const text = "[pair( a , b\\, c ):upper] [pair(x,):lower/none] [pair(,)/none]\n\npair(p, q)=\"<[p]|[q]>\"";
+    expect(errors(text)).toEqual([]);
+    expect(html(text)).toBe("<A|B, C> <x|> <|>");
+  });
+
+  it("evaluates arguments in the caller's scope", () => {
+    const text = "[outer(hi)]\n\nouter(a)=\"[inner([a]!)]\"\ninner(b)=\"<[b]>\"";
+    expect(errors(text)).toEqual([]);
+    expect(html(text)).toBe("<hi!>");
+  });
+
+  it("tests parameters with [?p] and uses calls in ifdef and expressions", () => {
+    const text = "[t] [t()] [u(x)]\n\nt=cond([?notes], \"n\", \"-\")\nu(p)=cond([?p], \"[p]\", \"none\") ifdef: \"[t]\" end";
+    expect(errors(text)).toEqual([]);
+    expect(html(text)).toBe("- - x-");
+  });
+
+  it("reports arity, shadowing, and misuse", () => {
+    const defs = "\n\nf(a)=\"[a]\"\ng=\"\"";
+    expect(errors(`[f]${defs}`)[0]).toMatch(/takes 1 argument \(a\) but got 0/);
+    expect(errors(`[f(1,2)]${defs}`)[0]).toMatch(/takes 1 argument/);
+    expect(errors(`[g(1)]${defs}`)[0]).toMatch(/takes no arguments/);
+    expect(errors(`[title(1)]${defs}`)[0]).toMatch(/takes no arguments/);
+    expect(errors("[f(1)]\n\nf(notes)=\"\"")[0]).toMatch(/shadows/);
+    expect(errors("[f(1)]\n\nf(a, a)=\"\"").join("\n")).toMatch(/duplicate parameter/);
+    expect(errors(`[x]\n\nx=cond([?f], "y")${defs.slice(1)}`)[0]).toMatch(/needs arguments/);
+    expect(errors(`[x]\n\nx=cond(@a, "y")\nf(a)="[x]"`).join("\n")).toMatch(/unknown attribute 'a'/);
+  });
+
+  it("parses a parameterized definition directly after the toplevel line", () => {
+    expect(html("[f(1)]\nf(a)=\"<[a]>\"")).toBe("<1>");
+  });
+});
+
+describe(":upper and :lower on derived attributes", () => {
+  it("change literal text but not HTML tags or entities", () => {
+    expect(html("[x:upper]\n\nx=\"<b>hi</b> &amp; [title]\"")).toBe("<b>HI</b> &amp; ALIEN");
+  });
+});
+
+describe("bare calls in expressions", () => {
+  const defs = [
+    "imdb_link(text)=if @imdb_id:",
+    "  '<a href=\"https://www.imdb.com/title/[imdb_id]/\">[text]</a>'",
+    "else:",
+    "  '<a href=\"https://www.imdb.com/find/?q=[title:url]\">[text]</a>'",
+    "end",
+  ].join("\n");
+
+  it("call a parameterized definition with expression arguments", () => {
+    const text = `[title_dpy] [b]\n\n${defs}\ntitle_dpy=imdb_link([title])\nb=cond(@imdb_id, imdb_link("IMDb") "!")`;
+    expect(errors(text)).toEqual([]);
+    expect(html(text, { imdb_id: "tt1" }))
+      .toBe('<a href="https://www.imdb.com/title/tt1/">Alien</a> <a href="https://www.imdb.com/title/tt1/">IMDb</a>!');
+    expect(html(text)).toBe('<a href="https://www.imdb.com/find/?q=Alien">Alien</a> ');
+  });
+
+  it("accept no arguments and report bare names", () => {
+    expect(html("[a]\n\na=f() \"x\"\nf()=\"<>\"")).toBe("<>x");
+    expect(errors("[a]\n\na=f\nf=\"\"").join("\n")).toMatch(/unexpected name 'f'; write "\[f\]"/);
+    expect(errors("[a]\n\na=g(\"x\")\ng=\"\"").join("\n")).toMatch(/takes no arguments/);
+  });
+});
