@@ -1,12 +1,22 @@
 import { type Component, createSignal, createEffect, For, Show } from "solid-js";
-import type { Board, Integration, List } from "@listr/shared";
+import { FORMAT_VERSION, type Board, type FormatSpec, type Integration, type Item, type List } from "@listr/shared";
 import Modal from "./Modal.js";
 import IntegrationsEditor from "./IntegrationsEditor.js";
+import FormatEditor, { formatHasErrors } from "./FormatEditor.js";
+import { db } from "../db/database.js";
+
+export interface ListFormData {
+  name: string;
+  board_id: string;
+  /** null = use the board's format. */
+  format: FormatSpec | null;
+  integrations: Integration[] | null;
+}
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (data: { name: string; board_id: string; format_string: string | null; integrations: Integration[] | null }) => void;
+  onSave: (data: ListFormData) => void;
   boards: Board[];
   initial?: List;
   defaultBoardId?: string | null;
@@ -20,6 +30,8 @@ const ListFormModal: Component<Props> = (props) => {
   const [boardId, setBoardId] = createSignal("");
   const [formatOverride, setFormatOverride] = createSignal("");
   const [overrideFormat, setOverrideFormat] = createSignal(false);
+  const [formatError, setFormatError] = createSignal<string | null>(null);
+  const [sampleItem, setSampleItem] = createSignal<Item | undefined>();
   const [overrideIntegrations, setOverrideIntegrations] = createSignal(false);
   const [integrations, setIntegrations] = createSignal<Integration[]>([]);
 
@@ -27,9 +39,13 @@ const ListFormModal: Component<Props> = (props) => {
     if (props.open) {
       setName(props.initial?.name ?? "");
       setBoardId(props.initial?.board_id ?? props.defaultBoardId ?? props.boards[0]?.id ?? "");
-      const hasOverride = props.initial?.format_string != null;
-      setOverrideFormat(hasOverride);
-      setFormatOverride(props.initial?.format_string ?? "");
+      setOverrideFormat(props.initial?.format != null);
+      setFormatOverride(props.initial?.format?.text ?? "");
+      setFormatError(null);
+      setSampleItem(undefined);
+      if (props.initial) {
+        db.items.where("list_id").equals(props.initial.id).first().then(setSampleItem).catch(console.error);
+      }
       const hasIntegrationOverride = props.initial?.integrations != null;
       setOverrideIntegrations(hasIntegrationOverride);
       setIntegrations(props.initial?.integrations ?? []);
@@ -41,10 +57,14 @@ const ListFormModal: Component<Props> = (props) => {
   const handleSubmit = (e: Event) => {
     e.preventDefault();
     if (!name().trim() || !boardId()) return;
+    if (overrideFormat() && formatHasErrors(formatOverride(), selectedBoard()?.schema ?? [])) {
+      setFormatError("Fix the errors in the format before saving.");
+      return;
+    }
     props.onSave({
       name: name().trim(),
       board_id: boardId(),
-      format_string: overrideFormat() ? formatOverride() : null,
+      format: overrideFormat() ? { version: FORMAT_VERSION, text: formatOverride() } : null,
       integrations: overrideIntegrations() ? integrations() : null,
     });
   };
@@ -84,22 +104,27 @@ const ListFormModal: Component<Props> = (props) => {
                   onChange={(e) => {
                     setOverrideFormat(e.currentTarget.checked);
                     if (e.currentTarget.checked && !formatOverride()) {
-                      setFormatOverride(board().format_string);
+                      setFormatOverride(board().format.text);
                     }
                   }}
                 />
-                Override board format string
+                Override board format
               </label>
               <Show when={overrideFormat()}>
-                <input
-                  aria-label="Format string override"
+                <FormatEditor
+                  id={`${uid}-format`}
                   value={formatOverride()}
-                  onInput={(e) => setFormatOverride(e.currentTarget.value)}
-                  placeholder={board().format_string}
+                  onInput={(v) => { setFormatOverride(v); setFormatError(null); }}
+                  schema={board().schema}
+                  sampleItem={sampleItem()}
+                  placeholder={board().format.text.split("\n")[0]}
                 />
+                <Show when={formatError()}>
+                  {(err) => <div class="field-error">{err()}</div>}
+                </Show>
               </Show>
               <Show when={!overrideFormat()}>
-                <div class="field-hint">Using: {board().format_string}</div>
+                <div class="field-hint">Using: {board().format.text.split("\n")[0]}</div>
               </Show>
             </div>
           )}

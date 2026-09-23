@@ -117,8 +117,7 @@ const Sidebar: Component<Props> = (props) => {
           id: board.id,
           name: board.name,
           schema: board.schema,
-          format_string: board.format_string,
-          macros: board.macros ?? {},
+          format: board.format.text,
         })
       },
       { label: "Export", action: async () => {
@@ -358,7 +357,7 @@ const Sidebar: Component<Props> = (props) => {
         onClose={() => setEditingBoard(undefined)}
         onSave={async (data) => {
           const board = editingBoard();
-          if (board) await updateBoard(board.id, { ...data, macros: data.macros, sync_key: data.sync_key || undefined });
+          if (board) await updateBoard(board.id, { ...data, sync_key: data.sync_key || undefined });
           setEditingBoard(undefined);
         }}
         initial={editingBoard()}
@@ -370,8 +369,7 @@ const Sidebar: Component<Props> = (props) => {
         onSave={async (data) => {
           await createBoard(data.name, data.color, {
             schema: data.schema,
-            formatString: data.format_string,
-            macros: data.macros,
+            format: data.format.text,
             syncKey: data.sync_key || undefined,
           });
           setShowCreateBoard(false);
@@ -387,8 +385,7 @@ const Sidebar: Component<Props> = (props) => {
           const finalKey = data.sync_key || key || undefined;
           await createBoard(data.name, data.color, {
             schema: data.schema,
-            formatString: data.format_string,
-            macros: data.macros,
+            format: data.format.text,
             syncKey: finalKey,
             groupName: finalKey ? data.name : undefined,
           });

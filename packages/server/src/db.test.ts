@@ -541,6 +541,38 @@ describe("schema_version migrations", () => {
     }
   });
 
+  it("converts legacy board and list formats without touching updated_at (migration 7)", () => {
+    const { path, cleanup } = makeLegacyDbFile();
+    try {
+      const raw = new Database(path);
+      raw.prepare(`UPDATE boards SET data = ? WHERE id = 'b1'`).run(JSON.stringify({
+        id: "b1", sync_key: "sharedKey", updated_at: 100, name: "Legacy", format_string: "{title}{m}", macros: { m: "!" },
+      }));
+      raw.prepare(`INSERT INTO lists (id, sync_key, updated_at, data) VALUES (?, ?, ?, ?)`).run(
+        "l1", "sharedKey", 100, JSON.stringify({ id: "l1", board_id: "b1", updated_at: 100, name: "L", format_string: "{m}" }),
+      );
+      raw.close();
+
+      const check = (db: DbApi) => {
+        const [board] = db.getEntitiesSince("board", "sharedKey", 0) as any[];
+        expect(board.format).toEqual({ version: 2, text: "[title][m]\n\nm=q( ! )" });
+        expect(board).not.toHaveProperty("format_string");
+        expect(board).not.toHaveProperty("macros");
+        expect(board.updated_at).toBe(100);
+        // A list override brings along the board macros it used to share.
+        const [list] = db.getEntitiesSince("list", "sharedKey", 0) as any[];
+        expect(list.format).toEqual({ version: 2, text: "[m]\n\nm=q( ! )" });
+        expect(list.updated_at).toBe(100);
+      };
+      const db = openDb(path);
+      check(db);
+      db.close();
+      check(openDb(path));
+    } finally {
+      cleanup();
+    }
+  });
+
   it("reopening an already-migrated database is a no-op (idempotent)", () => {
     const { path, cleanup } = makeLegacyDbFile();
     try {

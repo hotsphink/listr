@@ -60,7 +60,7 @@ test.describe("native export/import round-trip", () => {
     const download = await downloadPromise;
     const exportedPath = await download.path();
     const exported = JSON.parse(readFileSync(exportedPath!, "utf-8"));
-    expect(exported.listr_export).toBe("2");
+    expect(exported.listr_export).toBe("3");
 
     await clearDatabase(page);
     expect(await getBoardNames(page)).toEqual([]);

@@ -1,7 +1,7 @@
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { removeKeyLocal } from "./keyCleanup.js";
-import { ENTITY_SCHEMA_VERSION, isCurrentSchemaVersion, type Board, type List, type Item, type AttributeDefinition, type Integration, type ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, FORMAT_VERSION, isCurrentSchemaVersion, type Board, type List, type Item, type AttributeDefinition, type Integration, type ViewMode } from "@listr/shared";
 
 // Boards and lists still use numeric `position` ordering; only items moved to
 // after_id linked-list ordering.
@@ -253,8 +253,8 @@ function now(): number {
 
 export interface CreateBoardOptions {
   schema?: AttributeDefinition[];
-  formatString?: string;
-  macros?: Record<string, string>;
+  /** Format text (doc/FORMAT.md). */
+  format?: string;
   syncKey?: string;
   integrations?: Integration[];
   /** Pass when this board is starting a new named board group, so the key is
@@ -268,7 +268,7 @@ export async function createBoard(
   color: string,
   options: CreateBoardOptions = {},
 ): Promise<Board> {
-  const { schema = [], formatString = "{title}", macros, syncKey, integrations, groupName } = options;
+  const { schema = [], format = "[title]", syncKey, integrations, groupName } = options;
   const maxPos = await db.boards.orderBy("position").last();
   const board: Board = {
     id: generateId(),
@@ -276,8 +276,7 @@ export async function createBoard(
     color,
     position: (maxPos?.position ?? -POSITION_STEP) + POSITION_STEP,
     schema,
-    format_string: formatString,
-    macros,
+    format: { version: FORMAT_VERSION, text: format },
     ...(syncKey ? { sync_key: syncKey } : {}),
     ...(integrations?.length ? { integrations } : {}),
     created_at: now(),
@@ -304,7 +303,7 @@ export async function createBoard(
 
 export async function updateBoard(
   id: string,
-  updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format_string" | "macros" | "sync_key" | "integrations">>,
+  updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format" | "sync_key" | "integrations">>,
 ): Promise<void> {
   await db.boards.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.boards.get(id);
@@ -398,7 +397,7 @@ export async function createList(
     name,
     icon: "",
     position: (maxPos?.position ?? -POSITION_STEP) + POSITION_STEP,
-    format_string: null,
+    format: null,
     view_mode: "list",
     created_at: now(),
     updated_at: now(),
@@ -411,7 +410,7 @@ export async function createList(
 
 export async function updateList(
   id: string,
-  updates: Partial<Pick<List, "name" | "icon" | "position" | "format_string" | "view_mode" | "board_id" | "integrations">>,
+  updates: Partial<Pick<List, "name" | "icon" | "position" | "format" | "view_mode" | "board_id" | "integrations">>,
 ): Promise<void> {
   await db.lists.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.lists.get(id);

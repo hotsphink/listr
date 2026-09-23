@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
-import { isCurrentSchemaVersion } from "@listr/shared";
+import { isCurrentSchemaVersion, upgradeBoardRecord, upgradeListRecord } from "@listr/shared";
 import type { IntegrationResult } from "@listr/shared";
 import { config } from "./config.js";
 
@@ -504,6 +504,34 @@ function migrateV6GrantPayloadName(sql: Database.Database): void {
   }
 }
 
+// Migration 7: boards and lists store their display format as `format`
+// (doc/FORMAT.md) instead of `format_string` plus board `macros`. This uses the
+// converter the client's Dexie upgrade uses and leaves updated_at alone, so a
+// client that converted its local copy already agrees with the result. Rows
+// that already have `format` are skipped.
+function migrateV7FormatSpec(sql: Database.Database): void {
+  const convert = sql.transaction(() => {
+    const boards = sql.prepare(`SELECT id, data FROM boards`).all() as { id: string; data: string }[];
+    const updateBoard = sql.prepare(`UPDATE boards SET data = ? WHERE id = ?`);
+    const macrosByBoard = new Map<string, Record<string, string> | undefined>();
+    for (const row of boards) {
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      macrosByBoard.set(row.id, data.macros as Record<string, string> | undefined);
+      if (data.format === undefined) updateBoard.run(JSON.stringify(upgradeBoardRecord(data)), row.id);
+    }
+
+    const lists = sql.prepare(`SELECT id, data FROM lists`).all() as { id: string; data: string }[];
+    const updateList = sql.prepare(`UPDATE lists SET data = ? WHERE id = ?`);
+    for (const row of lists) {
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      if (data.format !== undefined) continue;
+      const upgraded = upgradeListRecord(data, macrosByBoard.get(data.board_id as string));
+      updateList.run(JSON.stringify(upgraded), row.id);
+    }
+  });
+  convert();
+}
+
 const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] = [
   { version: 1, run: migrateV1LegacyColumnBaseline },
   { version: 2, run: migrateV2AssetKeys },
@@ -511,6 +539,7 @@ const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] =
   { version: 4, run: migrateV4Identity },
   { version: 5, run: migrateV5RekeyUserKeysToUserId },
   { version: 6, run: migrateV6GrantPayloadName },
+  { version: 7, run: migrateV7FormatSpec },
 ];
 
 /** Highest schema version this build knows how to migrate a database to. */

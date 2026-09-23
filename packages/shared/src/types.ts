@@ -30,6 +30,13 @@ export interface AttributeDefinition {
   position: number;
 }
 
+/** A board or list display format, in the language described in doc/FORMAT.md. */
+export interface FormatSpec {
+  /** Format language version. Version 1 was the legacy `{key}` syntax. */
+  version: number;
+  text: string;
+}
+
 /** Config for a server-side integration, stored on Board or List (synced). */
 export interface Integration {
   integration_id: string;           // matches a registered IntegrationModule on the server
@@ -43,8 +50,7 @@ export interface Board {
   color: string;
   position: number;
   schema: AttributeDefinition[];
-  format_string: string;
-  macros?: Record<string, string>;
+  format: FormatSpec;
   /** If set, this board (and its lists/items) syncs under this namespace key instead of the default. */
   sync_key?: string;
   integrations?: Integration[];
@@ -62,7 +68,8 @@ export interface List {
   name: string;
   icon: string;
   position: number;
-  format_string: string | null;
+  /** null = use the board's format. An override replaces it entirely. */
+  format: FormatSpec | null;
   /** null = inherit board's integrations */
   integrations?: Integration[] | null;
   view_mode: ViewMode;

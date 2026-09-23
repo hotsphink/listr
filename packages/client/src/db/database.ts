@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
 import type { Asset, AttributeDefinition, Board, Item, List, IntegrationResult } from "@listr/shared";
+import { upgradeBoardRecord, upgradeListRecord } from "@listr/shared";
 
 const DB_NAME = "listr2";
 const LEGACY_DB_NAME = "listr";
@@ -120,8 +121,8 @@ export interface ServerIdentity {
  */
 export type ImportScope =
   | { type: "global" }
-  | { type: "board"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> }
-  | { type: "list"; id: string; name: string; schema: AttributeDefinition[]; format_string: string; macros: Record<string, string> };
+  | { type: "board"; id: string; name: string; schema: AttributeDefinition[]; format: string }
+  | { type: "list"; id: string; name: string; schema: AttributeDefinition[]; format: string };
 
 /**
  * A screenshot that could not be extracted, held for resubmission. Saved when
@@ -301,6 +302,41 @@ export class ListrDB extends Dexie {
       client_identity: "id",
       server_identity: "server_id",
       pending_import: "id",
+    });
+
+    // Boards and lists store their display format as one `format` field
+    // (doc/FORMAT.md) instead of `format_string` plus board `macros`. The
+    // server's migration 7 converts its copies with the same converter, so
+    // both sides agree without touching updated_at.
+    this.version(6).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
+      board_groups: "key",
+      board_server_binding: "board_id",
+      client_identity: "id",
+      server_identity: "server_id",
+      pending_import: "id",
+    }).upgrade(async (tx) => {
+      const macrosByBoard = new Map<string, Record<string, string> | undefined>();
+      await tx.table("boards").toCollection().modify((row: Record<string, unknown>) => {
+        macrosByBoard.set(row.id as string, row.macros as Record<string, string> | undefined);
+        const upgraded = upgradeBoardRecord(row);
+        for (const key of Object.keys(row)) if (!(key in upgraded)) delete row[key];
+        Object.assign(row, upgraded);
+      });
+      await tx.table("lists").toCollection().modify((row: Record<string, unknown>) => {
+        const upgraded = upgradeListRecord(row, macrosByBoard.get(row.board_id as string));
+        for (const key of Object.keys(row)) if (!(key in upgraded)) delete row[key];
+        Object.assign(row, upgraded);
+      });
     });
   }
 }

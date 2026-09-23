@@ -24,18 +24,42 @@
   padding: var(--space-1);
 }
 
-.format-advanced-textarea {
-  min-height: 120px;
+.format-textarea {
+  min-height: 3lh;
+  resize: vertical;
+}
+
+.format-diagnostics {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.format-diagnostics .warning {
+  color: var(--warning-dim);
+}
+
+.format-diagnostics .error {
+  color: var(--danger);
+}
+
+.format-preview {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
 }
 
 /* Wraps the textarea so a dragged image gets a target the size of the whole
  * field, with the prompt drawn over the top. */
-.format-advanced-dropzone {
+.format-dropzone {
   position: relative;
   border-radius: var(--radius);
 }
 
-.format-advanced-dropzone.dragging::after {
+.format-dropzone.dragging::after {
   content: "Drop image to insert";
   position: absolute;
   inset: 0;
@@ -50,7 +74,7 @@
   pointer-events: none;
 }
 
-.format-advanced-toolbar {
+.format-toolbar {
   margin-top: var(--space-2);
 }
 

@@ -1,5 +1,5 @@
 import { type Component, Switch, Match, For, createSignal } from "solid-js";
-import type { AttributeDefinition } from "@listr/shared";
+import { formatDurationShort, parseDurationText, type AttributeDefinition } from "@listr/shared";
 
 interface Props {
   definition: AttributeDefinition;
@@ -133,55 +133,41 @@ const TagsInput: Component<{ value: unknown; onChange: (v: unknown) => void; opt
   );
 };
 
-function parseDurationText(text: string): number | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
-  const match = trimmed.match(/^(?:(\d+)\s*h)?\s*(\d+)?\s*m?$/i);
-  if (match) {
-    const h = match[1] ? parseInt(match[1], 10) : 0;
-    const m = match[2] ? parseInt(match[2], 10) : 0;
-    if (h > 0 || m > 0) return h * 60 + m;
-  }
-
-  const justMinutes = trimmed.match(/^(\d+)$/);
-  if (justMinutes) return parseInt(justMinutes[1], 10);
-
-  return null;
-}
-
-function formatDurationShort(totalMinutes: number): string {
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  if (h > 0 && m > 0) return `${h}h${m}m`;
-  if (h > 0) return `${h}h`;
-  return `${m}m`;
-}
-
 const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void; labelledBy?: string }> = (props) => {
-  const totalMinutes = () => Number(props.value ?? 0);
-  const hours = () => Math.floor(totalMinutes() / 60);
-  const minutes = () => totalMinutes() % 60;
+  let hoursRef!: HTMLInputElement;
+  let minutesRef!: HTMLInputElement;
+  const total = () => (typeof props.value === "number" && !Number.isNaN(props.value) ? props.value : null);
+  const hours = () => { const t = total(); return t === null || t < 60 ? "" : Math.floor(t / 60); };
+  const minutes = () => { const t = total(); return t === null ? "" : t % 60; };
+  // Both boxes empty means unset.
+  const update = () => {
+    const h = hoursRef.valueAsNumber;
+    const m = minutesRef.valueAsNumber;
+    if (Number.isNaN(h) && Number.isNaN(m)) props.onChange(null);
+    else props.onChange((Number.isNaN(h) ? 0 : h) * 60 + (Number.isNaN(m) ? 0 : m));
+  };
 
   return (
     <div class="duration-input" role="group" aria-labelledby={props.labelledBy}>
       <input
+        ref={hoursRef}
         type="number"
         min="0"
         class="duration-num"
         aria-label="Hours"
         value={hours()}
-        onInput={(e) => props.onChange(e.currentTarget.valueAsNumber * 60 + minutes())}
+        onInput={update}
       />
       <span class="duration-unit" aria-hidden="true">h</span>
       <input
+        ref={minutesRef}
         type="number"
         min="0"
         max="59"
         class="duration-num"
         aria-label="Minutes"
         value={minutes()}
-        onInput={(e) => props.onChange(hours() * 60 + (e.currentTarget.valueAsNumber || 0))}
+        onInput={update}
       />
       <span class="duration-unit" aria-hidden="true">m</span>
       <input
@@ -189,10 +175,12 @@ const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void;
         class="duration-text"
         aria-label="Duration, as text"
         placeholder="e.g. 1h42m"
-        value={totalMinutes() > 0 ? formatDurationShort(totalMinutes()) : ""}
+        value={total() ? formatDurationShort(total()!) : ""}
         onBlur={(e) => {
-          const parsed = parseDurationText(e.currentTarget.value);
+          const text = e.currentTarget.value;
+          const parsed = parseDurationText(text);
           if (parsed !== null) props.onChange(parsed);
+          else if (text.trim() === "" && total() !== null) props.onChange(null);
         }}
       />
     </div>

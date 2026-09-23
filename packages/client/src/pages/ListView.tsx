@@ -2,7 +2,7 @@ import { type Component, For, Show, Switch, Match, createSignal, createEffect, c
 import { from } from "solid-js";
 import { useParams, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
-import { renderFormatStringHtml } from "@listr/shared";
+import { compileFormat, upgradeBoardRecord, type CompiledFormat, type RenderedFormat } from "@listr/shared";
 import type { AttributeDefinition, Board, Integration, Item, List, IntegrationStatus, TodoState } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, updateItemAttribute, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
@@ -21,8 +21,8 @@ import { useSortable, isDragging } from "../hooks/useSortable.js";
 import InlineAddItem, { DUMMY_ITEM_ID } from "../components/InlineAddItem.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
-import ListFormModal from "../components/ListFormModal.js";
-import BoardFormModal from "../components/BoardFormModal.js";
+import ListFormModal, { type ListFormData } from "../components/ListFormModal.js";
+import BoardFormModal, { type BoardFormData } from "../components/BoardFormModal.js";
 import FormattedText from "../components/FormattedText.js";
 import ContextMenu from "../components/ContextMenu.js";
 import type { MenuItem } from "../components/ContextMenu.js";
@@ -359,12 +359,31 @@ const ListView: Component = () => {
     return [...b.schema].sort((a, b) => a.position - b.position);
   });
 
-  const effectiveFormatString = createMemo(() => board()?.format_string || "{title}");
+  const boardFormatText = createMemo(() => {
+    const b = board();
+    return b ? upgradeBoardRecord(b).format.text : "[title]";
+  });
 
-  const formatItem = (item: Item, list: List): string => {
+  // Compile each distinct format once per schema, not once per item.
+  const compiledFormat = createMemo(() => {
+    const sch = schema();
+    const cache = new Map<string, CompiledFormat>();
+    return (text: string): CompiledFormat => {
+      let c = cache.get(text);
+      if (!c) cache.set(text, (c = compileFormat(text, sch)));
+      return c;
+    };
+  });
+
+  const formatItem = (item: Item, list: List): RenderedFormat => {
     const urls = assetUrls();
-    const fs = list.format_string || effectiveFormatString();
-    return renderFormatStringHtml(fs, item, schema(), undefined, board()?.macros, (url) => urls[url] ?? url);
+    const text = list.format?.text ?? boardFormatText();
+    return compiledFormat()(text).render(item, { urlResolver: (url) => urls[url] ?? url });
+  };
+
+  const ItemText: Component<{ item: Item; list: List }> = (p) => {
+    const rendered = createMemo(() => formatItem(p.item, p.list));
+    return <FormattedText html={rendered().html} tooltip={rendered().tooltip} />;
   };
 
   const todoAttr = createMemo(() => schema().find((a) => a.type === "todo"));
@@ -447,14 +466,14 @@ const ListView: Component = () => {
     setEditingList(list);
   };
 
-  const handleEditList = async (data: { name: string; board_id: string; format_string: string | null; integrations: Integration[] | null }) => {
+  const handleEditList = async (data: ListFormData) => {
     const list = editingList();
     if (!list) return;
     await updateList(list.id, { ...data, integrations: data.integrations });
     setEditingList(undefined);
   };
 
-  const handleEditBoard = async (data: { name: string; color: string; format_string: string; schema: AttributeDefinition[]; macros: Record<string, string>; sync_key: string; integrations: Integration[] }) => {
+  const handleEditBoard = async (data: BoardFormData) => {
     const b = editingBoard();
     if (!b) return;
     await updateBoard(b.id, data);
@@ -467,7 +486,7 @@ const ListView: Component = () => {
     return [
       { label: "Edit", action: () => { setBoardCtxMenu(null); setEditingBoard(b); } },
       { label: "Share", action: () => { setBoardCtxMenu(null); setSharingBoard(b); } },
-      { label: "Import", action: () => { setBoardCtxMenu(null); setBoardImportScope({ type: "board", id: b.id, name: b.name, schema: b.schema, format_string: b.format_string, macros: b.macros ?? {} }); } },
+      { label: "Import", action: () => { setBoardCtxMenu(null); setBoardImportScope({ type: "board", id: b.id, name: b.name, schema: b.schema, format: b.format.text }); } },
       { label: "Export", action: async () => { setBoardCtxMenu(null); const data = await exportBoard(b.id); triggerDownload(data, `listr-board-${b.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
       { label: "Delete", danger: true, action: async () => { setBoardCtxMenu(null); if (!confirm(`Delete "${b.name}" and all its lists and items?`)) return; await deleteBoard(b.id); } },
     ];
@@ -513,7 +532,7 @@ const ListView: Component = () => {
     const b = board();
     return [
       { label: "Edit", action: () => { setListCtxMenu(null); setEditingList(list); } },
-      { label: "Import", action: () => { setListCtxMenu(null); b && setListImportScope({ type: "list", id: list.id, name: list.name, schema: b.schema, format_string: list.format_string ?? b.format_string, macros: b.macros ?? {} }); } },
+      { label: "Import", action: () => { setListCtxMenu(null); b && setListImportScope({ type: "list", id: list.id, name: list.name, schema: b.schema, format: (list.format ?? b.format).text }); } },
       { label: "Export", action: async () => { setListCtxMenu(null); const data = await exportList(list.id); triggerDownload(data, `listr-list-${list.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
       { label: "Delete", danger: true, action: async () => { setListCtxMenu(null); if (!confirm(`Delete "${list.name}" and all its items?`)) return; await deleteList(list.id); } },
     ];
@@ -1015,7 +1034,7 @@ const ListView: Component = () => {
                                       {/* Display only: the row itself carries the toggle. */}
                                       <input type="checkbox" class="item-select-checkbox" tabindex={-1} aria-hidden="true" checked={selectedItemIds().has(realItem.id)} />
                                     </Show>
-                                    <FormattedText html={formatItem(realItem, list)} />
+                                    <ItemText item={realItem} list={list} />
                                     {integrationBadge(realItem.id)}
                                     <Show when={todoAttr()}>
                                       {(attr) => (
@@ -1194,7 +1213,7 @@ const ListView: Component = () => {
                                       <Show when={selectionMode()} fallback={<span class="drag-handle card-drag-handle" aria-hidden="true" title="Drag to reorder">⠿</span>}>
                                         <input type="checkbox" class="card-select-checkbox" tabindex={-1} aria-hidden="true" checked={selectedItemIds().has(item_.id)} />
                                       </Show>
-                                      <div class="card-title"><FormattedText html={formatItem(item_, list)} />{integrationBadge(item_.id)}</div>
+                                      <div class="card-title"><ItemText item={item_} list={list} />{integrationBadge(item_.id)}</div>
                                       <Show when={schema().length > 0}>
                                         <div class="card-attrs">
                                           <For each={schema()}>

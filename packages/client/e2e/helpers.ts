@@ -146,7 +146,7 @@ export async function createBoard(
   page: Page,
   name: string,
   attributes?: Array<{ key: string; label: string; type?: string; options?: string }>,
-  formatString?: string,
+  format?: string,
 ) {
   await page.locator(".sidebar-item.sidebar-new.board").click();
   await expect(page.locator(".modal h2")).toHaveText("New Board");
@@ -172,9 +172,8 @@ export async function createBoard(
     }
   }
 
-  if (formatString) {
-    const formatField = page.locator(".modal .form-field").filter({ has: page.locator("label", { hasText: "Format String" }) });
-    await formatField.locator("input").fill(formatString);
+  if (format) {
+    await page.locator(".modal").getByLabel("Format", { exact: true }).fill(format);
   }
 
   await page.getByRole("button", { name: "Create" }).click();

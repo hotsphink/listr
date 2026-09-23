@@ -30,5 +30,8 @@
 // has no keypair and sends `default_key`, is rejected outright with an
 // actionable message rather than silently failing a handshake it does not know
 // it must speak differently.
-export const MIN_PROTOCOL_VERSION: number = 5;
-export const MAX_PROTOCOL_VERSION: number = 5;
+// v6: boards and lists carry `format` (doc/FORMAT.md) instead of
+// `format_string` and `macros`. Migration 7 converts stored rows. Flag day:
+// MIN bumped to 6 so an older client cannot push the legacy fields back.
+export const MIN_PROTOCOL_VERSION: number = 6;
+export const MAX_PROTOCOL_VERSION: number = 6;

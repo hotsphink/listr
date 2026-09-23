@@ -1,29 +1,38 @@
-import { type Component, createSignal, createEffect, onCleanup, Show } from "solid-js";
-import type { AttributeDefinition, Board, Integration } from "@listr/shared";
-import { validateFormatString, parseAdvancedFormatText, serializeAdvancedFormatText } from "@listr/shared";
+import { type Component, createSignal, createEffect, Show } from "solid-js";
+import { FORMAT_VERSION, type AttributeDefinition, type Board, type FormatSpec, type Integration, type Item } from "@listr/shared";
 import Modal from "./Modal.js";
 import SchemaEditor from "./SchemaEditor.js";
 import IntegrationsEditor from "./IntegrationsEditor.js";
-import { createAsset } from "../db/assets.js";
+import FormatEditor, { formatHasErrors } from "./FormatEditor.js";
+import { db } from "../db/database.js";
 
-function generateFormatString(schema: AttributeDefinition[]): string {
-  if (schema.length === 0) return "{title}";
-  const parts = schema.map((a) => `{${a.key}}`);
-  return `{title} (${parts.join(", ")})`;
+function generateFormat(schema: AttributeDefinition[]): string {
+  return ["[title]", ...schema.map((a) => `?[${a.key}]`)].join(" ");
+}
+
+/** The first item of the board's first list, for the format preview. */
+export async function sampleItemForBoard(boardId: string): Promise<Item | undefined> {
+  const lists = await db.lists.where("board_id").equals(boardId).sortBy("position");
+  for (const list of lists) {
+    const item = await db.items.where("list_id").equals(list.id).first();
+    if (item) return item;
+  }
+  return undefined;
+}
+
+export interface BoardFormData {
+  name: string;
+  color: string;
+  format: FormatSpec;
+  schema: AttributeDefinition[];
+  sync_key: string;
+  integrations: Integration[];
 }
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (data: {
-    name: string;
-    color: string;
-    format_string: string;
-    schema: AttributeDefinition[];
-    macros: Record<string, string>;
-    sync_key: string;
-    integrations: Integration[];
-  }) => Promise<void> | void;
+  onSave: (data: BoardFormData) => Promise<void> | void;
   initial?: Board;
   /** Pre-fill the share key when creating a new board (e.g. starting a fresh board group). Ignored when editing. */
   defaultSyncKey?: string;
@@ -35,8 +44,8 @@ const BoardFormModal: Component<Props> = (props) => {
   const uid = `board-form-${++seq}`;
   const [name, setName] = createSignal("");
   const [color, setColor] = createSignal("#5b8def");
-  const [formatStr, setFormatStr] = createSignal("{title}");
-  const [macros, setMacros] = createSignal<Record<string, string>>({});
+  const [formatText, setFormatText] = createSignal("[title]");
+  const [sampleItem, setSampleItem] = createSignal<Item | undefined>();
   const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
   const [boardSyncKey, setBoardSyncKey] = createSignal("");
   const [integrations, setIntegrations] = createSignal<Integration[]>([]);
@@ -45,35 +54,14 @@ const BoardFormModal: Component<Props> = (props) => {
   const [formatError, setFormatError] = createSignal<string | null>(null);
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
-  const [advancedMode, setAdvancedMode] = createSignal(false);
-  const [advancedText, setAdvancedText] = createSignal("");
-  const [advancedError, setAdvancedError] = createSignal<string | null>(null);
-  const [draggingOver, setDraggingOver] = createSignal(false);
-  const [assetUploading, setAssetUploading] = createSignal(false);
-  const [assetError, setAssetError] = createSignal<string | null>(null);
-
-  let fileInputRef!: HTMLInputElement;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  onCleanup(() => { if (debounceTimer) clearTimeout(debounceTimer); });
-
-  // Prevent browser from navigating to dropped URLs when in advanced mode
-  createEffect(() => {
-    if (!advancedMode()) return;
-    const block = (e: DragEvent) => e.preventDefault();
-    document.addEventListener("dragover", block);
-    document.addEventListener("drop", block);
-    onCleanup(() => {
-      document.removeEventListener("dragover", block);
-      document.removeEventListener("drop", block);
-    });
-  });
 
   createEffect(() => {
     if (props.open) {
       setName(props.initial?.name ?? "");
       setColor(props.initial?.color ?? "#5b8def");
-      setFormatStr(props.initial?.format_string ?? "{title}");
-      setMacros(props.initial?.macros ?? {});
+      setFormatText(props.initial?.format.text ?? "[title]");
+      setSampleItem(undefined);
+      if (props.initial) sampleItemForBoard(props.initial.id).then(setSampleItem).catch(console.error);
       setSchema(props.initial?.schema ?? []);
       setBoardSyncKey(props.initial?.sync_key ?? props.defaultSyncKey ?? "");
       setIntegrations(props.initial?.integrations ?? []);
@@ -82,136 +70,18 @@ const BoardFormModal: Component<Props> = (props) => {
       setFormatError(null);
       setSaveError(null);
       setSaving(false);
-      setAdvancedMode(false);
-      setAdvancedError(null);
-      setAssetError(null);
     }
   });
 
   const handleSchemaChange = (newSchema: AttributeDefinition[]) => {
     setSchema(newSchema);
-    if (!formatManuallyEdited()) {
-      setFormatStr(generateFormatString(newSchema));
-    }
+    if (!formatManuallyEdited()) setFormatText(generateFormat(newSchema));
   };
 
   const handleFormatInput = (value: string) => {
-    setFormatStr(value);
-    setFormatManuallyEdited(true);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      setFormatError(validateFormatString(value, macros()));
-    }, 300);
-  };
-
-  const handleAdvancedInput = (value: string) => {
-    setAdvancedText(value);
-    setAdvancedError(parseAdvancedFormatText(value).error);
-  };
-
-  const openAdvanced = () => {
-    setAdvancedText(serializeAdvancedFormatText(formatStr(), macros()));
-    setAdvancedError(null);
-    setAdvancedMode(true);
-  };
-
-  const applyAdvanced = (): { format: string; macros: Record<string, string> } | null => {
-    const { format, macros: newMacros, error } = parseAdvancedFormatText(advancedText());
-    if (error) { setAdvancedError(error); return null; }
-    setFormatStr(format);
-    setMacros(newMacros);
+    setFormatText(value);
     setFormatManuallyEdited(true);
     setFormatError(null);
-    setAdvancedMode(false);
-    return { format, macros: newMacros };
-  };
-
-  const appendAssetMacro = (asset: { id: string; ext: string; filename: string }) => {
-    const prefix = "img" + asset.id.slice(0, 6);
-    const nameWithoutExt = asset.filename.includes(".") ? asset.filename.slice(0, asset.filename.lastIndexOf(".")) : asset.filename;
-    const macro = `${prefix}=![${nameWithoutExt}](hash://${asset.id}.${asset.ext})`;
-    const current = advancedText();
-    handleAdvancedInput(current ? `${current}\n${macro}` : macro);
-  };
-
-  const processImageFiles = async (files: Iterable<File>) => {
-    for (const file of files) {
-      if (!file.type.startsWith("image/")) continue;
-      if (!advancedMode()) openAdvanced();
-      const asset = await createAsset(file);
-      appendAssetMacro(asset);
-    }
-  };
-
-  const handleAssetFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setAssetUploading(true);
-    try { await processImageFiles(files); }
-    finally { setAssetUploading(false); }
-  };
-
-  const handleUrlAsset = async (url: string) => {
-    setAssetUploading(true);
-    setAssetError(null);
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      if (!blob.type.startsWith("image/")) return;
-      const filename = url.split("/").pop()?.split("?")[0] || "image";
-      const file = new File([blob], filename, { type: blob.type });
-      if (!advancedMode()) openAdvanced();
-      const asset = await createAsset(file);
-      appendAssetMacro(asset);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setAssetError(`Could not fetch image (${msg}). The site may block cross-origin requests — try right-clicking the image, choosing "Copy Image", and pasting here instead.`);
-    } finally {
-      setAssetUploading(false);
-    }
-  };
-
-  const handleDragOver = (e: DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-    setDraggingOver(true);
-  };
-
-  const handleDragLeave = (e: DragEvent) => {
-    const dropzone = e.currentTarget as HTMLElement;
-    if (!dropzone.contains(e.relatedTarget as Node)) {
-      setDraggingOver(false);
-    }
-  };
-
-  const handleDrop = async (e: DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDraggingOver(false);
-
-    // Local file drag (from filesystem)
-    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-      await handleAssetFiles(e.dataTransfer.files);
-      return;
-    }
-
-    // URL drag from browser — Firefox uses text/x-moz-url, others use text/uri-list
-    const rawUrl =
-      e.dataTransfer?.getData("text/x-moz-url")?.split("\n")[0] ??
-      e.dataTransfer?.getData("text/uri-list")?.split("\n").find((l) => !l.startsWith("#")) ??
-      e.dataTransfer?.getData("text/plain");
-    if (rawUrl && /^https?:\/\//.test(rawUrl)) {
-      await handleUrlAsset(rawUrl);
-    }
-  };
-
-  const handlePaste = async (e: ClipboardEvent) => {
-    const files = e.clipboardData?.files;
-    if (files && files.length > 0) {
-      e.preventDefault();
-      await handleAssetFiles(files);
-    }
   };
 
   const handleSubmit = async (e: Event) => {
@@ -225,27 +95,18 @@ const BoardFormModal: Component<Props> = (props) => {
     }
     setNameError(null);
 
-    let currentFormat = formatStr();
-    let currentMacros = macros();
-
-    if (advancedMode()) {
-      const applied = applyAdvanced();
-      if (!applied) return;
-      currentFormat = applied.format;
-      currentMacros = applied.macros;
+    if (formatHasErrors(formatText(), schema())) {
+      setFormatError("Fix the errors in the format before saving.");
+      return;
     }
-
-    const err = validateFormatString(currentFormat, currentMacros);
-    if (err) { setFormatError(err); return; }
 
     setSaving(true);
     try {
       await props.onSave({
         name: nameValue,
         color: color(),
-        format_string: currentFormat,
+        format: { version: FORMAT_VERSION, text: formatText() },
         schema: schema(),
-        macros: currentMacros,
         sync_key: boardSyncKey().trim(),
         integrations: integrations(),
       });
@@ -255,8 +116,6 @@ const BoardFormModal: Component<Props> = (props) => {
       setSaving(false);
     }
   };
-
-  const macroKeys = () => Object.keys(macros());
 
   return (
     <Modal open={props.open} onClose={props.onClose} class="board-form">
@@ -306,87 +165,17 @@ const BoardFormModal: Component<Props> = (props) => {
           </div>
         </div>
         <div class="form-field">
-          <div class="header-row header-row-tight">
-            <label class="field-label" for={`${uid}-format`}>Format String</label>
-            <button
-              type="button"
-              class="btn-ghost btn-xs"
-              onClick={advancedMode() ? () => applyAdvanced() : openAdvanced}
-            >
-              {advancedMode() ? "Basic" : "Advanced"}
-            </button>
-          </div>
-          <Show
-            when={advancedMode()}
-            fallback={
-              <>
-                <input
-                  id={`${uid}-format`}
-                  classList={{ "input-error": formatError() !== null }}
-                  value={formatStr()}
-                  onInput={(e) => handleFormatInput(e.currentTarget.value)}
-                  placeholder="{title}"
-                  aria-invalid={formatError() !== null}
-                />
-                <Show when={formatError()}>
-                  {(err) => <div class="field-error">{err()}</div>}
-                </Show>
-                <div class="field-hint">
-                  Available: {"{title}"}
-                  {schema().length > 0 ? ", " + schema().map((a) => `{${a.key}}`).join(", ") : ""}
-                  {macroKeys().length > 0 ? ", " + macroKeys().map((k) => `{${k}} (macro)`).join(", ") : ""}
-                </div>
-              </>
-            }
-          >
-            <div
-              class="format-advanced-dropzone"
-              classList={{ dragging: draggingOver() }}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <textarea
-                id={`${uid}-format`}
-                class="format-advanced-textarea textarea-code"
-                classList={{ "input-error": advancedError() !== null }}
-                value={advancedText()}
-                onInput={(e) => handleAdvancedInput(e.currentTarget.value)}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onPaste={handlePaste}
-                rows={6}
-                spellcheck={false}
-              />
-            </div>
-            <div class="control-row format-advanced-toolbar">
-              <button
-                type="button"
-                class="btn-ghost btn-xs"
-                disabled={assetUploading()}
-                onClick={() => fileInputRef.click()}
-              >
-                {assetUploading() ? "Uploading..." : "Insert image asset"}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(e) => { handleAssetFiles(e.currentTarget.files); e.currentTarget.value = ""; }}
-              />
-            </div>
-            <Show when={assetError()}>
-              {(err) => <div class="field-error">{err()}</div>}
-            </Show>
-            <Show when={advancedError()}>
-              {(err) => <div class="field-error">{err()}</div>}
-            </Show>
-            <div class="field-hint">
-              Line 1: format string. Lines 2+: <code>name=format</code> to define macros. Use <code>{"{name}"}</code> to reference them. Drop, paste, or upload images to insert as assets.
-            </div>
+          <label class="field-label" for={`${uid}-format`}>Format</label>
+          <FormatEditor
+            id={`${uid}-format`}
+            value={formatText()}
+            onInput={handleFormatInput}
+            schema={schema()}
+            sampleItem={sampleItem()}
+            placeholder="[title]"
+          />
+          <Show when={formatError()}>
+            {(err) => <div class="field-error">{err()}</div>}
           </Show>
         </div>
         <div class="form-field">

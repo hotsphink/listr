@@ -20,7 +20,7 @@ Monorepo with pnpm workspaces:
 - `title` is a first-class Item field, not part of the dynamic schema
 - Attribute schema and default format string live on Board, not List
 - Lists belong to Boards; a List can override the Board's format string
-- Format strings: `{key}`, `{key:modifier}`, `{content|}` conditionals, `{key:?true:false}` ternary
+- Formats: the language in doc/FORMAT.md (`[key]`, `[key:variant/fallback]`, derived attributes, conditions, styles), implemented in packages/shared/src/format. Stored as `format: { version, text }` on Board and List
 - View modes: list (default), table, card, board (per-list, persisted)
 - Use `jj` for version control, not git
 - PWA with service worker for offline support

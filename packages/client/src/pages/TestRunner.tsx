@@ -1,7 +1,11 @@
 import { type Component, For, createSignal, onMount } from "solid-js";
 import Dexie, { type EntityTable } from "dexie";
 import type { AttributeDefinition, Board, Item, List } from "@listr/shared";
-import { renderFormatString } from "@listr/shared";
+import { compileFormat, FORMAT_VERSION } from "@listr/shared";
+
+function renderFormatString(format: string, item: Item, schema: AttributeDefinition[]): string {
+  return compileFormat(format, schema).render(item).html;
+}
 
 interface TestResult {
   name: string;
@@ -60,7 +64,7 @@ async function createTestBoard(
     color: "#5b8def",
     position: 0,
     schema,
-    format_string: formatString,
+    format: { version: FORMAT_VERSION, text: formatString },
     created_at: now(),
     updated_at: now(),
   };
@@ -78,7 +82,7 @@ async function createTestList(
     name,
     icon: "",
     position: 0,
-    format_string: null,
+    format: null,
     view_mode: "table",
     created_at: now(),
     updated_at: now(),
@@ -124,7 +128,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
         { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
         { key: "duration", label: "Duration", type: "duration", required: false, position: 1 },
       ];
-      const cat = await createTestBoard("Movies", schema, "{rating:stars} {title}{ ({duration:short})|}");
+      const cat = await createTestBoard("Movies", schema, "[rating:stars] [title][d]\n\nd=cond([?duration], \" ([duration:short])\")");
       const list = await createTestList("Movies", cat.id);
       const item = await createTestItem(list, schema, "Inception", { rating: 4, duration: 148 });
 
@@ -135,7 +139,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       assertEqual(stored!.attributes.duration, 148);
 
       const storedCat = await testDb.boards.get(cat.id);
-      const display = renderFormatString(storedCat!.format_string, stored!, storedCat!.schema);
+      const display = renderFormatString(storedCat!.format.text, stored!, storedCat!.schema);
       assertEqual(display, "★★★★☆ Inception (2h28m)");
     },
   },
@@ -145,12 +149,12 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "rating", label: "Rating", type: "number", required: false, position: 0 },
       ];
-      const cat = await createTestBoard("Sparse", schema, "{rating:stars} - {title}");
+      const cat = await createTestBoard("Sparse", schema, "[rating:stars] - [title]");
       const list = await createTestList("Sparse", cat.id);
       const item = await createTestItem(list, schema, "No Rating");
 
       const stored = await testDb.items.get(item.id);
-      const display = renderFormatString(cat.format_string, stored!, cat.schema);
+      const display = renderFormatString(cat.format.text, stored!, cat.schema);
       assertEqual(display, " - No Rating", "missing rating renders empty at top level");
     },
   },
@@ -160,12 +164,12 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "status", label: "Status", type: "enum", required: false, options: ["to watch", "watching", "watched"], position: 0 },
       ];
-      const cat = await createTestBoard("Watch Status", schema, "{title} [{status:upper}]");
+      const cat = await createTestBoard("Watch Status", schema, "[title] \\[[status:upper]]");
       const list = await createTestList("Watch Status", cat.id);
       const item = await createTestItem(list, schema, "Dune", { status: "watching" });
 
       const stored = await testDb.items.get(item.id);
-      const display = renderFormatString(cat.format_string, stored!, cat.schema);
+      const display = renderFormatString(cat.format.text, stored!, cat.schema);
       assertEqual(display, "Dune [WATCHING]");
     },
   },
@@ -176,20 +180,20 @@ const tests: Array<{ name: string; fn: TestFn }> = [
         { key: "genre", label: "Genre", type: "text", required: false, position: 0 },
         { key: "year", label: "Year", type: "number", required: false, position: 1 },
       ];
-      const cat = await createTestBoard("Conditionals", schema, "{title}{ ({year})|}{ - {genre}|}");
+      const cat = await createTestBoard("Conditionals", schema, "[title][y][g]\n\ny=cond([?year], \" ([year])\")\ng=cond([?genre], \" - [genre]\")");
       const list = await createTestList("Conditionals", cat.id);
 
       const full = await createTestItem(list, schema, "Alien", { year: 1979, genre: "sci-fi" });
       const stored1 = await testDb.items.get(full.id);
-      assertEqual(renderFormatString(cat.format_string, stored1!, cat.schema), "Alien (1979) - sci-fi");
+      assertEqual(renderFormatString(cat.format.text, stored1!, cat.schema), "Alien (1979) - sci-fi");
 
       const noGenre = await createTestItem(list, schema, "Memento", { year: 2000 });
       const stored2 = await testDb.items.get(noGenre.id);
-      assertEqual(renderFormatString(cat.format_string, stored2!, cat.schema), "Memento (2000)");
+      assertEqual(renderFormatString(cat.format.text, stored2!, cat.schema), "Memento (2000)");
 
       const bare = await createTestItem(list, schema, "TBD", {});
       const stored3 = await testDb.items.get(bare.id);
-      assertEqual(renderFormatString(cat.format_string, stored3!, cat.schema), "TBD");
+      assertEqual(renderFormatString(cat.format.text, stored3!, cat.schema), "TBD");
     },
   },
   {
@@ -198,13 +202,13 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "status", label: "Status", type: "enum", required: false, options: ["backlog", "active", "done"], default_value: "backlog", position: 0 },
       ];
-      const cat = await createTestBoard("Defaults", schema, "{title} ({status})");
+      const cat = await createTestBoard("Defaults", schema, "[title] ([status])");
       const list = await createTestList("Defaults", cat.id);
       const item = await createTestItem(list, schema, "New Movie");
 
       const stored = await testDb.items.get(item.id);
       assertEqual(stored!.attributes.status, "backlog", "default_value should be applied");
-      assertEqual(renderFormatString(cat.format_string, stored!, cat.schema), "New Movie (backlog)");
+      assertEqual(renderFormatString(cat.format.text, stored!, cat.schema), "New Movie (backlog)");
     },
   },
   {
@@ -216,7 +220,7 @@ const tests: Array<{ name: string; fn: TestFn }> = [
           auto: { trigger: "on_create", source: "timestamp" },
         },
       ];
-      const cat = await createTestBoard("Auto", schema, "{title}");
+      const cat = await createTestBoard("Auto", schema, "[title]");
       const list = await createTestList("Auto", cat.id);
       const before = Date.now();
       const item = await createTestItem(list, schema, "Auto Item");
@@ -234,18 +238,18 @@ const tests: Array<{ name: string; fn: TestFn }> = [
       const schema: AttributeDefinition[] = [
         { key: "tags", label: "Tags", type: "tags", required: false, options: ["classic", "must-see", "rewatchable"], position: 0 },
       ];
-      const cat = await createTestBoard("Tagged", schema, "{title}{ - {tags}|}");
+      const cat = await createTestBoard("Tagged", schema, "[title][t]\n\nt=cond([?tags], \" - [tags]\")");
       const list = await createTestList("Tagged", cat.id);
       const item = await createTestItem(list, schema, "The Matrix", { tags: ["classic", "must-see"] });
 
       const stored = await testDb.items.get(item.id);
-      assertEqual(renderFormatString(cat.format_string, stored!, cat.schema), "The Matrix - classic, must-see");
+      assertEqual(renderFormatString(cat.format.text, stored!, cat.schema), "The Matrix - classic, must-see");
     },
   },
   {
     name: "items are scoped to their list",
     fn: async () => {
-      const cat = await createTestBoard("Scoped", [], "{title}");
+      const cat = await createTestBoard("Scoped", [], "[title]");
       const list1 = await createTestList("List A", cat.id);
       const list2 = await createTestList("List B", cat.id);
 

@@ -16,4 +16,7 @@
 // hello -> ok directly, and `variant` travels in `challenge` rather than `ok`,
 // so a dev/prod mismatch is caught before any crypto runs. See
 // packages/server/src/protocol.ts for the full v4/v5 writeup.
-export const PROTOCOL_VERSION = 5;
+// v6: boards and lists carry `format` (doc/FORMAT.md) instead of
+// `format_string` and `macros`. Flag day: the server converts stored rows in
+// its migration 7, and older clients would otherwise overwrite them.
+export const PROTOCOL_VERSION = 6;

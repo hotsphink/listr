@@ -5,6 +5,7 @@
  *   primitives  the shared vocabulary: buttons, fields, badges, panels, tones
  *   shell       the app frame: sidebar, header, overlays, sheets
  *   items       the four ways a list of items can be drawn, and drag and drop
+ *   format      the style vocabulary of item formats (fmt-*)
  *   pages       what is genuinely specific to one screen or dialog
  */
 @import "./styles/theme.css";
@@ -12,4 +13,5 @@
 @import "./styles/primitives.css";
 @import "./styles/shell.css";
 @import "./styles/items.css";
+@import "./styles/format.css";
 @import "./styles/pages.css";

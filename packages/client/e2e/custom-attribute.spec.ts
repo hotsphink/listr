@@ -70,10 +70,10 @@ test.describe("custom attributes", () => {
     await expect(directorInput).toHaveValue("Ridley Scott");
   });
 
-  test("board format string is used in list display", async ({ page }) => {
+  test("board format is used in list display", async ({ page }) => {
     await createBoard(page, "Rated Movies", [
       { key: "year", label: "Year", type: "number" },
-    ], "{title} ({year})");
+    ], "[title] ([year])");
     await createListInBoard(page, "Watchlist", "Rated Movies");
     await expect(page.locator(".page-header h1")).toHaveText("Rated Movies");
 
@@ -84,5 +84,37 @@ test.describe("custom attributes", () => {
 
     // List view should show the formatted string from the board
     await expect(page.locator(".list-view-item:not(.inline-add-item)").first()).toContainText("Alien (1979)");
+  });
+
+  test("board format applies styles and a tooltip and sanitizes markup", async ({ page }) => {
+    const format = [
+      '[title] <img src=x onerror="window.__xss = 1"><span class="modal-overlay">[year]</span>',
+      "wrap as top:",
+      "  if @year < 2000:",
+      '    style(+subdued): "[top]" end',
+      "  else:",
+      '    "[top]"',
+      "  end",
+      "end",
+      'tooltip: "Released [year]" end',
+    ].join("\n");
+    await createBoard(page, "Styled Movies", [
+      { key: "year", label: "Year", type: "number" },
+    ], format);
+    await createListInBoard(page, "Watchlist", "Styled Movies");
+    await expect(page.locator(".page-header h1")).toHaveText("Styled Movies");
+
+    await addItemViaModal(page, "Alien", async (modal) => {
+      await modal.locator(".form-field").nth(1).locator("input").fill("1979");
+    });
+
+    const text = page.locator(".list-view-item:not(.inline-add-item) .formatted-text").first();
+    await expect(text).toContainText("Alien 1979");
+    await expect(text).toHaveAttribute("title", "Released 1979");
+    await expect(text.locator("span.fmt-subdued")).toHaveCount(1);
+    // Format output may not use app classes or event handlers.
+    await expect(text.locator(".modal-overlay")).toHaveCount(0);
+    await expect(text.locator("img[onerror]")).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).__xss)).toBeUndefined();
   });
 });

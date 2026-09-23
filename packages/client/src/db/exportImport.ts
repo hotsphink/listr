@@ -1,4 +1,4 @@
-import { ENTITY_SCHEMA_VERSION, type AttributeDefinition, type Item, type List, type ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, upgradeBoardRecord, upgradeListRecord, type AttributeDefinition, type FormatSpec, type Item, type List, type ViewMode } from "@listr/shared";
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { deleteBoard, deleteList, deleteItem, resolveChain } from "./operations.js";
@@ -6,7 +6,7 @@ import { assetToSync, assetFromSync, registerAsset } from "../sync/assetStore.js
 import { shouldDeleteOnTombstone } from "../sync/mergeLogic.js";
 
 export interface NativeExport {
-  listr_export: "1" | "2";
+  listr_export: "1" | "2" | "3";
   exported_at: number;
   boards: ExportedBoard[];
   /** v2+: flat tombstones for boards/lists/items deleted since the source's last export.
@@ -34,7 +34,9 @@ interface ExportedBoard {
   color: string;
   position: number;
   schema: AttributeDefinition[];
-  format_string: string;
+  format?: FormatSpec;
+  /** Legacy (export versions 1 and 2), converted on import. */
+  format_string?: string;
   macros?: Record<string, string>;
   /** Custom sync namespace this board uses instead of the default (see Board.sync_key). */
   sync_key?: string;
@@ -47,7 +49,9 @@ interface ExportedList {
   name: string;
   icon: string;
   position: number;
-  format_string: string | null;
+  format?: FormatSpec | null;
+  /** Legacy (export versions 1 and 2), converted on import. */
+  format_string?: string | null;
   view_mode: ViewMode;
   items: ExportedItem[];
 }
@@ -79,21 +83,21 @@ export function isNativeExport(obj: unknown): obj is NativeExport {
   return (
     typeof obj === "object" &&
     obj !== null &&
-    ((obj as any).listr_export === "1" || (obj as any).listr_export === "2") &&
+    ["1", "2", "3"].includes((obj as any).listr_export) &&
     Array.isArray((obj as any).boards)
   );
 }
 
-// Matches macro/format-string/attribute references like hash://1a2b3c....png
+// Matches format/attribute references like hash://1a2b3c....png
 // produced by BoardFormModal's "Insert image asset" action.
 const ASSET_HASH_RE = /hash:\/\/([0-9a-f]{20})\.[a-z0-9]+/gi;
 
-/** Pure helper: finds asset IDs referenced from a board's/list's format strings, a
- *  board's macros, and items' string-valued attributes — used to scope asset export
- *  to a single board/list without dumping every asset in the local DB. */
+/** Pure helper: finds asset IDs referenced from a board's/list's formats and
+ *  items' string-valued attributes. Scopes asset export to a single board or
+ *  list without dumping every asset in the local DB. */
 export function extractReferencedAssetIds(
-  board: { format_string?: string | null; macros?: Record<string, string> },
-  lists: { format_string?: string | null }[],
+  board: { format?: FormatSpec | null },
+  lists: { format?: FormatSpec | null }[],
   items: { attributes: Record<string, unknown> }[],
 ): Set<string> {
   const ids = new Set<string>();
@@ -101,9 +105,8 @@ export function extractReferencedAssetIds(
     if (!s) return;
     for (const m of s.matchAll(ASSET_HASH_RE)) ids.add(m[1]);
   };
-  scan(board.format_string);
-  for (const v of Object.values(board.macros ?? {})) scan(v);
-  for (const l of lists) scan(l.format_string);
+  scan(board.format?.text);
+  for (const l of lists) scan(l.format?.text);
   for (const i of items) {
     for (const v of Object.values(i.attributes)) {
       if (typeof v === "string") scan(v);
@@ -124,7 +127,7 @@ function buildListEntry(list: List, items: Item[]) {
     name: list.name,
     icon: list.icon,
     position: list.position,
-    format_string: list.format_string,
+    format: list.format,
     view_mode: list.view_mode,
     items: items.map((item) => ({
       id: item.id,
@@ -162,7 +165,7 @@ export async function exportAllData(): Promise<NativeExport> {
     .map((t) => ({ entity_type: t.entity_type, entity_id: t.entity_id, deleted_at: t.deleted_at }));
 
   return {
-    listr_export: "2",
+    listr_export: "3",
     exported_at: Date.now(),
     boards: allBoards.map((board) => ({
       id: board.id,
@@ -170,8 +173,7 @@ export async function exportAllData(): Promise<NativeExport> {
       color: board.color,
       position: board.position,
       schema: board.schema,
-      format_string: board.format_string,
-      macros: board.macros,
+      format: board.format,
       sync_key: board.sync_key,
       lists: (listsByBoard.get(board.id) ?? []).map((list) =>
         buildListEntry(list, itemsByList.get(list.id) ?? [])
@@ -194,11 +196,11 @@ export async function exportBoard(boardId: string): Promise<NativeExport> {
   }
   const assets = await exportAssetsByIds(extractReferencedAssetIds(board, lists, allItems));
   return {
-    listr_export: "2",
+    listr_export: "3",
     exported_at: Date.now(),
     boards: [{
       id: board.id, name: board.name, color: board.color, position: board.position,
-      schema: board.schema, format_string: board.format_string, macros: board.macros,
+      schema: board.schema, format: board.format,
       sync_key: board.sync_key,
       lists: lists.map((list) => buildListEntry(list, itemsByList.get(list.id) ?? [])),
     }],
@@ -215,11 +217,11 @@ export async function exportList(listId: string): Promise<NativeExport> {
   const items = resolveChain(rawItems);
   const assets = await exportAssetsByIds(extractReferencedAssetIds(board, [list], items));
   return {
-    listr_export: "2",
+    listr_export: "3",
     exported_at: Date.now(),
     boards: [{
       id: board.id, name: board.name, color: board.color, position: board.position,
-      schema: board.schema, format_string: board.format_string, macros: board.macros,
+      schema: board.schema, format: board.format,
       sync_key: board.sync_key,
       lists: [buildListEntry(list, items)],
     }],
@@ -368,13 +370,13 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
       continue;
     }
 
+    const format = upgradeBoardRecord(board).format!;
     if (boardSet.has(board.id)) {
       await db.boards.update(board.id, {
         name: board.name,
         color: board.color,
         schema: board.schema,
-        format_string: board.format_string,
-        macros: board.macros,
+        format,
         sync_key: board.sync_key,
         updated_at: timestamp,
         schema_version: ENTITY_SCHEMA_VERSION,
@@ -387,8 +389,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         color: board.color,
         position: board.position,
         schema: board.schema,
-        format_string: board.format_string,
-        macros: board.macros,
+        format,
         sync_key: board.sync_key,
         created_at: timestamp,
         updated_at: timestamp,
@@ -407,11 +408,12 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         continue;
       }
 
+      const listFormat = upgradeListRecord(list, board.macros).format ?? null;
       if (listSet.has(list.id)) {
         await db.lists.update(list.id, {
           name: list.name,
           icon: list.icon,
-          format_string: list.format_string,
+          format: listFormat,
           view_mode: list.view_mode,
           updated_at: timestamp,
           schema_version: ENTITY_SCHEMA_VERSION,
@@ -424,7 +426,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
           name: list.name,
           icon: list.icon,
           position: list.position,
-          format_string: list.format_string,
+          format: listFormat,
           view_mode: list.view_mode,
           created_at: timestamp,
           updated_at: timestamp,

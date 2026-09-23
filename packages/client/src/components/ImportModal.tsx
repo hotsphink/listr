@@ -202,9 +202,8 @@ async function performImport(preview: PreviewBoard[], scope: ImportScope): Promi
     let boardId = board.existingId;
     if (!boardId) {
       const schema = scope.type === "board" ? scope.schema : [];
-      const fmt = scope.type === "board" ? scope.format_string : "{title}";
-      const macros = scope.type === "board" ? scope.macros : {};
-      const newBoard = await createBoard(board.name, "#5b8def", { schema, formatString: fmt, macros });
+      const format = scope.type === "board" ? scope.format : "[title]";
+      const newBoard = await createBoard(board.name, "#5b8def", { schema, format });
       boardId = newBoard.id;
     }
     for (const list of board.lists) {

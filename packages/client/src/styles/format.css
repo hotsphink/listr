@@ -1,0 +1,14 @@
+/* Styles available to item formats (doc/FORMAT.md). A format's style(+name)
+ * maps to the class fmt-name. The sanitizer strips every other class from
+ * format output, so this file is the whole vocabulary. */
+
+.fmt-subdued { color: var(--text-muted); }
+.fmt-bold { font-weight: 600; }
+.fmt-italic { font-style: italic; }
+.fmt-underline { text-decoration: underline; }
+.fmt-strikethrough { text-decoration: line-through; }
+.fmt-cancelled { text-decoration: line-through; color: var(--text-muted); }
+.fmt-code { font-family: var(--font-mono); font-size: 0.9em; }
+.fmt-accent { color: var(--accent); }
+.fmt-warn { color: var(--warning); }
+.fmt-small { font-size: var(--text-sm); }
