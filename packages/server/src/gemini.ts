@@ -37,6 +37,7 @@ function typeHint(type: string, key: string, label: string): string {
     if (l.includes("rotten") || l.includes(" rt")) return "integer 0–100";
     return "number";
   }
+  if (type === "integer") return "whole number";
   if (type === "boolean") return `"yes" or "no"`;
   if (type === "date") return "date string";
   if (type === "tags") return "array of strings";

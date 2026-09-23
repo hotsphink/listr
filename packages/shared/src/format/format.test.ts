@@ -16,6 +16,7 @@ const S = schema({
   todo: "todo",
   rotten: "number",
   rating: "number",
+  count: "integer",
   duration: "duration",
   important: "boolean",
   tags: "tags",
@@ -352,5 +353,13 @@ describe("escapeFormatText", () => {
     const text = `[img]\n\nimg="![${escapeFormatText(alt)}](hash://abc.png)"`;
     expect(errors(text)).toEqual([]);
     expect(html(text)).toBe(`<img src="blob:abc.png" alt="${alt.replace(/"/g, "&quot;")}">`);
+  });
+});
+
+describe("integer attributes", () => {
+  it("render, compare, and take :stars like numbers", () => {
+    expect(html("[count] [count:stars]", { count: 3 })).toBe("3 \u2605\u2605\u2605\u2606\u2606");
+    expect(html("[t]\n\nt=cond(@count >= 2.5, \"many\", \"few\")", { count: 3 })).toBe("many");
+    expect(errors("[x]\n\nx=cond(@count == \"3\", \"a\")")[0]).toMatch(/cannot compare/);
   });
 });

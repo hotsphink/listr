@@ -86,6 +86,28 @@ test.describe("custom attributes", () => {
     await expect(page.locator(".list-view-item:not(.inline-add-item)").first()).toContainText("Alien (1979)");
   });
 
+  test("Number fields have no steppers and Whole Number fields do", async ({ page }) => {
+    await createBoard(page, "Scores", [
+      { key: "rating", label: "Rating", type: "number" },
+      { key: "votes", label: "Votes", type: "integer" },
+    ], "[title] [rating] [votes]");
+    await createListInBoard(page, "Games", "Scores");
+    await expect(page.locator(".page-header h1")).toHaveText("Scores");
+
+    await addItemViaModal(page, "Chess", async (modal) => {
+      const rating = modal.getByLabel("Rating");
+      const votes = modal.getByLabel("Votes");
+      await expect(rating).not.toHaveAttribute("type", "number");
+      await expect(rating).toHaveAttribute("inputmode", "decimal");
+      await expect(votes).toHaveAttribute("type", "number");
+      await expect(votes).toHaveAttribute("step", "1");
+      await rating.fill("7.85");
+      await votes.fill("1200");
+    });
+
+    await expect(page.locator(".list-view-item:not(.inline-add-item)").first()).toContainText("Chess 7.85 1200");
+  });
+
   test("board format applies styles and a tooltip and sanitizes markup", async ({ page }) => {
     const format = [
       '[title] <img src=x onerror="window.__xss = 1"><span class="modal-overlay">[year]</span>',

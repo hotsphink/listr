@@ -22,7 +22,10 @@ const AttributeEditor: Component<Props> = (props) => {
         <TextInput id={props.id} value={props.value} onChange={props.onChange} />
       </Match>
       <Match when={props.definition.type === "number"}>
-        <NumberInput id={props.id} value={props.value} onChange={props.onChange} config={props.definition.config} />
+        <NumberInput id={props.id} value={props.value} onChange={props.onChange} />
+      </Match>
+      <Match when={props.definition.type === "integer"}>
+        <IntegerInput id={props.id} value={props.value} onChange={props.onChange} config={props.definition.config} />
       </Match>
       <Match when={props.definition.type === "boolean"}>
         <BooleanInput id={props.id} value={props.value} onChange={props.onChange} />
@@ -61,17 +64,43 @@ const TextInput: Component<{ value: unknown; onChange: (v: unknown) => void; typ
   />
 );
 
-const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; config?: Record<string, unknown>; id?: string }> = (props) => (
+/**
+ * Parse a decimal typed into a text field. Returns NaN for empty input and
+ * null for text that is not a number.
+ */
+export function parseDecimal(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return NaN;
+  const v = Number(trimmed);
+  return Number.isFinite(v) ? v : null;
+}
+
+// A text field rather than type="number": up/down steppers make no sense for
+// arbitrary decimals.
+const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; id?: string }> = (props) => (
+  <input
+    id={props.id}
+    inputmode="decimal"
+    value={props.value != null ? String(props.value) : ""}
+    onBlur={(e) => {
+      const v = parseDecimal(e.currentTarget.value);
+      if (v !== null) props.onChange(Number.isNaN(v) ? null : v);
+      else e.currentTarget.value = props.value != null ? String(props.value) : "";
+    }}
+  />
+);
+
+const IntegerInput: Component<{ value: unknown; onChange: (v: unknown) => void; config?: Record<string, unknown>; id?: string }> = (props) => (
   <input
     id={props.id}
     type="number"
+    step="1"
     value={props.value != null ? Number(props.value) : ""}
     min={props.config?.min as number | undefined}
     max={props.config?.max as number | undefined}
-    step={props.config?.step as number | undefined ?? "any"}
     onBlur={(e) => {
       const v = e.currentTarget.valueAsNumber;
-      props.onChange(isNaN(v) ? null : v);
+      props.onChange(Number.isNaN(v) ? null : Math.round(v));
     }}
   />
 );

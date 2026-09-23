@@ -1,9 +1,11 @@
 import { type Component, For, Index, Show, Switch, Match } from "solid-js";
 import type { AttributeDefinition, AttributeType } from "@listr/shared";
+import { parseDecimal } from "./AttributeEditor.js";
 
 const ATTRIBUTE_TYPES: { value: AttributeType; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "number", label: "Number" },
+  { value: "integer", label: "Whole Number" },
   { value: "date", label: "Date" },
   { value: "datetime", label: "Date & Time" },
   { value: "boolean", label: "Yes/No" },
@@ -155,15 +157,29 @@ const DefaultValueInput: Component<DefaultValueInputProps> = (props) => {
       </Match>
       <Match when={props.type === "number"}>
         <input
-          type="number"
-          step="any"
+          inputmode="decimal"
           placeholder="(none)"
           aria-label="Default value for new items"
-        title="Default value for new items"
+          title="Default value for new items"
+          value={props.value != null ? String(props.value) : ""}
+          onBlur={(e) => {
+            const v = parseDecimal(e.currentTarget.value);
+            if (v !== null) props.onChange(Number.isNaN(v) ? undefined : v);
+            else e.currentTarget.value = props.value != null ? String(props.value) : "";
+          }}
+        />
+      </Match>
+      <Match when={props.type === "integer"}>
+        <input
+          type="number"
+          step="1"
+          placeholder="(none)"
+          aria-label="Default value for new items"
+          title="Default value for new items"
           value={props.value != null ? Number(props.value) : ""}
           onBlur={(e) => {
             const v = e.currentTarget.valueAsNumber;
-            props.onChange(isNaN(v) ? undefined : v);
+            props.onChange(Number.isNaN(v) ? undefined : Math.round(v));
           }}
         />
       </Match>

@@ -1,6 +1,7 @@
 export type AttributeType =
   | "text"
   | "number"
+  | "integer"
   | "date"
   | "datetime"
   | "boolean"

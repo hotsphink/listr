@@ -27,6 +27,7 @@ export const TODO_ICONS: Record<string, string> = {
 export function valueTypeOf(t: AttributeType): ValueType {
   switch (t) {
     case "number":
+    case "integer":
     case "duration":
       return "num";
     case "boolean":
@@ -137,7 +138,7 @@ function strForm(v: unknown, type: AttributeType | undefined): string {
 
 /** Variants valid for each value type. Variants not listed here are valid for every type. */
 const TYPED_VARIANTS: Record<string, (type: AttributeType) => boolean> = {
-  stars: (t) => t === "number",
+  stars: (t) => t === "number" || t === "integer",
   short: (t) => t === "duration" || t === "date" || t === "datetime",
 };
 const ANY_VARIANTS = new Set(["str", "url", "upper", "lower"]);
