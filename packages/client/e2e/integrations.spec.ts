@@ -21,7 +21,7 @@ const SEARCH = {
 };
 const DETAILS: Record<string, object> = {
   tt0133093: { Response: "True", imdbID: "tt0133093", Title: "The Matrix", Year: "1999", Type: "movie" },
-  tt0234215: { Response: "True", imdbID: "tt0234215", Title: "The Matrix Reloaded", Year: "2003", Type: "movie" },
+  tt0234215: { Response: "True", imdbID: "tt0234215", Title: "The Matrix Reloaded", Year: "2003", Type: "movie", Genre: "Action, Sci-Fi" },
 };
 
 let omdb: Server;
@@ -103,12 +103,34 @@ test("an ambiguous OMDb match is resolved with the picker, and the official titl
   await expect(pick).toHaveCount(0);
   expect(requests.some((q) => q.get("i") === "tt0234215")).toBe(true);
 
-  // The editor shows integration values as hints, never as the user's own values.
+  // The editor shows integration values as placeholders, never as the user's own values,
+  // styled as integration values and naming where they came from.
   await item.dblclick();
   await expect(modal.locator("h2")).toHaveText("Edit Item");
-  await expect(modal.locator(".form-field input").first()).toHaveValue("");
-  await expect(modal.locator(".form-field input").first()).toHaveAttribute("placeholder", "The Matrix Reloaded");
-  await expect(modal.locator(".field-hint", { hasText: "From integration: 2003" })).toBeVisible();
+  const title = modal.getByLabel("Title", { exact: true });
+  await expect(title).toHaveValue("");
+  await expect(title).toHaveAttribute("placeholder", "The Matrix Reloaded");
+  const titleField = modal.locator(".form-field", { has: page.getByLabel("Title", { exact: true }) });
+  await expect(titleField).toHaveClass(/from-integration/);
+  await expect(titleField.locator(".integration-note")).toHaveText("From OMDb (movies and TV). Enter a title to override it.");
+
+  const year = modal.getByLabel("Year", { exact: true });
+  await expect(year).toHaveValue("");
+  await expect(year).toHaveAttribute("placeholder", "2003");
+  const yearField = modal.locator(".form-field", { has: page.getByLabel("Year", { exact: true }) });
+  await expect(yearField).toHaveClass(/from-integration/);
+  await expect(yearField.locator(".integration-note")).toHaveText("From OMDb (movies and TV). Enter a value to override it.");
+
+  // Tags have no placeholder, so the note carries the value.
+  const genre = modal.locator(".form-field", { has: page.locator(".field-label", { hasText: /^Genre$/ }) });
+  await expect(genre.locator(".integration-note")).toHaveText("Action, Sci-Fi, from OMDb (movies and TV). Setting a value overrides it.");
+
+  // Entering a value makes it the user's own: the integration styling and note go
+  // away once the field commits it, which number fields do when focus leaves.
+  await year.fill("2004");
+  await year.press("Tab");
+  await expect(yearField).not.toHaveClass(/from-integration/);
+  await expect(yearField.locator(".integration-note")).toHaveCount(0);
 });
 
 test("an auto-chosen match can be replaced from the item's context menu", async ({ page }) => {

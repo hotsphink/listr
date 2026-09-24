@@ -1,7 +1,7 @@
 import { type Component, createSignal, createEffect, For, Show } from "solid-js";
-import { isSet, type AttributeDefinition, type Item, type Overlay } from "@listr/shared";
+import { formatDurationShort, isSet, type AttributeDefinition, type AttributeType, type Item, type Overlay } from "@listr/shared";
 import Modal from "./Modal.js";
-import AttributeEditor from "./AttributeEditor.js";
+import AttributeEditor, { showsPlaceholder } from "./AttributeEditor.js";
 
 interface Props {
   open: boolean;
@@ -13,11 +13,19 @@ interface Props {
   initialTitle?: string;
   /** Integration values shown where the user has none. They are hints and are never saved. */
   overlay?: Overlay;
+  /** Display name of the integration each overlay value came from, by attribute key. */
+  overlaySources?: Record<string, string>;
 }
 
 let seq = 0;
 
-const formatHint = (v: unknown): string => (Array.isArray(v) ? v.join(", ") : String(v));
+/** An integration value as text, for a placeholder or a note. */
+function formatOverlayValue(v: unknown, type: AttributeType): string {
+  if (Array.isArray(v)) return v.join(", ");
+  if (type === "duration" && typeof v === "number") return formatDurationShort(v);
+  if (type === "boolean") return v ? "Yes" : "No";
+  return String(v);
+}
 
 const ItemFormModal: Component<Props> = (props) => {
   // Per-instance id prefix, so each label points at its own control even with
@@ -38,6 +46,12 @@ const ItemFormModal: Component<Props> = (props) => {
     setAttributes((prev) => ({ ...prev, [key]: value }));
   };
 
+  /** The integration value a field shows while the user has none of their own, if any. */
+  const shownOverlay = (key: string, own: unknown): unknown =>
+    !isSet(typeof own === "string" ? own.trim() : own) && isSet(props.overlay?.[key]) ? props.overlay![key] : undefined;
+
+  const source = (key: string) => props.overlaySources?.[key] ?? "an integration";
+
   const handleSubmit = (e: Event) => {
     e.preventDefault();
     if (!title().trim() && !isSet(props.overlay?.title)) return;
@@ -48,7 +62,7 @@ const ItemFormModal: Component<Props> = (props) => {
     <Modal open={props.open} onClose={props.onClose}>
       <h2>{props.initial ? "Edit Item" : "New Item"}</h2>
       <form onSubmit={handleSubmit}>
-        <div class="form-field">
+        <div class="form-field" classList={{ "from-integration": shownOverlay("title", title()) !== undefined }}>
           <label class="field-label" for={`${uid}-title`}>Title</label>
           <input
             id={`${uid}-title`}
@@ -58,25 +72,36 @@ const ItemFormModal: Component<Props> = (props) => {
             autocapitalize="words"
             autofocus
           />
+          <Show when={shownOverlay("title", title()) !== undefined}>
+            <div class="field-hint integration-note">From {source("title")}. Enter a title to override it.</div>
+          </Show>
         </div>
         <For each={props.schema}>
-          {(def) => (
-            <div class="form-field">
-              <label class="field-label" id={`${fieldId(def.key)}-label`} for={fieldId(def.key)}>
-                {def.label || def.key}
-              </label>
-              <AttributeEditor
-                definition={def}
-                id={fieldId(def.key)}
-                labelledBy={`${fieldId(def.key)}-label`}
-                value={attributes()[def.key]}
-                onChange={(v) => setAttribute(def.key, v)}
-              />
-              <Show when={!isSet(attributes()[def.key]) && isSet(props.overlay?.[def.key])}>
-                <div class="field-hint">From integration: {formatHint(props.overlay![def.key])}</div>
-              </Show>
-            </div>
-          )}
+          {(def) => {
+            const shown = () => shownOverlay(def.key, attributes()[def.key]);
+            return (
+              <div class="form-field" classList={{ "from-integration": shown() !== undefined }}>
+                <label class="field-label" id={`${fieldId(def.key)}-label`} for={fieldId(def.key)}>
+                  {def.label || def.key}
+                </label>
+                <AttributeEditor
+                  definition={def}
+                  id={fieldId(def.key)}
+                  labelledBy={`${fieldId(def.key)}-label`}
+                  value={attributes()[def.key]}
+                  onChange={(v) => setAttribute(def.key, v)}
+                  placeholder={shown() !== undefined && showsPlaceholder(def.type) ? formatOverlayValue(shown(), def.type) : undefined}
+                />
+                <Show when={shown() !== undefined}>
+                  <div class="field-hint integration-note">
+                    {showsPlaceholder(def.type)
+                      ? `From ${source(def.key)}. Enter a value to override it.`
+                      : `${formatOverlayValue(shown(), def.type)}, from ${source(def.key)}. Setting a value overrides it.`}
+                  </div>
+                </Show>
+              </div>
+            );
+          }}
         </For>
         <div class="actions">
           {props.initial && props.onDelete && (

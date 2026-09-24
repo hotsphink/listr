@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { AttributeDefinition, IntegrationResult, Item } from "./types.js";
 import {
-  addMissingSettings, applyPick, coerceValue, computeOverlay, effectiveValue, optionsKey, orderResults, withOverlay,
+  addMissingSettings, applyPick, coerceValue, computeOverlay, effectiveValue, optionsKey, orderResults, resolveOverlay, withOverlay,
 } from "./integrations.js";
 
 const attr = (key: string, type: AttributeDefinition["type"]): AttributeDefinition =>
@@ -50,6 +50,11 @@ describe("overlay", () => {
   it("lets the first result win and drops keys outside the schema", () => {
     const o = computeOverlay(item(), [result("a", { year: "1999", junk: 1 }), result("b", { year: 2000, imdb_id: "tt1" })], schema);
     expect(o).toEqual({ year: 1999, imdb_id: "tt1" });
+  });
+
+  it("records which integration each value came from", () => {
+    const r = resolveOverlay(item(), [result("a", { year: 1999 }), result("b", { year: 2000, imdb_id: "tt1" })], schema);
+    expect(r).toEqual({ values: { year: 1999, imdb_id: "tt1" }, sources: { year: "a", imdb_id: "b" } });
   });
 
   it("returns null when nothing applies", () => {

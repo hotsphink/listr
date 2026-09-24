@@ -13,19 +13,26 @@ interface Props {
   id?: string;
   /** id of the element naming this field, for the multi-control types. */
   labelledBy?: string;
+  /** Shown while the field is empty, for the types that can show one. See showsPlaceholder. */
+  placeholder?: string;
+}
+
+/** Whether an attribute type's control can show a placeholder in place of an empty value. */
+export function showsPlaceholder(type: AttributeDefinition["type"]): boolean {
+  return ["text", "url", "number", "integer", "duration", "enum"].includes(type);
 }
 
 const AttributeEditor: Component<Props> = (props) => {
   return (
     <Switch fallback={<TextInput id={props.id} value={props.value} onChange={props.onChange} />}>
       <Match when={props.definition.type === "text"}>
-        <TextInput id={props.id} value={props.value} onChange={props.onChange} />
+        <TextInput id={props.id} value={props.value} onChange={props.onChange} placeholder={props.placeholder} />
       </Match>
       <Match when={props.definition.type === "number"}>
-        <NumberInput id={props.id} value={props.value} onChange={props.onChange} />
+        <NumberInput id={props.id} value={props.value} onChange={props.onChange} placeholder={props.placeholder} />
       </Match>
       <Match when={props.definition.type === "integer"}>
-        <IntegerInput id={props.id} value={props.value} onChange={props.onChange} config={props.definition.config} />
+        <IntegerInput id={props.id} value={props.value} onChange={props.onChange} config={props.definition.config} placeholder={props.placeholder} />
       </Match>
       <Match when={props.definition.type === "boolean"}>
         <BooleanInput id={props.id} value={props.value} onChange={props.onChange} />
@@ -37,16 +44,16 @@ const AttributeEditor: Component<Props> = (props) => {
         <DateInput id={props.id} value={props.value} onChange={props.onChange} showTime />
       </Match>
       <Match when={props.definition.type === "enum"}>
-        <EnumInput id={props.id} value={props.value} onChange={props.onChange} options={props.definition.options ?? []} />
+        <EnumInput id={props.id} value={props.value} onChange={props.onChange} options={props.definition.options ?? []} placeholder={props.placeholder} />
       </Match>
       <Match when={props.definition.type === "tags"}>
         <TagsInput labelledBy={props.labelledBy} value={props.value} onChange={props.onChange} options={props.definition.options ?? []} />
       </Match>
       <Match when={props.definition.type === "url"}>
-        <TextInput id={props.id} value={props.value} onChange={props.onChange} type="url" />
+        <TextInput id={props.id} value={props.value} onChange={props.onChange} type="url" placeholder={props.placeholder} />
       </Match>
       <Match when={props.definition.type === "duration"}>
-        <DurationInput labelledBy={props.labelledBy} value={props.value} onChange={props.onChange} />
+        <DurationInput labelledBy={props.labelledBy} value={props.value} onChange={props.onChange} placeholder={props.placeholder} />
       </Match>
       <Match when={props.definition.type === "todo"}>
         <TodoInput id={props.id} value={props.value} onChange={props.onChange} />
@@ -55,10 +62,11 @@ const AttributeEditor: Component<Props> = (props) => {
   );
 };
 
-const TextInput: Component<{ value: unknown; onChange: (v: unknown) => void; type?: string; id?: string }> = (props) => (
+const TextInput: Component<{ value: unknown; onChange: (v: unknown) => void; type?: string; id?: string; placeholder?: string }> = (props) => (
   <input
     id={props.id}
     type={props.type ?? "text"}
+    placeholder={props.placeholder}
     value={String(props.value ?? "")}
     onInput={(e) => props.onChange(e.currentTarget.value)}
   />
@@ -77,10 +85,11 @@ export function parseDecimal(text: string): number | null {
 
 // A text field rather than type="number": up/down steppers make no sense for
 // arbitrary decimals.
-const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; id?: string }> = (props) => (
+const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; id?: string; placeholder?: string }> = (props) => (
   <input
     id={props.id}
     inputmode="decimal"
+    placeholder={props.placeholder}
     value={props.value != null ? String(props.value) : ""}
     onBlur={(e) => {
       const v = parseDecimal(e.currentTarget.value);
@@ -90,11 +99,12 @@ const NumberInput: Component<{ value: unknown; onChange: (v: unknown) => void; i
   />
 );
 
-const IntegerInput: Component<{ value: unknown; onChange: (v: unknown) => void; config?: Record<string, unknown>; id?: string }> = (props) => (
+const IntegerInput: Component<{ value: unknown; onChange: (v: unknown) => void; config?: Record<string, unknown>; id?: string; placeholder?: string }> = (props) => (
   <input
     id={props.id}
     type="number"
     step="1"
+    placeholder={props.placeholder}
     value={props.value != null ? Number(props.value) : ""}
     min={props.config?.min as number | undefined}
     max={props.config?.max as number | undefined}
@@ -123,13 +133,13 @@ const DateInput: Component<{ value: unknown; onChange: (v: unknown) => void; sho
   />
 );
 
-const EnumInput: Component<{ value: unknown; onChange: (v: unknown) => void; options: string[]; id?: string }> = (props) => (
+const EnumInput: Component<{ value: unknown; onChange: (v: unknown) => void; options: string[]; id?: string; placeholder?: string }> = (props) => (
   <select
     id={props.id}
     value={String(props.value ?? "")}
     onChange={(e) => props.onChange(e.currentTarget.value || null)}
   >
-    <option value="">—</option>
+    <option value="">{props.placeholder ?? "\u2014"}</option>
     <For each={props.options}>{(opt) => <option value={opt}>{opt}</option>}</For>
   </select>
 );
@@ -162,7 +172,7 @@ const TagsInput: Component<{ value: unknown; onChange: (v: unknown) => void; opt
   );
 };
 
-const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void; labelledBy?: string }> = (props) => {
+const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void; labelledBy?: string; placeholder?: string }> = (props) => {
   let hoursRef!: HTMLInputElement;
   let minutesRef!: HTMLInputElement;
   const total = () => (typeof props.value === "number" && !Number.isNaN(props.value) ? props.value : null);
@@ -203,7 +213,7 @@ const DurationInput: Component<{ value: unknown; onChange: (v: unknown) => void;
         type="text"
         class="duration-text"
         aria-label="Duration, as text"
-        placeholder="e.g. 1h42m"
+        placeholder={props.placeholder ?? "e.g. 1h42m"}
         value={total() ? formatDurationShort(total()!) : ""}
         onBlur={(e) => {
           const text = e.currentTarget.value;

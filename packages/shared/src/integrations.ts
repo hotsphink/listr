@@ -78,16 +78,22 @@ export function orderResults(results: IntegrationResult[], integrations: Integra
 }
 
 /**
- * The winning integration value for each attribute of one item. The overlay
- * holds values even for attributes the user has set, since user values are
- * read live and win in effectiveValue. Return null when nothing applies.
+ * The winning integration value for each attribute of one item, and the
+ * integration each came from. The overlay holds values even for attributes the
+ * user has set, since user values are read live and win in effectiveValue.
+ * Return null when nothing applies.
  */
-export function computeOverlay(item: Item, ordered: IntegrationResult[], schema: AttributeDefinition[]): Overlay | null {
+export function resolveOverlay(
+  item: Item,
+  ordered: IntegrationResult[],
+  schema: AttributeDefinition[],
+): { values: Overlay; sources: Record<string, string> } | null {
   const types = new Map(schema.map((a) => [a.key, a.type]));
-  let overlay: Overlay | null = null;
+  let values: Overlay | null = null;
+  const sources: Record<string, string> = {};
   for (const result of ordered) {
     for (const [key, raw] of Object.entries(result.attribute_values)) {
-      if (overlay && key in overlay) continue;
+      if (values && key in values) continue;
       // A pick made against a different option set is stale, so its value no longer shows.
       const choice = result.choices?.[key];
       const pick = item.choices?.[key];
@@ -99,10 +105,16 @@ export function computeOverlay(item: Item, ordered: IntegrationResult[], schema:
         value = type ? coerceValue(raw, type) : undefined;
       }
       if (value === undefined) continue;
-      (overlay ??= {})[key] = value;
+      (values ??= {})[key] = value;
+      sources[key] = result.integration_id;
     }
   }
-  return overlay;
+  return values ? { values, sources } : null;
+}
+
+/** The overlay values alone. See resolveOverlay. */
+export function computeOverlay(item: Item, ordered: IntegrationResult[], schema: AttributeDefinition[]): Overlay | null {
+  return resolveOverlay(item, ordered, schema)?.values ?? null;
 }
 
 /** What a reader sees for one attribute: the user's value if set, else the overlay's. */

@@ -156,6 +156,35 @@
 
 /* ══ Item editor ══════════════════════════════════════════════════════════*/
 
+/* A field showing an integration's value because the user has none: the value
+ * sits in the empty control as an accented italic placeholder, and the control
+ * gets a dashed accent border, so it never reads as the user's own entry. */
+.from-integration input::placeholder {
+  color: var(--accent);
+  font-style: italic;
+  opacity: 1;
+}
+
+.from-integration input:not([type="checkbox"]):not([type="radio"]),
+.from-integration select {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+.from-integration select {
+  color: var(--accent);
+  font-style: italic;
+}
+
+.from-integration select option {
+  color: var(--text);
+  font-style: normal;
+}
+
+.integration-note {
+  color: var(--accent);
+}
+
 /* Editing several items at once: a checkbox saying whether to touch this
  * attribute at all, then the value to give it. */
 .multi-edit-field {

@@ -3,7 +3,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { from } from "solid-js";
 import { useParams, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
-import { applyPick, compileFormat, computeOverlay, effectiveValue, effectiveValues, orderResults, upgradeBoardRecord, withOverlay, type CompiledFormat, type Overlay, type RenderedFormat } from "@listr/shared";
+import { applyPick, compileFormat, computeOverlay, resolveOverlay, effectiveValue, effectiveValues, orderResults, upgradeBoardRecord, withOverlay, type CompiledFormat, type Overlay, type RenderedFormat } from "@listr/shared";
 import type { AttributeDefinition, Board, Integration, IntegrationResult, Item, List, IntegrationStatus, TodoState } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, updateItemAttribute, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
@@ -22,6 +22,7 @@ import { useSortable, isDragging } from "../hooks/useSortable.js";
 import InlineAddItem, { DUMMY_ITEM_ID } from "../components/InlineAddItem.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import IntegrationChoiceModal from "../components/IntegrationChoiceModal.js";
+import { availableIntegrations } from "../store/integrationCatalog.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
 import ListFormModal, { type ListFormData } from "../components/ListFormModal.js";
 import BoardFormModal, { type BoardFormData } from "../components/BoardFormModal.js";
@@ -336,6 +337,16 @@ const ListView: Component = () => {
     }
     return worst;
   };
+
+  /** Which integration each overlay value of the item being edited came from, by display name. */
+  const editingSources = createMemo(() => {
+    const item = editingItem();
+    if (!item) return undefined;
+    const resolved = resolveOverlay(item, orderResults(resultsByItemId().get(item.id) ?? [], board()?.integrations), schema());
+    if (!resolved) return undefined;
+    const names = new Map(availableIntegrations().map((m) => [m.id, m.name]));
+    return Object.fromEntries(Object.entries(resolved.sources).map(([key, id]) => [key, names.get(id) ?? id]));
+  });
 
   /** The item as readers see it, with integration values overlaid. */
   const shown = (item: Item): Item => withOverlay(item, overlays[item.id]);
@@ -1408,6 +1419,7 @@ const ListView: Component = () => {
               schema={schema()}
               initial={editingItem()}
               overlay={editingItem() ? overlays[editingItem()!.id] : undefined}
+              overlaySources={editingSources()}
             />
 
             <IntegrationChoiceModal
