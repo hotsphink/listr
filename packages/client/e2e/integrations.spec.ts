@@ -34,7 +34,7 @@ test.beforeAll(async () => {
     const q = new URL(req.url ?? "/", "http://x").searchParams;
     requests.push(q);
     const body = q.has("i") ? DETAILS[q.get("i")!] ?? { Response: "False", Error: "Incorrect IMDb ID." }
-      : q.get("s")?.toLowerCase() === "matrix" ? SEARCH
+      : q.get("s")?.toLowerCase().includes("matrix") ? SEARCH
       : { Response: "False", Error: "Movie not found!" };
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body));
@@ -109,6 +109,49 @@ test("an ambiguous OMDb match is resolved with the picker, and the official titl
   await expect(modal.locator(".form-field input").first()).toHaveValue("");
   await expect(modal.locator(".form-field input").first()).toHaveAttribute("placeholder", "The Matrix Reloaded");
   await expect(modal.locator(".field-hint", { hasText: "From integration: 2003" })).toBeVisible();
+});
+
+test("an auto-chosen match can be replaced from the item's context menu", async ({ page }) => {
+  test.setTimeout(120_000);
+  await joinServer(page);
+  await page.locator(".sidebar-item.sidebar-new.board").click();
+  const modal = page.locator(".modal");
+  await modal.locator(".form-field input").first().fill("Cinema");
+  await modal.getByRole("button", { name: "+ Add integration" }).click({ timeout: 30_000 });
+  await modal.getByRole("button", { name: "Add OMDb (movies and TV) attributes to schema" }).click();
+  await modal.getByRole("button", { name: "Create" }).click();
+  await modal.waitFor({ state: "hidden" });
+  await createListInBoard(page, "Seen", "Cinema");
+
+  // One exact title match among two results: OMDb picks it, so no badge shows.
+  await addItemToList(page, "The Matrix");
+  const item = page.locator(".list-view-item:not(.inline-add-item)").first();
+  await expect(item).toContainText("1999", { timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Several integration matches. Choose one." })).toHaveCount(0);
+
+  await item.click({ button: "right" });
+  await page.locator(".context-menu-item", { hasText: "Choose match" }).click();
+  await expect(modal.locator("h2")).toHaveText("Choose a match");
+  await expect(modal.getByRole("button", { name: "The Matrix (1999, movie) (current)" })).toHaveAttribute("aria-current", "true");
+  await modal.getByRole("button", { name: "The Matrix Reloaded (2003, movie)" }).click();
+
+  await expect(item).toContainText("The Matrix Reloaded", { timeout: 30_000 });
+  await expect(item).toContainText("2003");
+});
+
+test("the context menu offers no match choice without options", async ({ page }) => {
+  test.setTimeout(120_000);
+  await joinServer(page);
+  await page.locator(".sidebar-item.sidebar-new.board").click();
+  const modal = page.locator(".modal");
+  await modal.locator(".form-field input").first().fill("Plain");
+  await modal.getByRole("button", { name: "Create" }).click();
+  await modal.waitFor({ state: "hidden" });
+  await createListInBoard(page, "Things", "Plain");
+  await addItemToList(page, "The Matrix");
+  await page.locator(".list-view-item:not(.inline-add-item)").first().click({ button: "right" });
+  await expect(page.locator(".context-menu-item", { hasText: "Edit Item" })).toBeVisible();
+  await expect(page.locator(".context-menu-item", { hasText: "Choose match" })).toHaveCount(0);
 });
 
 test("a title with no match shows the not-found badge", async ({ page }) => {

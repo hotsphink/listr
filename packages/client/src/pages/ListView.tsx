@@ -661,6 +661,11 @@ const ListView: Component = () => {
       // itemCtxMenu, before it runs the action.
       const { item } = ctx;
       menuItems.push({ label: "Edit Item", action: () => { setEditingItem(item); setItemCtxMenu(null); } });
+      // Also offered when an integration chose a match itself, which shows no badge.
+      const hasChoices = orderResults(resultsByItemId().get(item.id) ?? [], board()?.integrations).some((r) => r.choices);
+      if (hasChoices) {
+        menuItems.push({ label: "Choose match", action: () => { setPickingItemId(item.id); setItemCtxMenu(null); } });
+      }
     }
     if (n > 1) {
       menuItems.push({ label: `Edit ${n} items`, action: () => { setShowMultiEdit(true); setItemCtxMenu(null); } });
@@ -1402,6 +1407,7 @@ const ListView: Component = () => {
 
             <IntegrationChoiceModal
               item={pickingItem()}
+              current={pickingItem() ? overlays[pickingItem()!.id] : undefined}
               results={pickingItem() ? orderResults(resultsByItemId().get(pickingItem()!.id) ?? [], board()?.integrations) : []}
               onClose={() => setPickingItemId(null)}
               onPick={handlePick}
