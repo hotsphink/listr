@@ -5,6 +5,7 @@ import SchemaEditor from "./SchemaEditor.js";
 import IntegrationsEditor from "./IntegrationsEditor.js";
 import FormatEditor, { formatHasErrors, rankSampleItems } from "./FormatEditor.js";
 import { db } from "../db/database.js";
+import { availableIntegrations } from "../store/integrationCatalog.js";
 
 function generateFormat(schema: AttributeDefinition[]): string {
   return ["[title]", ...schema.map((a) => `?[${a.key}]`)].join(" ");
@@ -70,6 +71,7 @@ const BoardFormModal: Component<Props> = (props) => {
   const [schema, setSchema] = createSignal<AttributeDefinition[]>([]);
   const [boardSyncKey, setBoardSyncKey] = createSignal("");
   const [integrations, setIntegrations] = createSignal<Integration[]>([]);
+  const [integrationsValid, setIntegrationsValid] = createSignal(true);
   const [formatManuallyEdited, setFormatManuallyEdited] = createSignal(false);
   const [nameError, setNameError] = createSignal<string | null>(null);
   const [formatError, setFormatError] = createSignal<string | null>(null);
@@ -103,6 +105,17 @@ const BoardFormModal: Component<Props> = (props) => {
     if (!formatManuallyEdited()) setFormatText(generateFormat(newSchema));
   };
 
+  const addIntegrationAttributes = (attrs: { key: string; type: AttributeDefinition["type"]; label: string }[]) => {
+    const current = schema();
+    const start = current.reduce((max, a) => Math.max(max, a.position), -1) + 1;
+    handleSchemaChange([
+      ...current,
+      ...attrs
+        .filter((a) => !current.some((c) => c.key === a.key))
+        .map((a, i) => ({ key: a.key, label: a.label, type: a.type, required: false, position: start + i })),
+    ]);
+  };
+
   const handleFormatInput = (value: string) => {
     setFormatText(value);
     setFormatManuallyEdited(true);
@@ -120,6 +133,10 @@ const BoardFormModal: Component<Props> = (props) => {
     }
     setNameError(null);
 
+    if (!integrationsValid()) {
+      setSaveError("Fix the integration config errors before saving.");
+      return;
+    }
     if (formatHasErrors(formatText(), schema())) {
       setFormatError("Fix the errors in the format before saving.");
       return;
@@ -219,7 +236,14 @@ const BoardFormModal: Component<Props> = (props) => {
         <div class="form-field">
           <div class="field-label" id={`${uid}-integrations-label`}>Integrations</div>
           <div role="group" aria-labelledby={`${uid}-integrations-label`}>
-            <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
+            <IntegrationsEditor
+              integrations={integrations()}
+              onChange={setIntegrations}
+              available={availableIntegrations()}
+              schema={schema()}
+              onAddAttributes={addIntegrationAttributes}
+              onValidityChange={setIntegrationsValid}
+            />
           </div>
         </div>
         <Show when={brokenLists().length > 0}>
@@ -232,7 +256,7 @@ const BoardFormModal: Component<Props> = (props) => {
           <button type="button" class="btn-ghost" onClick={props.onClose} disabled={saving()}>
             Cancel
           </button>
-          <button type="submit" class="btn-primary" disabled={saving()}>
+          <button type="submit" class="btn-primary" disabled={saving() || !integrationsValid()}>
             {saving() ? "Saving..." : props.initial ? "Save" : "Create"}
           </button>
         </div>

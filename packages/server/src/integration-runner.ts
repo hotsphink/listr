@@ -1,196 +1,453 @@
-import type { Item, IntegrationResult, Integration } from "@listr/shared";
-import type { IntegrationModule } from "./integrations/types.js";
+import { parse as parseToml } from "smol-toml";
+import {
+  coerceValue, computeOverlay, orderResults, withOverlay,
+  type Board, type Integration, type IntegrationResult, type Item, type List,
+} from "@listr/shared";
+import type { IntegrationModule, IntegrationRunResult } from "./integrations/types.js";
 import type { IntegrationServerConfig } from "./config.js";
-import type { createDbApi } from "./db.js";
+import { toWireResult, type IntegrationResultRow, type createDbApi } from "./db.js";
 
 type DbApi = ReturnType<typeof createDbApi>;
 type BroadcastFn = (syncKey: string, sender: null, msg: unknown) => void;
+type Priority = "edit" | "refresh";
 
+const DEFAULT_MAX_CONCURRENT = 4;
+const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_ATTEMPTS = 5;
+const RETRY_BASE_MS = 60_000;
+const RETRY_CAP_MS = 6 * 60 * 60 * 1000;
+const TICK_MS = 60_000;
+
+export interface RunnerOptions {
+  now?: () => number;
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+  /** How often to look for due retries and refreshes. 0 disables the timer. */
+  tickMs?: number;
+}
+
+interface Job {
+  key: string;
+  itemId: string;
+  module: IntegrationModule;
+  priority: Priority;
+  /** Modules already run in this cascade, so they don't run again. */
+  chain: Set<string>;
+  running: boolean;
+  /** Triggered again while running. Rerun when done. */
+  dirty: boolean;
+}
+
+class QuotaError extends Error {}
+
+/** Key-sorted JSON, so equal inputs always compare equal. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined).sort(([a], [b]) => (a < b ? -1 : 1));
+    return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonical(x)}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
+function nextUtcMidnight(now: number): number {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+}
+
+/**
+ * Runs integration modules for items and stores what they produce on
+ * integration_results rows. It never writes items: clients overlay the
+ * results when they read.
+ */
 export class IntegrationRunner {
-  private timers: ReturnType<typeof setTimeout>[] = [];
+  private jobs = new Map<string, Job>();
+  private queues = new Map<string, Job[]>();
+  private running = new Map<string, number>();
+  private usage = new Map<string, { day: number; count: number }>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private idleWaiters: (() => void)[] = [];
+  private now: () => number;
+  private fetchImpl: (url: string, init?: RequestInit) => Promise<Response>;
 
   constructor(
     private db: DbApi,
-    private integrations: Map<string, IntegrationModule>,
+    private modules: Map<string, IntegrationModule>,
     private serverConfig: Record<string, IntegrationServerConfig>,
     private broadcast: BroadcastFn,
-  ) {}
-
-  /** Called by index.ts after a successful item upsert. Fire-and-forget. */
-  onItemUpserted(item: Item, previousItem: Item | null, syncKey: string, alreadyRan?: Set<string>): void {
-    const changedKeys = previousItem ? computeChangedKeys(item, previousItem) : null;
-    this._processItemIntegrations(item, changedKeys, syncKey, alreadyRan).catch((err) => {
-      console.error(`[integrations] error processing item ${item.id}:`, err);
-    });
+    private opts: RunnerOptions = {},
+  ) {
+    this.now = opts.now ?? Date.now;
+    this.fetchImpl = opts.fetch ?? ((url, init) => fetch(url, init));
   }
 
-  private async _processItemIntegrations(
-    item: Item,
-    changedKeys: Set<string> | null,
-    syncKey: string,
-    alreadyRan?: Set<string>,
-  ): Promise<void> {
-    const list = this.db.getEntityById("list", item.list_id) as any;
-    if (!list) return;
-    const board = this.db.getEntityById("board", list.board_id) as any;
-    if (!board) return;
-
-    const integrationConfigs: Integration[] = list.integrations ?? board.integrations ?? [];
-    for (const cfg of integrationConfigs) {
-      if (!cfg.enabled) continue;
-      if (alreadyRan?.has(cfg.integration_id)) continue;
-      const module = this.integrations.get(cfg.integration_id);
-      if (!module) {
-        console.warn(`[integrations] unknown integration_id: ${cfg.integration_id}`);
-        continue;
-      }
-      if (!module.needsUpdate(item, changedKeys, cfg.config)) continue;
-      await this._processItem(item, module, cfg, board, syncKey, alreadyRan);
-    }
+  /** Modules the server offers, with each one's active flag. Only configured modules are listed. */
+  describe() {
+    return [...this.modules.values()]
+      .filter((m) => this.serverConfig[m.id] !== undefined)
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        attributes: m.attributes,
+        config_template: m.configTemplate,
+        active: m.isActive(this.settings(m)),
+      }));
   }
 
-  private async _processItem(
-    item: Item,
-    module: IntegrationModule,
-    cfg: Integration,
-    board: any,
-    syncKey: string,
-    alreadyRan?: Set<string>,
-  ): Promise<void> {
-    const resultId = `${item.id}:${cfg.integration_id}`;
-    const now = Date.now();
-
-    // created_at is set here; if a row already exists the DB's ON CONFLICT clause
-    // preserves the original created_at (it's not in the SET list).
-    const pendingResult: IntegrationResult = {
-      id: resultId,
-      item_id: item.id,
-      integration_id: cfg.integration_id,
-      sync_key: syncKey,
-      status: "unprocessed",
-      attribute_values: {},
-      integration_data: {},
-      created_at: now,
-      updated_at: now,
-    };
-    this.db.upsertIntegrationResult(pendingResult);
-    this.broadcast(syncKey, null, { type: "entity", entity_type: "integration_result", data: pendingResult });
-
-    try {
-      const serverCfg = this.serverConfig[cfg.integration_id] ?? {};
-      const result = await module.run(item, serverCfg, cfg.config);
-
-      // Filter attribute_values against the board's schema to catch unknown keys
-      const validKeys = new Set<string>((board.schema ?? []).map((attr: any) => attr.key as string));
-      const filteredValues: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(result.attribute_values)) {
-        if (validKeys.has(key)) {
-          filteredValues[key] = value;
-        } else {
-          console.warn(`[integrations] ${cfg.integration_id}: ignoring unknown attribute key '${key}' (not in board ${board.id} schema)`);
-        }
-      }
-
-      // Apply filtered values to the item and push the update
-      let writtenItem: Item | null = null;
-      let baseItem: Item = item;
-      if (Object.keys(filteredValues).length > 0) {
-        // Re-fetch item in case it was updated while we were running
-        const freshItem = this.db.getEntityById("item", item.id) as Item | null;
-        baseItem = freshItem ?? item;
-        const candidate: Item = {
-          ...baseItem,
-          attributes: { ...baseItem.attributes, ...filteredValues },
-          updated_at: Date.now(),
-        };
-        const { accepted } = this.db.upsertEntity("item", candidate as unknown as Record<string, unknown>, syncKey);
-        if (accepted) {
-          writtenItem = candidate;
-          this.broadcast(syncKey, null, { type: "entity", entity_type: "item", data: candidate });
-        }
-      }
-
-      // Cascade: let other integrations react to what this one wrote.
-      // This integration and all ancestors are excluded to prevent cycles.
-      if (result.cascade && writtenItem) {
-        const nextAlreadyRan = new Set([...(alreadyRan ?? []), module.id]);
-        this.onItemUpserted(writtenItem, baseItem, syncKey, nextAlreadyRan);
-      }
-
-      const completedResult: IntegrationResult = {
-        ...pendingResult,
-        status: result.status,
-        attribute_values: filteredValues,
-        integration_data: result.integration_data ?? {},
-        error: result.error,
-        updated_at: Date.now(),
-      };
-      this.db.upsertIntegrationResult(completedResult);
-      this.broadcast(syncKey, null, { type: "entity", entity_type: "integration_result", data: completedResult });
-
-      console.log(`[integrations] ${cfg.integration_id} ${result.status} for item ${item.id}`);
-    } catch (err) {
-      console.error(`[integrations] ${cfg.integration_id} failed for item ${item.id}:`, err);
-      const errorResult: IntegrationResult = {
-        ...pendingResult,
-        status: "error",
-        error: String(err),
-        updated_at: Date.now(),
-      };
-      this.db.upsertIntegrationResult(errorResult);
-      this.broadcast(syncKey, null, { type: "entity", entity_type: "integration_result", data: errorResult });
-    }
-  }
-
-  startPeriodicRefresh(): void {
-    for (const [integrationId, module] of this.integrations) {
-      const serverCfg = this.serverConfig[integrationId];
-      const refreshIntervalSecs = serverCfg?.refresh_interval ?? 0;
-      if (!refreshIntervalSecs) continue;
-      const refreshIntervalMs = refreshIntervalSecs * 1000;
-      console.log(`[integrations] ${integrationId}: periodic refresh every ${refreshIntervalSecs}s`);
-
-      const doRefresh = async () => {
-        try {
-          const stale = this.db.getIntegrationResultsForRefresh(integrationId, Date.now() - refreshIntervalMs);
-          for (const result of stale) {
-            const item = this.db.getEntityById("item", result.item_id) as Item | null;
-            if (!item) continue;
-            const list = this.db.getEntityById("list", item.list_id) as any;
-            if (!list) continue;
-            const board = this.db.getEntityById("board", list.board_id) as any;
-            if (!board) continue;
-            const cfgs: Integration[] = list.integrations ?? board.integrations ?? [];
-            const cfg = cfgs.find((c) => c.integration_id === integrationId && c.enabled);
-            if (!cfg) continue;
-            await this._processItem(item, module, cfg, board, result.sync_key);
-          }
-        } catch (err) {
-          console.error(`[integrations] periodic refresh error for ${integrationId}:`, err);
-        }
-        const timer = setTimeout(doRefresh, refreshIntervalMs);
-        this.timers.push(timer);
-      };
-
-      const timer = setTimeout(doRefresh, refreshIntervalMs);
-      this.timers.push(timer);
-    }
+  /** Requeue results a restart left unprocessed, and start the timer for due retries and refreshes. */
+  start(): void {
+    for (const row of this.db.getStalledIntegrationResults()) this.enqueueResult(row, "edit");
+    this.tick();
+    const tickMs = this.opts.tickMs ?? TICK_MS;
+    if (tickMs > 0) this.timer = setInterval(() => this.tick(), tickMs);
   }
 
   stop(): void {
-    for (const timer of this.timers) clearTimeout(timer);
-    this.timers = [];
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
-}
 
-function computeChangedKeys(newItem: Item, oldItem: Item): Set<string> {
-  const changed = new Set<string>();
-  for (const key of ["title", "after_id", "list_id"] as const) {
-    if (newItem[key] !== oldItem[key]) changed.add(key);
+  /** Resolve once no job is queued or running. For tests. */
+  idle(): Promise<void> {
+    if (this.jobs.size === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
-  const allAttrKeys = new Set([...Object.keys(newItem.attributes), ...Object.keys(oldItem.attributes)]);
-  for (const key of allAttrKeys) {
-    if (newItem.attributes[key] !== oldItem.attributes[key]) changed.add(key);
+
+  tick(): void {
+    for (const row of this.db.getDueIntegrationResults(this.now())) this.enqueueResult(row, "refresh");
   }
-  return changed;
+
+  /** Queue every enabled module whose inputs changed for this item. */
+  onItemChanged(itemId: string, chain: Set<string> = new Set()): void {
+    const ctx = this.itemContext(itemId);
+    if (!ctx) return;
+    const { item, board, results } = ctx;
+    for (const cfg of board.integrations ?? []) {
+      if (!cfg.enabled || chain.has(cfg.integration_id)) continue;
+      const module = this.modules.get(cfg.integration_id);
+      if (!module) continue;
+      const existing = results.find((r) => r.integration_id === module.id) as IntegrationResultRow | undefined;
+      const config = this.parseConfig(cfg);
+      if (!config.ok) {
+        this.writeConfigError(item, module, existing, config.error);
+        continue;
+      }
+      const inputs = module.inputsOf(item, this.effectiveFor(module, ctx), config.value);
+      if (!inputs) {
+        if (existing) this.removeResult(existing, item);
+        continue;
+      }
+      if (existing && existing.inputs === canonical(inputs) && existing.status !== "unprocessed") continue;
+      this.enqueue(item.id, module, "edit", chain);
+    }
+  }
+
+  /** Drop an item's results. Clients drop their copies when the item's tombstone arrives. */
+  onItemDeleted(itemId: string): void {
+    this.db.deleteIntegrationResultsForItem(itemId);
+  }
+
+  /** Remove results for integrations the board dropped, and run ones it newly enabled. */
+  onBoardChanged(board: Board, previous: Board | null): void {
+    const enabled = (b: Board | null) => new Set((b?.integrations ?? []).filter((c) => c.enabled).map((c) => c.integration_id));
+    const before = enabled(previous);
+    const after = enabled(board);
+    const now = this.now();
+    for (const id of before) {
+      if (after.has(id)) continue;
+      for (const { id: resultId, sync_key } of this.db.getIntegrationResultIdsForBoard(board.id, id)) {
+        this.db.tombstoneIntegrationResult(resultId, sync_key, now);
+        this.broadcast(sync_key, null, { type: "deleted", entity_type: "integration_result", entity_id: resultId, deleted_at: now });
+      }
+    }
+    const configChanged = (id: string) =>
+      board.integrations?.find((c) => c.integration_id === id)?.config !==
+      previous?.integrations?.find((c) => c.integration_id === id)?.config;
+    if ([...after].some((id) => !before.has(id) || configChanged(id))) {
+      for (const itemId of this.db.getItemIdsForBoard(board.id)) this.onItemChanged(itemId);
+    }
+  }
+
+  // -- Queue ---------------------------------------------------------------
+
+  private enqueueResult(row: IntegrationResultRow, priority: Priority): void {
+    const module = this.modules.get(row.integration_id);
+    if (module) this.enqueue(row.item_id, module, priority, new Set());
+  }
+
+  private enqueue(itemId: string, module: IntegrationModule, priority: Priority, chain: Set<string>): void {
+    const key = `${itemId}:${module.id}`;
+    const job = this.jobs.get(key);
+    if (job) {
+      if (job.running) job.dirty = true;
+      if (priority === "edit" && job.priority === "refresh") {
+        job.priority = "edit";
+        if (!job.running) this.sortQueue(module.id);
+      }
+      job.chain = chain;
+      return;
+    }
+    const fresh: Job = { key, itemId, module, priority, chain, running: false, dirty: false };
+    this.jobs.set(key, fresh);
+    const queue = this.queues.get(module.id) ?? [];
+    this.queues.set(module.id, queue);
+    queue.push(fresh);
+    this.sortQueue(module.id);
+    this.pump(module);
+  }
+
+  private sortQueue(moduleId: string): void {
+    // Stable sort: edits ahead of refreshes, FIFO within each.
+    this.queues.get(moduleId)?.sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "edit" ? -1 : 1));
+  }
+
+  private pump(module: IntegrationModule): void {
+    const queue = this.queues.get(module.id) ?? [];
+    const max = this.settings(module).max_concurrent ?? DEFAULT_MAX_CONCURRENT;
+    while ((this.running.get(module.id) ?? 0) < max && queue.length) {
+      const job = queue.shift()!;
+      job.running = true;
+      this.running.set(module.id, (this.running.get(module.id) ?? 0) + 1);
+      this.runJob(job)
+        .catch((err) => console.error(`[integrations] ${job.key}: unexpected error:`, err))
+        .finally(() => {
+          this.running.set(module.id, (this.running.get(module.id) ?? 1) - 1);
+          this.jobs.delete(job.key);
+          if (job.dirty) this.enqueue(job.itemId, module, job.priority, job.chain);
+          this.pump(module);
+          if (this.jobs.size === 0) for (const w of this.idleWaiters.splice(0)) w();
+        });
+    }
+  }
+
+  // -- Running a job -------------------------------------------------------
+
+  private async runJob(job: Job): Promise<void> {
+    const { module } = job;
+    const resultId = job.key;
+    const ctx = this.itemContext(job.itemId);
+    if (!ctx) {
+      this.db.deleteIntegrationResultsForItem(job.itemId);
+      return;
+    }
+    const { item, board, syncKey } = ctx;
+    const existing = this.db.getIntegrationResult(resultId);
+    const cfg = board.integrations?.find((c) => c.integration_id === module.id && c.enabled);
+    if (!cfg) {
+      if (existing) this.removeResult(existing, item);
+      return;
+    }
+    const config = this.parseConfig(cfg);
+    if (!config.ok) {
+      this.writeConfigError(item, module, existing, config.error);
+      return;
+    }
+    const inputs = this.inputsFor(module, config.value, job.itemId);
+    if (!inputs) {
+      if (existing) this.removeResult(existing, item);
+      return;
+    }
+
+    const now = this.now();
+    const serverConfig = this.settings(module);
+    try {
+      this.spend(module, syncKey, serverConfig, now);
+    } catch {
+      this.writeQuotaWait(item, module, existing, inputs, now);
+      return;
+    }
+    // A refresh keeps showing the old status. An edit shows the spinner while it runs.
+    if (job.priority === "edit" && existing?.status !== "unprocessed") {
+      this.write(item, module, existing, { ...(existing ?? this.blank(item, module)), status: "unprocessed", error: undefined });
+    }
+
+    let out: IntegrationRunResult;
+    let spentFirst = true;
+    try {
+      out = await module.run({
+        item,
+        inputs,
+        config: config.value,
+        serverConfig,
+        now,
+        fetch: (url) => {
+          // The first call was paid for before the run.
+          if (!spentFirst) this.spend(module, syncKey, serverConfig, this.now());
+          spentFirst = false;
+          return this.fetchImpl(url, { signal: AbortSignal.timeout(serverConfig.timeout_ms ?? DEFAULT_TIMEOUT_MS) });
+        },
+      });
+    } catch (err) {
+      const current = this.db.getIntegrationResult(resultId);
+      if (err instanceof QuotaError) {
+        this.writeQuotaWait(item, module, current, inputs, this.now());
+        return;
+      }
+      console.error(`[integrations] ${module.id} failed for item ${item.id}:`, err);
+      this.writeFailure(item, module, current, inputs, err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    // Stale discard: the item changed while the call ran, so this answer may be for old inputs.
+    const latestInputs = this.inputsFor(module, config.value, job.itemId);
+    if (!latestInputs) return;
+    if (canonical(latestInputs) !== canonical(inputs)) {
+      job.dirty = true;
+      return;
+    }
+
+    const declared = new Map(module.attributes.map((a) => [a.key, a.type]));
+    const values: Record<string, unknown> = {};
+    for (const [key, raw] of Object.entries(out.attribute_values)) {
+      const v = key === "title" ? (typeof raw === "string" ? raw : undefined) : declared.has(key) ? coerceValue(raw, declared.get(key)!) : undefined;
+      if (v === undefined) console.warn(`[integrations] ${module.id}: dropping ${key}=${JSON.stringify(raw)} for item ${item.id}`);
+      else values[key] = v;
+    }
+
+    const before = this.db.getIntegrationResult(resultId);
+    this.write(item, module, before, {
+      ...(before ?? this.blank(item, module)),
+      status: out.status,
+      attribute_values: values,
+      integration_data: out.integration_data ?? {},
+      choices: out.choices,
+      error: undefined,
+      inputs: canonical(inputs),
+      attempts: 0,
+      next_attempt_at: null,
+      next_refresh_at: out.refresh_at ?? null,
+    });
+    console.log(`[integrations] ${module.id} ${out.status} for item ${item.id}`);
+
+    // Cascade: other modules may read what this one produced.
+    if (canonical(before?.attribute_values ?? {}) !== canonical(values)) {
+      this.onItemChanged(item.id, new Set([...job.chain, module.id]));
+    }
+  }
+
+  private inputsFor(module: IntegrationModule, config: Record<string, unknown>, itemId: string): Record<string, unknown> | null {
+    const ctx = this.itemContext(itemId);
+    return ctx ? module.inputsOf(ctx.item, this.effectiveFor(module, ctx), config) : null;
+  }
+
+  /** The item with every other module's overlay applied. A module never reads its own output. */
+  private effectiveFor(module: IntegrationModule, ctx: { item: Item; board: Board; results: IntegrationResult[] }): Item {
+    const others = ctx.results.filter((r) => r.integration_id !== module.id);
+    return withOverlay(ctx.item, computeOverlay(ctx.item, orderResults(others, ctx.board.integrations), ctx.board.schema ?? []));
+  }
+
+  // -- Budget --------------------------------------------------------------
+
+  /** Count one external call against the module's daily limits, or throw QuotaError. */
+  private spend(module: IntegrationModule, syncKey: string, cfg: IntegrationServerConfig, now: number): void {
+    const day = Math.floor(now / 86_400_000);
+    const counters: [string, number | undefined][] = [
+      [module.id, cfg.daily_limit],
+      [`${module.id}:${syncKey}`, cfg.daily_limit_per_key],
+    ];
+    for (const [key, limit] of counters) {
+      const u = this.usage.get(key);
+      const count = u && u.day === day ? u.count : 0;
+      if (limit !== undefined && count >= limit) throw new QuotaError(`daily limit reached for ${key}`);
+    }
+    for (const [key] of counters) {
+      const u = this.usage.get(key);
+      this.usage.set(key, { day, count: (u && u.day === day ? u.count : 0) + 1 });
+    }
+  }
+
+  // -- Writing results -----------------------------------------------------
+
+  private blank(item: Item, module: IntegrationModule): IntegrationResultRow {
+    const now = this.now();
+    return {
+      id: `${item.id}:${module.id}`, item_id: item.id, integration_id: module.id, status: "unprocessed",
+      attribute_values: {}, integration_data: {}, created_at: now, updated_at: now,
+      inputs: null, attempts: 0, next_attempt_at: null, next_refresh_at: null,
+    };
+  }
+
+  /**
+   * Store a result row. Bump updated_at and broadcast only when a synced
+   * field changed. Scheduling columns alone are written quietly.
+   */
+  private write(item: Item, module: IntegrationModule, before: IntegrationResultRow | null, next: IntegrationResultRow): void {
+    const wireBefore = before ? canonical({ ...toWireResult(before), updated_at: 0 }) : null;
+    const wireAfter = canonical({ ...toWireResult(next), updated_at: 0 });
+    const changed = wireBefore !== wireAfter;
+    const row: IntegrationResultRow = {
+      ...next,
+      updated_at: changed ? Math.max(this.now(), (before?.updated_at ?? 0) + 1) : (before?.updated_at ?? next.updated_at),
+    };
+    this.db.putIntegrationResult(row);
+    if (!changed) return;
+    const syncKey = this.db.getItemSyncKey(item.id);
+    if (syncKey) this.broadcast(syncKey, null, { type: "entity", entity_type: "integration_result", data: toWireResult(row) });
+  }
+
+  private writeFailure(item: Item, module: IntegrationModule, current: IntegrationResultRow | null, inputs: Record<string, unknown>, error: string): void {
+    const attempts = (current?.attempts ?? 0) + 1;
+    const delay = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (attempts - 1));
+    // Keep the last good values, so the overlay survives a transient failure.
+    this.write(item, module, current, {
+      ...(current ?? this.blank(item, module)),
+      status: "error",
+      error,
+      inputs: canonical(inputs),
+      attempts,
+      next_attempt_at: attempts < MAX_ATTEMPTS ? this.now() + delay : null,
+    });
+  }
+
+  private writeQuotaWait(item: Item, module: IntegrationModule, current: IntegrationResultRow | null, inputs: Record<string, unknown>, now: number): void {
+    this.write(item, module, current, {
+      ...(current ?? this.blank(item, module)),
+      status: "unprocessed",
+      error: "quota",
+      inputs: canonical(inputs),
+      next_attempt_at: nextUtcMidnight(now),
+    });
+  }
+
+  private writeConfigError(item: Item, module: IntegrationModule, current: IntegrationResultRow | undefined | null, error: string): void {
+    this.write(item, module, current ?? null, {
+      ...(current ?? this.blank(item, module)),
+      status: "error",
+      error: `Config: ${error}`,
+      inputs: null,
+      next_attempt_at: null,
+    });
+  }
+
+  private removeResult(row: IntegrationResult, item: Item): void {
+    const syncKey = this.db.getItemSyncKey(item.id);
+    if (!syncKey) return;
+    const now = this.now();
+    this.db.tombstoneIntegrationResult(row.id, syncKey, now);
+    this.broadcast(syncKey, null, { type: "deleted", entity_type: "integration_result", entity_id: row.id, deleted_at: now });
+  }
+
+  // -- Lookups -------------------------------------------------------------
+
+  private settings(module: IntegrationModule): IntegrationServerConfig {
+    return { ...module.serverDefaults, ...this.serverConfig[module.id] };
+  }
+
+  private parseConfig(cfg: Integration): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+    if (!cfg.config) return { ok: true, value: {} };
+    try {
+      return { ok: true, value: parseToml(cfg.config) as Record<string, unknown> };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message.split("\n")[0] : String(err) };
+    }
+  }
+
+  private itemContext(itemId: string): { item: Item; board: Board; syncKey: string; results: IntegrationResultRow[] } | null {
+    const item = this.db.getEntityById("item", itemId) as Item | null;
+    if (!item) return null;
+    const list = this.db.getEntityById("list", item.list_id) as List | null;
+    const board = list ? (this.db.getEntityById("board", list.board_id) as Board | null) : null;
+    const syncKey = this.db.getItemSyncKey(itemId);
+    if (!board || !syncKey) return null;
+    return { item, board, syncKey, results: this.db.getIntegrationResultsForItem(itemId) };
+  }
 }

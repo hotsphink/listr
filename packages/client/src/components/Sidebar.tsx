@@ -371,6 +371,7 @@ const Sidebar: Component<Props> = (props) => {
             schema: data.schema,
             format: data.format.text,
             syncKey: data.sync_key || undefined,
+            integrations: data.integrations,
           });
           setShowCreateBoard(false);
         }}
@@ -388,6 +389,7 @@ const Sidebar: Component<Props> = (props) => {
             format: data.format.text,
             syncKey: finalKey,
             groupName: finalKey ? data.name : undefined,
+            integrations: data.integrations,
           });
           setCreatingGroupKey(null);
         }}

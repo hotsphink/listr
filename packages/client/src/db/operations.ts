@@ -327,6 +327,7 @@ export async function deleteBoard(id: string): Promise<void> {
     await db.boards.delete(id);
   });
 
+  await db.integration_results.where("item_id").anyOf(itemIds).delete();
   for (const itemId of itemIds) syncClient.pushDelete("item", itemId);
   for (const list of lists) syncClient.pushDelete("list", list.id);
   syncClient.pushDelete("board", id);
@@ -410,7 +411,7 @@ export async function createList(
 
 export async function updateList(
   id: string,
-  updates: Partial<Pick<List, "name" | "icon" | "position" | "format" | "view_mode" | "board_id" | "integrations">>,
+  updates: Partial<Pick<List, "name" | "icon" | "position" | "format" | "view_mode" | "board_id">>,
 ): Promise<void> {
   await db.lists.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.lists.get(id);
@@ -425,6 +426,7 @@ export async function deleteList(id: string): Promise<void> {
     await db.lists.delete(id);
   });
 
+  await db.integration_results.where("item_id").anyOf(items.map((i) => i.id)).delete();
   for (const item of items) syncClient.pushDelete("item", item.id);
   syncClient.pushDelete("list", id);
 }
@@ -508,7 +510,7 @@ export async function createItem(
 
 export async function updateItem(
   id: string,
-  updates: Partial<Pick<Item, "title" | "after_id" | "attributes">>,
+  updates: Partial<Pick<Item, "title" | "after_id" | "attributes" | "choices">>,
 ): Promise<void> {
   await db.items.update(id, { ...updates, updated_at: now(), schema_version: ENTITY_SCHEMA_VERSION });
   const updated = await db.items.get(id);
@@ -542,6 +544,7 @@ export async function deleteItem(id: string): Promise<void> {
     }
     await db.items.delete(id);
   });
+  await db.integration_results.where("item_id").equals(id).delete();
 
   for (const s of successors) {
     const updated = await db.items.get(s.id);

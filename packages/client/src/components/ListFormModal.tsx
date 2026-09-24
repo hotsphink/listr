@@ -1,7 +1,6 @@
 import { type Component, createSignal, createEffect, For, Show } from "solid-js";
-import { FORMAT_VERSION, type Board, type FormatSpec, type Integration, type Item, type List } from "@listr/shared";
+import { FORMAT_VERSION, type Board, type FormatSpec, type Item, type List } from "@listr/shared";
 import Modal from "./Modal.js";
-import IntegrationsEditor from "./IntegrationsEditor.js";
 import FormatEditor, { formatHasErrors, rankSampleItems } from "./FormatEditor.js";
 import { db } from "../db/database.js";
 
@@ -10,7 +9,6 @@ export interface ListFormData {
   board_id: string;
   /** null = use the board's format. */
   format: FormatSpec | null;
-  integrations: Integration[] | null;
 }
 
 interface Props {
@@ -32,8 +30,6 @@ const ListFormModal: Component<Props> = (props) => {
   const [overrideFormat, setOverrideFormat] = createSignal(false);
   const [formatError, setFormatError] = createSignal<string | null>(null);
   const [sampleItems, setSampleItems] = createSignal<Item[]>([]);
-  const [overrideIntegrations, setOverrideIntegrations] = createSignal(false);
-  const [integrations, setIntegrations] = createSignal<Integration[]>([]);
 
   createEffect(() => {
     if (props.open) {
@@ -48,9 +44,6 @@ const ListFormModal: Component<Props> = (props) => {
           .then((items) => setSampleItems(rankSampleItems(items)))
           .catch(console.error);
       }
-      const hasIntegrationOverride = props.initial?.integrations != null;
-      setOverrideIntegrations(hasIntegrationOverride);
-      setIntegrations(props.initial?.integrations ?? []);
     }
   });
 
@@ -68,7 +61,6 @@ const ListFormModal: Component<Props> = (props) => {
       name: name().trim(),
       board_id: boardId(),
       format: overrideFormat() ? { version: FORMAT_VERSION, text: formatOverride() } : null,
-      integrations: overrideIntegrations() ? integrations() : null,
     });
   };
 
@@ -140,22 +132,6 @@ const ListFormModal: Component<Props> = (props) => {
             </div>
           )}
         </Show>
-        <div class="form-field">
-          <label class="check-label">
-            <input
-              type="checkbox"
-              checked={overrideIntegrations()}
-              onChange={(e) => setOverrideIntegrations(e.currentTarget.checked)}
-            />
-            Override board integrations
-          </label>
-          <Show when={overrideIntegrations()}>
-            <IntegrationsEditor integrations={integrations()} onChange={setIntegrations} />
-          </Show>
-          <Show when={!overrideIntegrations()}>
-            <div class="field-hint">Using board integrations</div>
-          </Show>
-        </div>
         <div class="actions">
           <button type="button" class="btn-ghost" onClick={props.onClose}>
             Cancel

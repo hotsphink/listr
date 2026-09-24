@@ -38,11 +38,25 @@ export interface FormatSpec {
   text: string;
 }
 
-/** Config for a server-side integration, stored on Board or List (synced). */
+/** Config for a server-side integration, stored on Board (synced). */
 export interface Integration {
-  integration_id: string;           // matches a registered IntegrationModule on the server
+  /** Matches a registered IntegrationModule on the server. */
+  integration_id: string;
   enabled: boolean;
-  config?: Record<string, unknown>; // non-secret, integration-specific config
+  /** Non-secret, integration-specific settings as TOML text, kept as written so comments survive. */
+  config?: string;
+}
+
+/** What a server advertises about one of its integration modules. */
+export interface IntegrationInfo {
+  id: string;
+  name: string;
+  /** Attributes the module can fill, with the types it produces. */
+  attributes: { key: string; type: AttributeType; label: string }[];
+  /** TOML listing every setting with its default commented out. */
+  config_template: string;
+  /** False when the module can't run right now, for example a missing API key. */
+  active: boolean;
 }
 
 export interface Board {
@@ -71,8 +85,6 @@ export interface List {
   position: number;
   /** null = use the board's format. An override replaces it entirely. */
   format: FormatSpec | null;
-  /** null = inherit board's integrations */
-  integrations?: Integration[] | null;
   view_mode: ViewMode;
   created_at: number;
   updated_at: number;
@@ -80,19 +92,41 @@ export interface List {
   schema_version?: number;
 }
 
-export type IntegrationStatus = "unprocessed" | "complete" | "error" | "ambiguous";
+export type IntegrationStatus = "unprocessed" | "complete" | "error" | "not_found" | "ambiguous";
 
-/** Server-side integration result, keyed by "${item_id}:${integration_id}". */
+/** A set of values a user can pick from for one attribute. */
+export interface IntegrationChoice {
+  options: { value: string; label: string }[];
+  /** Hash of the option values. A pick is valid only while this matches. */
+  options_key: string;
+  /** User attributes a pick hands back to the integration, such as a typed title that was only a query. */
+  releases?: string[];
+}
+
+/** A user's pick from an IntegrationChoice, stored on the item. */
+export interface ItemChoice {
+  value: string;
+  options_key: string;
+  /** The released user values, kept as the lookup's input. */
+  query?: Record<string, unknown>;
+}
+
+/**
+ * Server-side integration result, keyed by "${item_id}:${integration_id}".
+ * Its attribute_values are laid over the item when read (see effectiveValue)
+ * and are never copied into the item.
+ */
 export interface IntegrationResult {
   id: string;
   item_id: string;
   integration_id: string;
-  sync_key: string;
   status: IntegrationStatus;
-  /** Shadow copy of attribute values the integration wrote to item.attributes. */
+  /** Everything the integration produced, keyed by attribute. */
   attribute_values: Record<string, unknown>;
-  /** Arbitrary integration-internal state (candidates for disambiguation, etc.). */
+  /** Arbitrary integration-internal state. */
   integration_data: Record<string, unknown>;
+  /** Pickable options, keyed by the attribute they fill. */
+  choices?: Record<string, IntegrationChoice>;
   error?: string;
   created_at: number;
   updated_at: number;
@@ -106,7 +140,10 @@ export interface Item {
   after_id: string | null;
   created_at: number;
   updated_at: number;
+  /** User-set attributes only. Integration values are overlaid when read. */
   attributes: Record<string, unknown>;
+  /** User picks from integration choices, keyed by attribute. */
+  choices?: Record<string, ItemChoice>;
   /** Data-shape version this record was authored under. Missing = pre-versioning (treat as 1). */
   schema_version?: number;
 }

@@ -1038,3 +1038,55 @@ describe("cert expiry warnings", () => {
     expect(warnings.join("\n")).toContain("cannot read");
   });
 });
+
+describe("sync server: integrations", () => {
+  let db: DbApi;
+  let handle: SyncServerHandle;
+  let port: number;
+
+  beforeEach(async () => {
+    db = openDb(":memory:");
+    handle = createSyncServer(db, { tls: false, integrations: { omdb: {} } });
+    await new Promise<void>((resolve) => handle.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    port = (handle.httpServer.address() as AddressInfo).port;
+  });
+
+  afterEach(() => {
+    handle.stop();
+  });
+
+  async function connectReady(keys: string[]): Promise<{ ws: WebSocket; ok: any }> {
+    const client = await makeTestClient();
+    const root = db.bootstrapRootUser(Date.now());
+    const user = db.createUser({ authorizedBy: root.user_id, caps: ["sync"] }, Date.now());
+    db.registerClient({ clientId: client.clientId, userId: user.user_id, pubkeyJwk: JSON.stringify(client.pubkeyJwk) }, Date.now());
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/sync`);
+    await waitForOpen(ws);
+    const challengeP = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "hello", protocol_version: MAX_PROTOCOL_VERSION, client_id: client.clientId, pubkey_jwk: client.pubkeyJwk, keys }));
+    const challenge = await challengeP;
+    const okP = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "auth", sig: await signFor(client, challenge.server_id, challenge.nonce) }));
+    return { ws, ok: await okP };
+  }
+
+  it("advertises configured modules in ok, with their active flag", async () => {
+    const { ws, ok } = await connectReady([]);
+    expect(ok.integrations).toEqual([expect.objectContaining({ id: "omdb", active: false })]);
+    expect(ok.integrations[0].config_template).toContain("refresh_days");
+    ws.close();
+  });
+
+  it("ignores integration results pushed by a client", async () => {
+    const { ws } = await connectReady(["k1"]);
+    ws.send(JSON.stringify({
+      type: "push_entity", entity_type: "integration_result", sync_key: "k1",
+      data: { id: "i1:omdb", item_id: "i1", integration_id: "omdb", status: "complete", attribute_values: {}, integration_data: {}, created_at: 1, updated_at: 9e15 },
+    }));
+    ws.send(JSON.stringify({ type: "push_delete", entity_type: "integration_result", entity_id: "i1", deleted_at: Date.now(), sync_key: "k1" }));
+    await sleep(50);
+    expect(db.getIntegrationResult("i1:omdb")).toBeNull();
+    expect(db.getTombstonesSince("k1", 0)).toEqual([]);
+    ws.close();
+  });
+});

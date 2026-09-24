@@ -8,9 +8,19 @@ export type { ModelConfig };
 
 export interface IntegrationServerConfig {
   api_key?: string;
-  refresh_interval?: number; // seconds; 0 or missing = no periodic refresh
-  [key: string]: unknown;    // additional integration-specific config
+  /** Runs of this module at once. */
+  max_concurrent?: number;
+  /** Per-request timeout for external calls. */
+  timeout_ms?: number;
+  /** External calls per UTC day, across all sync keys. Missing = no limit. */
+  daily_limit?: number;
+  /** External calls per UTC day for any one sync key. Missing = no limit. */
+  daily_limit_per_key?: number;
+  /** Additional integration-specific settings. */
+  [key: string]: unknown;
 }
+
+const NUMERIC_INTEGRATION_SETTINGS = ["max_concurrent", "timeout_ms", "daily_limit", "daily_limit_per_key"] as const;
 
 export interface Config {
   /** Vision models to try, tried one tier at a time. A tier's models run in
@@ -177,11 +187,13 @@ function parseIntegrations(
   for (const [id, cfg] of sources) {
     const entry = asObject(cfg);
     if (!entry) continue;
-    integrations[id] = {
-      ...integrations[id],
-      ...entry,
-      refresh_interval: asNumber(entry.refresh_interval) ?? integrations[id]?.refresh_interval,
-    };
+    const merged: IntegrationServerConfig = { ...integrations[id], ...entry };
+    for (const key of NUMERIC_INTEGRATION_SETTINGS) {
+      const n = asNumber(entry[key]);
+      if (n !== undefined) merged[key] = n;
+      else if (key in entry) merged[key] = integrations[id]?.[key];
+    }
+    integrations[id] = merged;
   }
   return integrations;
 }

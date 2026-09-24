@@ -15,7 +15,12 @@ import { MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION } from "./protocol.js";
 import { jwkThumbprint, verifyAuthSignature } from "./authCrypto.js";
 import { INTEGRATIONS } from "./integrations/index.js";
 import { IntegrationRunner } from "./integration-runner.js";
-import type { Item } from "@listr/shared";
+import type { Board } from "@listr/shared";
+import type { IntegrationModule } from "./integrations/types.js";
+import type { RunnerOptions } from "./integration-runner.js";
+
+// Entity types clients may push or delete.
+const SYNCED_ENTITY_TYPES = new Set<string>(["board", "list", "item", "asset"]);
 
 // Handshake tuning. 60s is generous for a challenge round trip, including the
 // crypto, while still being short enough that a captured nonce is useless
@@ -147,6 +152,9 @@ export interface SyncServerOptions {
   tls?: boolean;
   certDir?: string;
   integrations?: Record<string, IntegrationServerConfig>;
+  /** Integration modules to offer. Defaults to the built-in set. Tests override it. */
+  integrationModules?: Map<string, IntegrationModule>;
+  integrationRunner?: RunnerOptions;
   requestHandler?: (req: IncomingMessage, res: ServerResponse) => void;
   /** Which world this server belongs to (dev/prod/...), advertised in
    * `challenge` so clients can refuse to talk to the wrong one. Defaults to the
@@ -318,8 +326,8 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     }
   }
 
-  const integrationRunner = new IntegrationRunner(dbApi, INTEGRATIONS, opts.integrations ?? {}, broadcast);
-  integrationRunner.startPeriodicRefresh();
+  const integrationRunner = new IntegrationRunner(dbApi, opts.integrationModules ?? INTEGRATIONS, opts.integrations ?? {}, broadcast, opts.integrationRunner);
+  integrationRunner.start();
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     const connIp = ipOf(req);
@@ -388,6 +396,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         display_name: user.display_name,
         caps: user.caps,
         user_keys: userKeys,
+        integrations: integrationRunner.describe(),
         server_time: Date.now(),
       }));
     }
@@ -705,27 +714,22 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       }
 
       if (msg.type === "push_entity") {
-        const entityType = msg.entity_type as EntityType | "integration_result";
+        const entityType = msg.entity_type as EntityType;
         const data = msg.data as Record<string, unknown>;
         const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : "";
         if (!data?.id || !syncKey) return;
-        if (entityType === "integration_result") {
-          // Clients may push integration_results (e.g. to reset status); don't feed back to runner
-          const accepted = dbApi.upsertIntegrationResult(data as any);
-          if (accepted) broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
-        } else {
-          const { accepted, previous, rekeyed } = dbApi.upsertEntity(entityType, data, syncKey);
-          if (accepted) {
-            broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
-            if (entityType === "item") {
-              integrationRunner.onItemUpserted(data as unknown as Item, previous as unknown as Item | null, syncKey);
-            }
-          } else if (rekeyed) {
-            // Content was stale, but the entity just moved into this
-            // namespace. Anyone already listening on the new key needs it, and
-            // needs the stored version rather than the stale push.
-            broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data: rekeyed });
-          }
+        // Integration results belong to the server's runner. Clients change them only by editing items.
+        if (!SYNCED_ENTITY_TYPES.has(entityType)) return;
+        const { accepted, previous, rekeyed } = dbApi.upsertEntity(entityType, data, syncKey);
+        if (accepted) {
+          broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data });
+          if (entityType === "item") integrationRunner.onItemChanged(data.id as string);
+          if (entityType === "board") integrationRunner.onBoardChanged(data as unknown as Board, previous as Board | null);
+        } else if (rekeyed) {
+          // Content was stale, but the entity just moved into this
+          // namespace. Anyone already listening on the new key needs it, and
+          // needs the stored version rather than the stale push.
+          broadcast(syncKey, ws, { type: "entity", entity_type: entityType, data: rekeyed });
         }
         pushCounts[entityType] = (pushCounts[entityType] ?? 0) + 1;
         return;
@@ -736,8 +740,9 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         const entityId = msg.entity_id as string;
         const deletedAt = msg.deleted_at as number;
         const syncKey = typeof msg.sync_key === "string" ? msg.sync_key : "";
-        if (!entityId || !deletedAt || !syncKey) return;
+        if (!entityId || !deletedAt || !syncKey || !SYNCED_ENTITY_TYPES.has(entityType)) return;
         if (dbApi.applyTombstone(entityType, entityId, deletedAt, syncKey)) {
+          if (entityType === "item") integrationRunner.onItemDeleted(entityId);
           broadcast(syncKey, ws, { type: "deleted", entity_type: entityType, entity_id: entityId, deleted_at: deletedAt });
           console.log(`[sync] ${ts()} ${keyTag([syncKey])} delete ${entityType} id=${entityId}`);
         }

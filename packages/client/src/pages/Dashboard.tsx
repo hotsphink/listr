@@ -50,10 +50,7 @@ const Dashboard: Component = () => {
 
   const handleCreateList = async (data: ListFormData) => {
     const list = await createList(data.name, data.board_id);
-    const listUpdates: Record<string, unknown> = {};
-    if (data.format != null) listUpdates.format = data.format;
-    if (data.integrations != null) listUpdates.integrations = data.integrations;
-    if (Object.keys(listUpdates).length) await db.lists.update(list.id, listUpdates);
+    if (data.format != null) await db.lists.update(list.id, { format: data.format });
     setShowCreateList(false);
     navigate(`/list/${list.id}`);
   };

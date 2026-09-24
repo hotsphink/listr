@@ -19,4 +19,7 @@
 // v6: boards and lists carry `format` (doc/FORMAT.md) instead of
 // `format_string` and `macros`. Flag day: the server converts stored rows in
 // its migration 7, and older clients would otherwise overwrite them.
-export const PROTOCOL_VERSION = 6;
+// v7: integration results are overlaid on items. `ok` lists the server's
+// integration modules, results gain `choices` and `not_found`, and items gain
+// `choices`. Additive: the server still accepts v6.
+export const PROTOCOL_VERSION = 7;

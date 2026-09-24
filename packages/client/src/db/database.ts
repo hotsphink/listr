@@ -338,6 +338,37 @@ export class ListrDB extends Dexie {
         Object.assign(row, upgraded);
       });
     });
+
+    // Integration results are overlaid on items, and integration config is
+    // board-only TOML text. Integrations never worked before this, so old
+    // results and config are dropped rather than converted, the same as the
+    // server's migration 8.
+    this.version(7).stores({
+      boards: "id, position, updated_at",
+      lists: "id, board_id, position, updated_at",
+      items: "id, list_id, after_id, title, updated_at",
+      sync_config: "id",
+      tombstones: "id, entity_type, deleted_at",
+      assets: "id, updated_at",
+      sync_endpoints: "id, position",
+      key_sync_state: "key",
+      shared_keys: "key",
+      integration_results: "id, item_id, integration_id, status, updated_at",
+      board_groups: "key",
+      board_server_binding: "board_id",
+      client_identity: "id",
+      server_identity: "server_id",
+      pending_import: "id",
+    }).upgrade(async (tx) => {
+      await tx.table("integration_results").clear();
+      await tx.table("lists").toCollection().modify((row: Record<string, unknown>) => {
+        delete row.integrations;
+      });
+      await tx.table("boards").toCollection().modify((row: Record<string, unknown>) => {
+        if (!Array.isArray(row.integrations)) return;
+        row.integrations = row.integrations.filter((cfg: { config?: unknown }) => cfg.config === undefined || typeof cfg.config === "string");
+      });
+    });
   }
 }
 

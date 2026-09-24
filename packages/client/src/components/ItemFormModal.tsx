@@ -1,5 +1,5 @@
-import { type Component, createSignal, createEffect, For } from "solid-js";
-import type { AttributeDefinition, Item } from "@listr/shared";
+import { type Component, createSignal, createEffect, For, Show } from "solid-js";
+import { isSet, type AttributeDefinition, type Item, type Overlay } from "@listr/shared";
 import Modal from "./Modal.js";
 import AttributeEditor from "./AttributeEditor.js";
 
@@ -11,9 +11,13 @@ interface Props {
   schema: AttributeDefinition[];
   initial?: Item;
   initialTitle?: string;
+  /** Integration values shown where the user has none. They are hints and are never saved. */
+  overlay?: Overlay;
 }
 
 let seq = 0;
+
+const formatHint = (v: unknown): string => (Array.isArray(v) ? v.join(", ") : String(v));
 
 const ItemFormModal: Component<Props> = (props) => {
   // Per-instance id prefix, so each label points at its own control even with
@@ -36,7 +40,7 @@ const ItemFormModal: Component<Props> = (props) => {
 
   const handleSubmit = (e: Event) => {
     e.preventDefault();
-    if (!title().trim()) return;
+    if (!title().trim() && !isSet(props.overlay?.title)) return;
     props.onSave({ title: title().trim(), attributes: attributes() });
   };
 
@@ -50,6 +54,7 @@ const ItemFormModal: Component<Props> = (props) => {
             id={`${uid}-title`}
             value={title()}
             onInput={(e) => setTitle(e.currentTarget.value)}
+            placeholder={typeof props.overlay?.title === "string" ? props.overlay.title : undefined}
             autocapitalize="words"
             autofocus
           />
@@ -67,6 +72,9 @@ const ItemFormModal: Component<Props> = (props) => {
                 value={attributes()[def.key]}
                 onChange={(v) => setAttribute(def.key, v)}
               />
+              <Show when={!isSet(attributes()[def.key]) && isSet(props.overlay?.[def.key])}>
+                <div class="field-hint">From integration: {formatHint(props.overlay![def.key])}</div>
+              </Show>
             </div>
           )}
         </For>

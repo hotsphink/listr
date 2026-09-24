@@ -33,5 +33,9 @@
 // v6: boards and lists carry `format` (doc/FORMAT.md) instead of
 // `format_string` and `macros`. Migration 7 converts stored rows. Flag day:
 // MIN bumped to 6 so an older client cannot push the legacy fields back.
+// v7: integration results are overlaid on items instead of written into them.
+// `ok` gains `integrations` (the modules on offer), results gain `choices` and
+// the `not_found` status, items gain `choices`, and board integration config is
+// TOML text. Additive, so v6 clients still connect: they ignore the new fields.
 export const MIN_PROTOCOL_VERSION: number = 6;
-export const MAX_PROTOCOL_VERSION: number = 6;
+export const MAX_PROTOCOL_VERSION: number = 7;

@@ -4,6 +4,21 @@ import { mkdirSync } from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { isCurrentSchemaVersion, upgradeBoardRecord, upgradeListRecord } from "@listr/shared";
 import type { IntegrationResult } from "@listr/shared";
+
+/** A result row with the server-only scheduling state. */
+export interface IntegrationResultRow extends IntegrationResult {
+  /** Canonical JSON of the inputs the last run used. */
+  inputs: string | null;
+  attempts: number;
+  next_attempt_at: number | null;
+  next_refresh_at: number | null;
+}
+
+/** The synced shape of a result, without server-only columns. */
+export function toWireResult(r: IntegrationResultRow): IntegrationResult {
+  const { inputs: _i, attempts: _a, next_attempt_at: _n, next_refresh_at: _r, ...wire } = r;
+  return wire;
+}
 import { config } from "./config.js";
 
 export type EntityType = "board" | "list" | "item" | "asset";
@@ -51,6 +66,28 @@ export interface GrantRow {
   created_at: number;
 }
 
+// Integration results. The first ten columns are the synced IntegrationResult;
+// the rest are server-only scheduling state.
+const INTEGRATION_RESULTS_SQL = `
+  CREATE TABLE IF NOT EXISTS integration_results (
+    id TEXT PRIMARY KEY,
+    item_id TEXT NOT NULL,
+    integration_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attribute_values TEXT,
+    integration_data TEXT,
+    choices TEXT,
+    error TEXT,
+    created_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    inputs TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER,
+    next_refresh_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_integration_results_item ON integration_results(item_id);
+`;
+
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS server_config (
     key TEXT PRIMARY KEY,
@@ -92,18 +129,7 @@ const SCHEMA_SQL = `
     entity_id TEXT NOT NULL,
     deleted_at INTEGER NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS integration_results (
-    id TEXT PRIMARY KEY,
-    sync_key TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    integration_id TEXT NOT NULL,
-    status TEXT NOT NULL,
-    attribute_values TEXT,
-    integration_data TEXT,
-    error TEXT,
-    created_at INTEGER,
-    updated_at INTEGER NOT NULL
-  );
+  ${INTEGRATION_RESULTS_SQL}
   -- Keyed by \`user_id\`, not \`home_key\`. A home key is an ordinary, mutable
   -- attribute of a user record, not a stable identifier, and it carries no FK
   -- to \`users\`: a tombstoned user keeps its user_id but loses its other
@@ -201,9 +227,6 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_items ON items(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_assets ON assets(updated_at);
   CREATE INDEX IF NOT EXISTS idx_tombstones ON tombstones(sync_key, deleted_at);
-  CREATE INDEX IF NOT EXISTS idx_integration_results ON integration_results(sync_key, updated_at);
-  CREATE INDEX IF NOT EXISTS idx_integration_results_item ON integration_results(item_id);
-  CREATE INDEX IF NOT EXISTS idx_integration_results_refresh ON integration_results(integration_id, status, updated_at);
   CREATE INDEX IF NOT EXISTS idx_asset_keys_key ON asset_keys(sync_key);
   CREATE INDEX IF NOT EXISTS idx_users_authorized_by ON users(authorized_by);
   CREATE INDEX IF NOT EXISTS idx_clients_user ON clients(user_id);
@@ -532,6 +555,42 @@ function migrateV7FormatSpec(sql: Database.Database): void {
   convert();
 }
 
+// Migration 8: integration results move to the overlay model, with
+// scheduling columns and no sync_key (pulls join through items instead).
+// Integrations never worked in a released client, so existing results and
+// integration config are dropped rather than converted: lists lose
+// `integrations` entirely, and boards lose any entry whose config is not TOML
+// text. updated_at is left alone, like migration 7.
+function migrateV8IntegrationOverlay(sql: Database.Database): void {
+  const run = sql.transaction(() => {
+    sql.exec(`
+      DROP TABLE IF EXISTS integration_results;
+      DROP INDEX IF EXISTS idx_integration_results;
+      DROP INDEX IF EXISTS idx_integration_results_refresh;
+      ${INTEGRATION_RESULTS_SQL}
+    `);
+    const lists = sql.prepare(`SELECT id, data FROM lists`).all() as { id: string; data: string }[];
+    const updateList = sql.prepare(`UPDATE lists SET data = ? WHERE id = ?`);
+    for (const row of lists) {
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      if (!("integrations" in data)) continue;
+      delete data.integrations;
+      updateList.run(JSON.stringify(data), row.id);
+    }
+    const boards = sql.prepare(`SELECT id, data FROM boards`).all() as { id: string; data: string }[];
+    const updateBoard = sql.prepare(`UPDATE boards SET data = ? WHERE id = ?`);
+    for (const row of boards) {
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      if (!Array.isArray(data.integrations)) continue;
+      const kept = data.integrations.filter((cfg: { config?: unknown }) => cfg.config === undefined || typeof cfg.config === "string");
+      if (kept.length === data.integrations.length) continue;
+      data.integrations = kept;
+      updateBoard.run(JSON.stringify(data), row.id);
+    }
+  });
+  run();
+}
+
 const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] = [
   { version: 1, run: migrateV1LegacyColumnBaseline },
   { version: 2, run: migrateV2AssetKeys },
@@ -540,6 +599,7 @@ const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] =
   { version: 5, run: migrateV5RekeyUserKeysToUserId },
   { version: 6, run: migrateV6GrantPayloadName },
   { version: 7, run: migrateV7FormatSpec },
+  { version: 8, run: migrateV8IntegrationOverlay },
 ];
 
 /** Highest schema version this build knows how to migrate a database to. */
@@ -757,56 +817,118 @@ export function createDbApi(sql: Database.Database) {
     return row ? JSON.parse(row.data) : null;
   }
 
-  function upsertIntegrationResult(result: IntegrationResult): boolean {
-    const existing = sql
-      .prepare(`SELECT updated_at FROM integration_results WHERE id = ?`)
-      .get(result.id) as { updated_at: number } | undefined;
-    if (existing && existing.updated_at >= result.updated_at) return false;
-    sql
-      .prepare(`INSERT INTO integration_results
-          (id, sync_key, item_id, integration_id, status, attribute_values, integration_data, error, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            sync_key=excluded.sync_key, status=excluded.status,
-            attribute_values=excluded.attribute_values, integration_data=excluded.integration_data,
-            error=excluded.error, updated_at=excluded.updated_at`)
-      .run(
-        result.id, result.sync_key, result.item_id, result.integration_id,
-        result.status, JSON.stringify(result.attribute_values),
-        JSON.stringify(result.integration_data), result.error ?? null,
-        result.created_at, result.updated_at,
-      );
-    return true;
+  // -- Integration results --------------------------------------------------
+  // The runner owns these rows outright, so writes replace them with no LWW
+  // check. It decides itself when a change is worth a new updated_at.
+
+  const RESULT_COLS = `id, item_id, integration_id, status, attribute_values, integration_data, choices, error,
+    created_at, updated_at, inputs, attempts, next_attempt_at, next_refresh_at`;
+
+  function getIntegrationResult(id: string): IntegrationResultRow | null {
+    const row = sql.prepare(`SELECT ${RESULT_COLS} FROM integration_results WHERE id = ?`).get(id);
+    return row ? rowToIntegrationResult(row) : null;
   }
 
+  function getIntegrationResultsForItem(itemId: string): IntegrationResultRow[] {
+    return (sql.prepare(`SELECT ${RESULT_COLS} FROM integration_results WHERE item_id = ?`).all(itemId) as any[])
+      .map(rowToIntegrationResult);
+  }
+
+  function putIntegrationResult(r: IntegrationResultRow): void {
+    sql
+      .prepare(`INSERT INTO integration_results (${RESULT_COLS})
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            status=excluded.status, attribute_values=excluded.attribute_values,
+            integration_data=excluded.integration_data, choices=excluded.choices, error=excluded.error,
+            updated_at=excluded.updated_at, inputs=excluded.inputs, attempts=excluded.attempts,
+            next_attempt_at=excluded.next_attempt_at, next_refresh_at=excluded.next_refresh_at`)
+      .run(
+        r.id, r.item_id, r.integration_id, r.status,
+        JSON.stringify(r.attribute_values), JSON.stringify(r.integration_data),
+        r.choices ? JSON.stringify(r.choices) : null, r.error ?? null,
+        r.created_at, r.updated_at, r.inputs, r.attempts, r.next_attempt_at, r.next_refresh_at,
+      );
+  }
+
+  /** Delete a result and record a tombstone so clients drop it too. */
+  function tombstoneIntegrationResult(id: string, syncKey: string, deletedAt: number): void {
+    sql.transaction(() => {
+      sql
+        .prepare(`INSERT INTO tombstones (id, sync_key, entity_type, entity_id, deleted_at) VALUES (?, ?, 'integration_result', ?, ?)
+                  ON CONFLICT(id) DO UPDATE SET sync_key=excluded.sync_key, deleted_at=excluded.deleted_at`)
+        .run(`integration_result:${id}`, syncKey, id, deletedAt);
+      sql.prepare(`DELETE FROM integration_results WHERE id = ?`).run(id);
+    })();
+  }
+
+  /** Delete an item's results without tombstones. Clients drop them when the item's own tombstone arrives. */
+  function deleteIntegrationResultsForItem(itemId: string): number {
+    return sql.prepare(`DELETE FROM integration_results WHERE item_id = ?`).run(itemId).changes;
+  }
+
+  /** Results in a namespace changed since `since`, joined through their item's current sync key. */
   function getIntegrationResultsSince(syncKey: string, since: number): IntegrationResult[] {
     const rows = sql
-      .prepare(`SELECT id, sync_key, item_id, integration_id, status, attribute_values, integration_data, error, created_at, updated_at
-                FROM integration_results WHERE sync_key = ? AND updated_at > ?`)
+      .prepare(`SELECT ${RESULT_COLS.split(",").map((c) => "r." + c.trim()).join(", ")}
+                FROM integration_results r JOIN items i ON i.id = r.item_id
+                WHERE i.sync_key = ? AND r.updated_at > ?`)
       .all(syncKey, since) as any[];
-    return rows.map(rowToIntegrationResult);
+    return rows.map((row) => toWireResult(rowToIntegrationResult(row)));
   }
 
-  function getIntegrationResultsForRefresh(integrationId: string, olderThan: number): IntegrationResult[] {
+  /** Retries and quota waits that are due, then refreshes that are due. */
+  function getDueIntegrationResults(now: number): IntegrationResultRow[] {
     const rows = sql
-      .prepare(`SELECT id, sync_key, item_id, integration_id, status, attribute_values, integration_data, error, created_at, updated_at
-                FROM integration_results WHERE integration_id = ? AND status = 'complete' AND updated_at < ?`)
-      .all(integrationId, olderThan) as any[];
+      .prepare(`SELECT ${RESULT_COLS} FROM integration_results
+                WHERE (status IN ('error', 'unprocessed') AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?)
+                   OR (status IN ('complete', 'not_found', 'ambiguous') AND next_refresh_at IS NOT NULL AND next_refresh_at <= ?)`)
+      .all(now, now) as any[];
     return rows.map(rowToIntegrationResult);
   }
 
-  function rowToIntegrationResult(row: any): IntegrationResult {
+  /** Unprocessed results with no pending wait, as a restart leaves them. */
+  function getStalledIntegrationResults(): IntegrationResultRow[] {
+    return (sql
+      .prepare(`SELECT ${RESULT_COLS} FROM integration_results WHERE status = 'unprocessed' AND next_attempt_at IS NULL`)
+      .all() as any[]).map(rowToIntegrationResult);
+  }
+
+  function getIntegrationResultIdsForBoard(boardId: string, integrationId: string): { id: string; sync_key: string }[] {
+    return sql
+      .prepare(`SELECT r.id AS id, i.sync_key AS sync_key FROM integration_results r
+                JOIN items i ON i.id = r.item_id JOIN lists l ON l.id = i.list_id
+                WHERE l.board_id = ? AND r.integration_id = ?`)
+      .all(boardId, integrationId) as { id: string; sync_key: string }[];
+  }
+
+  function getItemIdsForBoard(boardId: string): string[] {
+    return (sql
+      .prepare(`SELECT i.id AS id FROM items i JOIN lists l ON l.id = i.list_id WHERE l.board_id = ?`)
+      .all(boardId) as { id: string }[]).map((r) => r.id);
+  }
+
+  function getItemSyncKey(itemId: string): string | null {
+    const row = sql.prepare(`SELECT sync_key FROM items WHERE id = ?`).get(itemId) as { sync_key: string } | undefined;
+    return row?.sync_key ?? null;
+  }
+
+  function rowToIntegrationResult(row: any): IntegrationResultRow {
     return {
       id: row.id,
-      sync_key: row.sync_key,
       item_id: row.item_id,
       integration_id: row.integration_id,
       status: row.status,
       attribute_values: JSON.parse(row.attribute_values ?? "{}"),
       integration_data: JSON.parse(row.integration_data ?? "{}"),
-      error: row.error ?? undefined,
+      ...(row.choices ? { choices: JSON.parse(row.choices) } : {}),
+      ...(row.error != null ? { error: row.error } : {}),
       created_at: row.created_at,
       updated_at: row.updated_at,
+      inputs: row.inputs ?? null,
+      attempts: row.attempts ?? 0,
+      next_attempt_at: row.next_attempt_at ?? null,
+      next_refresh_at: row.next_refresh_at ?? null,
     };
   }
 
@@ -1659,7 +1781,9 @@ export function createDbApi(sql: Database.Database) {
 
   return {
     getServerId, upsertEntity, getEntitiesSince, applyTombstone, getTombstonesSince,
-    getEntityById, upsertIntegrationResult, getIntegrationResultsSince, getIntegrationResultsForRefresh,
+    getEntityById, getIntegrationResult, getIntegrationResultsForItem, putIntegrationResult, tombstoneIntegrationResult,
+    deleteIntegrationResultsForItem, getIntegrationResultsSince, getDueIntegrationResults, getStalledIntegrationResults,
+    getIntegrationResultIdsForBoard, getItemIdsForBoard, getItemSyncKey,
     associateUserKey, removeUserKey, getUserKeys, listSyncKeysWithData, getOrCreateUserByHomeKey, getSchemaVersion: getSchemaVersionApi, close,
     // Identity & authorization:
     getUser, findRootUser, createUser, listChildren, listAllUsers, countUsers, setUserCaps, setUserNote, setUserDisplayName,

@@ -28,6 +28,9 @@ importers:
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
+      smol-toml:
+        specifier: ^1.9.0
+        version: 1.9.0
       solid-js:
         specifier: ^1.9.0
         version: 1.9.13
@@ -65,6 +68,9 @@ importers:
       better-sqlite3:
         specifier: ^11.9.0
         version: 11.10.0
+      smol-toml:
+        specifier: ^1.9.0
+        version: 1.9.0
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -1123,6 +1129,10 @@ packages:
 
   simple-get@4.0.1:
     resolution: {integrity: sha512-brv7p5WgH0jmQJr1ZDDfKDOSeWWg+OVypG99A/5vYGPqJ6pxiaHLy8nxtFjBA7oMa01ebA9gfh1uMCFqOuXxvA==}
+
+  smol-toml@1.9.0:
+    resolution: {integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==}
+    engines: {node: '>= 18'}
 
   solid-js@1.9.13:
     resolution: {integrity: sha512-6hJeJMOcEX8ktqjpDoJZEmld3ijvcvWBDtiXBm7f4332SiFN66QeAQI1REQshvyUoISsSeJ4PHDauKYbwao9JQ==}
@@ -2219,6 +2229,8 @@ snapshots:
       decompress-response: 6.0.0
       once: 1.4.0
       simple-concat: 1.0.1
+
+  smol-toml@1.9.0: {}
 
   solid-js@1.9.13:
     dependencies:

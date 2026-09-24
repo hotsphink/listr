@@ -1,4 +1,5 @@
 import { db, type ClientIdentity, type ServerIdentity } from "../db/database.js";
+import { setServerIntegrations } from "../store/integrationCatalog.js";
 import { removeKeyLocal } from "../db/keyCleanup.js";
 import type { Board, List } from "@listr/shared";
 import { PROTOCOL_VERSION } from "./protocol.js";
@@ -308,6 +309,7 @@ class EndpointConnection {
     const caps: string[] = Array.isArray(msg.caps) ? msg.caps.filter((c: unknown) => typeof c === "string") : [];
     const displayName = typeof msg.display_name === "string" ? msg.display_name : null;
     const userKeys: ServerUserKey[] = Array.isArray(msg.user_keys) ? msg.user_keys : [];
+    if (Array.isArray(msg.integrations)) setServerIntegrations(serverId, msg.integrations);
 
     this.setPhase({ phase: "ready", serverId });
     this.callbacks.onReady(this.makeSend(ws), serverId, homeKey, userId, caps, displayName, userKeys);
@@ -1312,11 +1314,12 @@ class SyncClient {
       groups.get(t.entity_type)!.push({ id: t.entity_id, deleted_at: t.deleted_at });
     }
     for (const [entityType, entries] of groups) {
-      const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : entityType === "item" ? db.items : null;
+      const table = tombstoneTable(entityType);
       if (!table) continue;
       const existing = await (table as any).bulkGet(entries.map((e) => e.id));
       const toDelete = entries.filter((e, i) => shouldDeleteOnTombstone(existing[i], e.deleted_at)).map((e) => e.id);
       if (toDelete.length) await (table as any).bulkDelete(toDelete);
+      if (entityType === "item" && toDelete.length) await db.integration_results.where("item_id").anyOf(toDelete).delete();
     }
   }
 
@@ -1355,12 +1358,24 @@ class SyncClient {
       entity_id: entityId,
       deleted_at: deletedAt,
     });
-    const table = entityType === "board" ? db.boards : entityType === "list" ? db.lists : entityType === "item" ? db.items : null;
+    const table = tombstoneTable(entityType);
     if (table) {
       const existing = await (table as any).get(entityId);
-      if (shouldDeleteOnTombstone(existing, deletedAt)) await (table as any).delete(entityId);
+      if (shouldDeleteOnTombstone(existing, deletedAt)) {
+        await (table as any).delete(entityId);
+        // An item's results go with it. The server sends no tombstones for them.
+        if (entityType === "item") await db.integration_results.where("item_id").equals(entityId).delete();
+      }
     }
   }
+}
+
+function tombstoneTable(entityType: string) {
+  if (entityType === "board") return db.boards;
+  if (entityType === "list") return db.lists;
+  if (entityType === "item") return db.items;
+  if (entityType === "integration_result") return db.integration_results;
+  return null;
 }
 
 export const syncClient = new SyncClient();

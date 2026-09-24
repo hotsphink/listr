@@ -1,4 +1,4 @@
-import { ENTITY_SCHEMA_VERSION, upgradeBoardRecord, upgradeListRecord, type AttributeDefinition, type FormatSpec, type Item, type List, type ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, computeOverlay, orderResults, withOverlay, type Board, upgradeBoardRecord, upgradeListRecord, type AttributeDefinition, type FormatSpec, type Item, type List, type ViewMode } from "@listr/shared";
 import { db } from "./database.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { deleteBoard, deleteList, deleteItem, resolveChain } from "./operations.js";
@@ -115,6 +115,16 @@ export function extractReferencedAssetIds(
   return ids;
 }
 
+/** Items as the board shows them, with integration values overlaid. */
+async function withIntegrationValues(board: Board, items: Item[]): Promise<Item[]> {
+  const results = await db.integration_results.where("item_id").anyOf(items.map((i) => i.id)).toArray();
+  if (!results.length) return items;
+  return items.map((item) => {
+    const own = orderResults(results.filter((r) => r.item_id === item.id), board.integrations);
+    return withOverlay(item, computeOverlay(item, own, board.schema));
+  });
+}
+
 async function exportAssetsByIds(ids: Set<string>): Promise<ExportedAsset[]> {
   if (ids.size === 0) return [];
   const found = await db.assets.bulkGet([...ids]);
@@ -188,7 +198,7 @@ export async function exportBoard(boardId: string): Promise<NativeExport> {
   const board = await db.boards.get(boardId);
   if (!board) throw new Error(`Board ${boardId} not found`);
   const lists = await db.lists.where("board_id").equals(boardId).sortBy("position");
-  const allItems = await db.items.where("list_id").anyOf(lists.map((l) => l.id)).toArray();
+  const allItems = await withIntegrationValues(board, await db.items.where("list_id").anyOf(lists.map((l) => l.id)).toArray());
   const itemsByList = new Map<string, Item[]>();
   for (const list of lists) {
     const raw = allItems.filter((i) => i.list_id === list.id);
@@ -214,7 +224,7 @@ export async function exportList(listId: string): Promise<NativeExport> {
   const board = await db.boards.get(list.board_id);
   if (!board) throw new Error(`Board ${list.board_id} not found`);
   const rawItems = await db.items.where("list_id").equals(listId).toArray();
-  const items = resolveChain(rawItems);
+  const items = resolveChain(await withIntegrationValues(board, rawItems));
   const assets = await exportAssetsByIds(extractReferencedAssetIds(board, [list], items));
   return {
     listr_export: "3",

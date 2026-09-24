@@ -541,6 +541,41 @@ describe("schema_version migrations", () => {
     }
   });
 
+  it("resets integration results and drops non-TOML integration config (migration 8)", () => {
+    const { path, cleanup } = makeLegacyDbFile();
+    try {
+      const raw = new Database(path);
+      raw.prepare(`UPDATE boards SET data = ? WHERE id = 'b1'`).run(JSON.stringify({
+        id: "b1", sync_key: "sharedKey", updated_at: 100, name: "Legacy", format: { version: 2, text: "[title]" },
+        integrations: [
+          { integration_id: "omdb", enabled: true, config: { x: 1 } },
+          { integration_id: "keep", enabled: true, config: "a = 1" },
+          { integration_id: "bare", enabled: false },
+        ],
+      }));
+      raw.prepare(`INSERT INTO lists (id, sync_key, updated_at, data) VALUES (?, ?, ?, ?)`).run(
+        "l1", "sharedKey", 100, JSON.stringify({ id: "l1", board_id: "b1", updated_at: 100, name: "L", format: null, integrations: [] }),
+      );
+      raw.prepare(`INSERT INTO integration_results (id, sync_key, item_id, integration_id, status, updated_at) VALUES ('i1:omdb', 'sharedKey', 'i1', 'omdb', 'complete', 100)`).run();
+      raw.close();
+
+      const db = openDb(path);
+      const [board] = db.getEntitiesSince("board", "sharedKey", 0) as any[];
+      expect(board.integrations.map((c: any) => c.integration_id)).toEqual(["keep", "bare"]);
+      expect(board.updated_at).toBe(100);
+      const [list] = db.getEntitiesSince("list", "sharedKey", 0) as any[];
+      expect(list).not.toHaveProperty("integrations");
+      expect(db.getIntegrationResult("i1:omdb")).toBeNull();
+      db.putIntegrationResult({
+        id: "i1:omdb", item_id: "i1", integration_id: "omdb", status: "complete", attribute_values: {}, integration_data: {},
+        created_at: 1, updated_at: 1, inputs: null, attempts: 0, next_attempt_at: null, next_refresh_at: 5,
+      });
+      expect(db.getIntegrationResult("i1:omdb")!.next_refresh_at).toBe(5);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("converts legacy board and list formats without touching updated_at (migration 7)", () => {
     const { path, cleanup } = makeLegacyDbFile();
     try {

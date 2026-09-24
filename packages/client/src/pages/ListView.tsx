@@ -1,9 +1,10 @@
 import { type Component, For, Show, Switch, Match, createSignal, createEffect, createMemo, onCleanup } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { from } from "solid-js";
 import { useParams, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
-import { compileFormat, upgradeBoardRecord, type CompiledFormat, type RenderedFormat } from "@listr/shared";
-import type { AttributeDefinition, Board, Integration, Item, List, IntegrationStatus, TodoState } from "@listr/shared";
+import { applyPick, compileFormat, computeOverlay, effectiveValue, effectiveValues, orderResults, upgradeBoardRecord, withOverlay, type CompiledFormat, type Overlay, type RenderedFormat } from "@listr/shared";
+import type { AttributeDefinition, Board, Integration, IntegrationResult, Item, List, IntegrationStatus, TodoState } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, updateItemAttribute, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
 import { exportList, exportBoard } from "../db/exportImport.js";
@@ -20,6 +21,7 @@ import { selectionMode, setSelectionMode } from "../store/selectionMode.js";
 import { useSortable, isDragging } from "../hooks/useSortable.js";
 import InlineAddItem, { DUMMY_ITEM_ID } from "../components/InlineAddItem.js";
 import ItemFormModal from "../components/ItemFormModal.js";
+import IntegrationChoiceModal from "../components/IntegrationChoiceModal.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
 import ListFormModal, { type ListFormData } from "../components/ListFormModal.js";
 import BoardFormModal, { type BoardFormData } from "../components/BoardFormModal.js";
@@ -108,8 +110,13 @@ const ListView: Component = () => {
   const [board, setBoard] = createSignal<Board | undefined>();
   const [allLists, setAllLists] = createSignal<List[]>([]);
   const [itemsByList, setItemsByList] = createSignal<Map<string, Item[]>>(new Map());
-  // integration_result status aggregated per item_id: worst status across all integrations
-  const [integrationStatusByItemId, setIntegrationStatusByItemId] = createSignal<Map<string, IntegrationStatus>>(new Map());
+  // Integration results for this board's items, grouped by item_id.
+  const [resultsByItemId, setResultsByItemId] = createSignal<Map<string, IntegrationResult[]>>(new Map());
+  // Each item's winning integration values. Only items with results have an
+  // entry, and reconcile keeps unchanged entries, so only affected readers rerun.
+  const [overlays, setOverlays] = createStore<Record<string, Overlay>>({});
+  // The item whose ambiguous result is being resolved in the picker.
+  const [pickingItemId, setPickingItemId] = createSignal<string | null>(null);
 
   // Item add/edit modal state
   const [addingToList, setAddingToList] = createSignal<string | null>(null); // list id receiving a new item, or null
@@ -272,7 +279,7 @@ const ListView: Component = () => {
 
   createEffect(() => {
     const listIds = allLists().map((l) => l.id);
-    if (!listIds.length) { setItemsByList(new Map()); setIntegrationStatusByItemId(new Map()); return; }
+    if (!listIds.length) { setItemsByList(new Map()); setResultsByItemId(new Map()); return; }
     const sub = liveQuery(async () => {
       const map = new Map<string, Item[]>();
       await Promise.all(listIds.map(async (id) => {
@@ -287,21 +294,49 @@ const ListView: Component = () => {
   // Subscribe to integration results for items in this board
   createEffect(() => {
     const allItemIds = [...itemsByList().values()].flatMap((items) => items.map((i) => i.id));
-    if (!allItemIds.length) { setIntegrationStatusByItemId(new Map()); return; }
-    const STATUS_PRIORITY: IntegrationStatus[] = ["error", "ambiguous", "unprocessed", "complete"];
+    if (!allItemIds.length) { setResultsByItemId(new Map()); return; }
     const sub = liveQuery(async () => {
       const results = await db.integration_results.where("item_id").anyOf(allItemIds).toArray();
-      const map = new Map<string, IntegrationStatus>();
+      const map = new Map<string, IntegrationResult[]>();
       for (const r of results) {
-        const existing = map.get(r.item_id);
-        const existingPriority = existing ? STATUS_PRIORITY.indexOf(existing) : STATUS_PRIORITY.length;
-        const newPriority = STATUS_PRIORITY.indexOf(r.status);
-        if (newPriority < existingPriority) map.set(r.item_id, r.status);
+        const list = map.get(r.item_id);
+        if (list) list.push(r);
+        else map.set(r.item_id, [r]);
       }
       return map;
-    }).subscribe((v) => setIntegrationStatusByItemId(v ?? new Map()));
+    }).subscribe((v) => setResultsByItemId(v ?? new Map()));
     onCleanup(() => sub.unsubscribe());
   });
+
+  // Recompute overlays from results, item picks and the board's integration order and schema.
+  createEffect(() => {
+    const b = board();
+    const sch = schema();
+    const byId = new Map([...itemsByList().values()].flat().map((i) => [i.id, i]));
+    const next: Record<string, Overlay> = {};
+    for (const [itemId, results] of resultsByItemId()) {
+      const item = byId.get(itemId);
+      if (!item) continue;
+      const overlay = computeOverlay(item, orderResults(results, b?.integrations), sch);
+      if (overlay) next[itemId] = overlay;
+    }
+    setOverlays(reconcile(next));
+  });
+
+  const STATUS_PRIORITY: IntegrationStatus[] = ["error", "ambiguous", "not_found", "unprocessed", "complete"];
+
+  /** The most urgent result for an item, among the board's enabled integrations. */
+  const worstResult = (itemId: string): IntegrationResult | undefined => {
+    const results = orderResults(resultsByItemId().get(itemId) ?? [], board()?.integrations);
+    let worst: IntegrationResult | undefined;
+    for (const r of results) {
+      if (!worst || STATUS_PRIORITY.indexOf(r.status) < STATUS_PRIORITY.indexOf(worst.status)) worst = r;
+    }
+    return worst;
+  };
+
+  /** The item as readers see it, with integration values overlaid. */
+  const shown = (item: Item): Item => withOverlay(item, overlays[item.id]);
 
   createEffect(() => {
     const [id] = selectedListIds();
@@ -382,7 +417,7 @@ const ListView: Component = () => {
 
   const formatItem = (item: Item, list: List): RenderedFormat => {
     const urls = assetUrls();
-    return compiledFormat()(list.format?.text).render(item, { urlResolver: (url) => urls[url] ?? url });
+    return compiledFormat()(list.format?.text).render(shown(item), { urlResolver: (url) => urls[url] ?? url });
   };
 
   const ItemText: Component<{ item: Item; list: List }> = (p) => {
@@ -418,25 +453,48 @@ const ListView: Component = () => {
   });
 
   const integrationBadge = (itemId: string) => {
-    const status = integrationStatusByItemId().get(itemId);
-    if (!status || status === "complete") return null;
-    if (status === "unprocessed") return <span class="badge badge-round tone-muted is-spinning" title="Integration processing…">↻</span>;
-    if (status === "error") return <span class="badge badge-round tone-danger" title="Integration error">!</span>;
-    if (status === "ambiguous") return <span class="badge badge-round tone-warning" title="Ambiguous result — needs manual resolution">?</span>;
+    const r = worstResult(itemId);
+    if (!r || r.status === "complete") return null;
+    if (r.status === "unprocessed") {
+      const title = r.error === "quota" ? "Integration waiting for tomorrow's API quota" : "Integration processing\u2026";
+      return <span class="badge badge-round tone-muted is-spinning" title={title}>{"\u21bb"}</span>;
+    }
+    if (r.status === "error") return <span class="badge badge-round tone-danger" title={`Integration error: ${r.error ?? "unknown"}`}>!</span>;
+    if (r.status === "not_found") return <span class="badge badge-round tone-muted" title="Integration found no match">{"\u2205"}</span>;
+    if (r.status === "ambiguous") {
+      return (
+        <button
+          type="button"
+          class="btn-bare badge badge-round tone-warning"
+          title="Several matches. Choose one."
+          aria-label="Several integration matches. Choose one."
+          onClick={(e) => { e.stopPropagation(); setPickingItemId(itemId); }}
+          onDblClick={(e) => e.stopPropagation()}
+        >
+          ?
+        </button>
+      );
+    }
     return null;
+  };
+
+  const pickingItem = createMemo(() => {
+    const id = pickingItemId();
+    return id ? [...itemsByList().values()].flat().find((i) => i.id === id) : undefined;
+  });
+
+  const handlePick = async (attr: string, choice: { options_key: string; releases?: string[] }, value: string) => {
+    const item = pickingItem();
+    setPickingItemId(null);
+    if (item) await updateItem(item.id, applyPick(item, attr, choice, value));
   };
 
   const itemsForList = (listId: string): Item[] => {
     const allForList = itemsByList().get(listId) ?? [];
     const q = filterQuery().toLowerCase().trim();
     if (!q) return allForList;
-    return allForList.filter((item) => {
-      if (item.title.toLowerCase().includes(q)) return true;
-      for (const val of Object.values(item.attributes)) {
-        if (val != null && String(val).toLowerCase().includes(q)) return true;
-      }
-      return false;
-    });
+    return allForList.filter((item) =>
+      effectiveValues(item, overlays[item.id]).some((val) => val != null && String(val).toLowerCase().includes(q)));
   };
 
   const handleAddItem = async (data: { title: string; attributes: Record<string, unknown> }) => {
@@ -473,7 +531,7 @@ const ListView: Component = () => {
   const handleEditList = async (data: ListFormData) => {
     const list = editingList();
     if (!list) return;
-    await updateList(list.id, { ...data, integrations: data.integrations });
+    await updateList(list.id, data);
     setEditingList(undefined);
   };
 
@@ -916,11 +974,7 @@ const ListView: Component = () => {
                     return withDummy.filter((item) => {
                       if (item.id === DUMMY_ITEM_ID) return true;
                       const it = item as Item;
-                      if (it.title.toLowerCase().includes(q)) return true;
-                      for (const val of Object.values(it.attributes)) {
-                        if (val != null && String(val).toLowerCase().includes(q)) return true;
-                      }
-                      return false;
+                      return effectiveValues(it, overlays[it.id]).some((val) => val != null && String(val).toLowerCase().includes(q));
                     });
                   });
 
@@ -1150,11 +1204,11 @@ const ListView: Component = () => {
                                           <Show when={selectedItemIds().has(item_.id)}>
                                             <span class="sr-only">Selected. </span>
                                           </Show>
-                                          {item_.title}{integrationBadge(item_.id)}
+                                          {String(effectiveValue(item_, "title", overlays[item_.id]) ?? "")}{integrationBadge(item_.id)}
                                         </td>
                                         <For each={schema()}>
                                           {(attr) => (
-                                            <td>{formatCellValue(item_.attributes[attr.key], attr.type)}</td>
+                                            <td>{formatCellValue(effectiveValue(item_, attr.key, overlays[item_.id]), attr.type)}</td>
                                           )}
                                         </For>
                                       </tr>
@@ -1220,7 +1274,7 @@ const ListView: Component = () => {
                                         <div class="card-attrs">
                                           <For each={schema()}>
                                             {(attr) => {
-                                              const val = item_.attributes[attr.key];
+                                              const val = effectiveValue(item_, attr.key, overlays[item_.id]);
                                               if (val == null || val === "") return null;
                                               return (
                                                 <div class="card-attr">
@@ -1343,6 +1397,14 @@ const ListView: Component = () => {
               onDelete={handleDeleteItem}
               schema={schema()}
               initial={editingItem()}
+              overlay={editingItem() ? overlays[editingItem()!.id] : undefined}
+            />
+
+            <IntegrationChoiceModal
+              item={pickingItem()}
+              results={pickingItem() ? orderResults(resultsByItemId().get(pickingItem()!.id) ?? [], board()?.integrations) : []}
+              onClose={() => setPickingItemId(null)}
+              onPick={handlePick}
             />
 
             <ListFormModal
