@@ -83,10 +83,16 @@
  *       Overwrite server_config's server_id. A cloned database carries the
  *       original's server_id, so this makes assigning a fresh one a supported
  *       operation.
+ *
+ *   console-password
+ *       Prompt for an operator console password and print the config line
+ *       holding its hash. Reads the password from stdin when stdin is not a
+ *       terminal. Touches no database, so the server can keep running.
  */
 import { createHash } from "node:crypto";
 import { parseScriptArgs } from "./cli.js";
 import { openDb, ALL_CAPS, type Cap, type GrantKind, type UserState } from "../src/db.js";
+import { hashPassword } from "../src/console-api/auth.js";
 
 // Join-link construction. Deliberately a reimplementation of the client's
 // `hashServerId` and `buildJoinUrl` (packages/client/src/sync/joinLink.ts)
@@ -139,14 +145,74 @@ function requireArg(named: Record<string, string>, key: string): string {
   return v;
 }
 
+// Read one line from the terminal without echoing it.
+function promptHidden(prompt: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    process.stdout.write(prompt);
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+    let value = "";
+    const onData = (chunk: string) => {
+      for (const ch of chunk) {
+        if (ch === "\r" || ch === "\n") {
+          stdin.setRawMode(false);
+          stdin.pause();
+          stdin.off("data", onData);
+          process.stdout.write("\n");
+          resolve(value);
+          return;
+        }
+        if (ch === "\u0003") {
+          stdin.setRawMode(false);
+          reject(new Error("cancelled"));
+          return;
+        }
+        if (ch === "\u007f" || ch === "\b") value = value.slice(0, -1);
+        else value += ch;
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString().replace(/\r?\n$/, "");
+}
+
+async function consolePassword(): Promise<void> {
+  let password: string;
+  if (process.stdin.isTTY) {
+    password = await promptHidden("Console password: ");
+    if ((await promptHidden("Again: ")) !== password) throw new Error("passwords do not match");
+  } else {
+    password = await readStdin();
+  }
+  if (password.length < 8) throw new Error("use at least 8 characters");
+  console.log("Add this to the variant's config file, then restart the server:\n");
+  console.log("console:");
+  console.log(`  password_hash: "${hashPassword(password)}"`);
+}
+
 function main(): void {
   const command = process.argv[2];
   if (!command || command.startsWith("--")) {
     console.error("Usage: auth-cli.ts <command> [options] [--apply] [--db=/path]");
     console.error(
-      "Commands: bootstrap-root, list-users, issue-grant, list-keys, add-key, remove-key, set-state, promote, grant-admin, set-parent, reset-server-id",
+      "Commands: bootstrap-root, list-users, issue-grant, list-keys, add-key, remove-key, set-state, promote, grant-admin, set-parent, reset-server-id, console-password",
     );
     process.exit(1);
+  }
+
+  if (command === "console-password") {
+    consolePassword().catch((err) => {
+      console.error(`[auth-cli] ${(err as Error).message}`);
+      process.exitCode = 1;
+    });
+    return;
   }
 
   // Routine administration, not a one-off migration: issuing a grant is a
@@ -295,7 +361,7 @@ function runCommand(
           console.log(`[auth-cli] dry-run: would associate '${key}' with ${userId}`);
           break;
         }
-        db.associateUserKey(userId, key, named.name ?? null);
+        db.associateUserKey(userId, key, named.name ?? null, "cli");
         console.log(`[auth-cli] associated '${key}' with ${userId}${named.name ? ` as "${named.name}"` : ""}`);
         console.log(`[auth-cli] their clients pick it up from ok.user_keys on their next connect`);
         break;

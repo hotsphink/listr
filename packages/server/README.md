@@ -49,6 +49,7 @@ optional, and a missing file just means defaults.
 | (environment only) | `LISTR_EXTRA_ORIGINS` adds comma-separated origins to the built-in list of web origins allowed to connect. The e2e harness uses it for its own app port. |
 | `services.<id>` | Settings for the integration with that id, such as `services.omdb.api_key`. Any key other than `model_families` and `vision` names an integration, and only integrations named here are offered to clients. `max_concurrent` (default 4) caps runs at once, `timeout_ms` (default 10000) caps each external call, and `daily_limit` and `daily_limit_per_key` cap external calls per UTC day overall and per sync key. OMDb defaults those limits to 1000 and 500. How often results refresh is set per board, in the integration's own config. |
 | `integrations` | Older spelling of the same per-integration settings, keyed by integration id. `services` wins where both name one id. |
+| `console` | The operator console, off unless `console.password_hash` is set. See [Operator console](#operator-console). |
 
 A model inherits its family's keys and may override any of them. A `url` is a
 template whose every `{placeholder}` names a field of the resolved model, so
@@ -203,3 +204,43 @@ reach it. Attach it to somebody:
     pnpm auth add-key --user=<user id> --key=<sync key> --name="Something readable" --apply
 
 Their clients pick it up on the next connect and pull it down.
+
+## Operator console
+
+The server can serve a small web console for whoever runs it, at
+`/console/` on its own port. It shows the trust graph (who invited whom, their
+devices, outstanding join links, and who can reach which sync key), live
+integration status with each outbound request and response, the listener and
+its certificate, and every registered or connected client. It is read-only:
+changes still go through `pnpm auth`.
+
+It is off until you give it a password:
+
+    cd packages/server
+    pnpm auth console-password        # prompts, prints a config snippet
+    pnpm console:build                # builds console/dist, once per update
+
+Paste the printed lines into the variant's config file and restart:
+
+```yaml
+console:
+  password_hash: "scrypt$N=16384,r=8,p=1$..."
+  session_idle_hours: 12        # optional, the default
+  capture_bodies: true          # optional; false keeps request metadata only
+  external_urls:                # optional; public URLs that forward here
+    - https://listr-sync.aapx.org/
+```
+
+Without a `password_hash`, everything under `/console` answers 404. Sessions
+live in memory, so a restart signs you out. Five wrong passwords in a row lock
+login for 30 seconds at a time, counted server-wide rather than per address,
+because behind Funnel or a proxy every request comes from the proxy.
+
+Everything live (connections, integration runs and their captured bodies,
+counters) is kept in memory with fixed caps, and resets on restart. Credentials
+from the integration's config are redacted before anything is stored. Sync keys
+never reach the browser, only their first six characters.
+
+For working on the console itself, `pnpm console:dev` serves it on :3200 with
+hot reload and proxies the API to the dev sync server on :10443
+(`LISTR_CONSOLE_API` overrides).

@@ -8,6 +8,9 @@
     "dev": "env LISTR_VARIANT=dev tsx watch src/index.ts",
     "prod": "tsx src/index.ts",
     "auth": "tsx scripts/auth-cli.ts",
+    "console:build": "vite build --config console/vite.config.ts",
+    "console:dev": "vite --config console/vite.config.ts",
+    "console:check": "tsc --noEmit -p console",
     "test": "vitest run"
   },
   "dependencies": {
@@ -21,8 +24,11 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.10",
+    "solid-js": "^1.9.13",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "vite-plugin-solid": "^2.11.12",
     "vitest": "^4.1.8"
   }
 }

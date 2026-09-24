@@ -6,10 +6,11 @@ import {
 import type { IntegrationModule, IntegrationRunResult } from "./integrations/types.js";
 import type { IntegrationServerConfig } from "./config.js";
 import { toWireResult, type IntegrationResultRow, type createDbApi } from "./db.js";
+import { redact, redactText } from "./redact.js";
 
 type DbApi = ReturnType<typeof createDbApi>;
 type BroadcastFn = (syncKey: string, sender: null, msg: unknown) => void;
-type Priority = "edit" | "refresh";
+export type Priority = "edit" | "refresh";
 
 const DEFAULT_MAX_CONCURRENT = 4;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -23,6 +24,46 @@ export interface RunnerOptions {
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   /** How often to look for due retries and refreshes. 0 disables the timer. */
   tickMs?: number;
+  observer?: RunObserver;
+}
+
+export type RunOutcome = "complete" | "not_found" | "ambiguous" | "error" | "quota" | "stale" | "config_error";
+
+/** Watches runs and their HTTP requests, for the console. Everything it is handed is already redacted. */
+export interface RunObserver {
+  /** Whether to read response bodies. */
+  captureBodies(): boolean;
+  runStarted(info: {
+    module: string; itemId: string; boardId: string; syncKey: string; priority: Priority;
+    attempt: number; inputs: unknown; resultBefore: unknown;
+  }): number;
+  requestStarted(runId: number, info: { method: string; url: string; headers: Record<string, string> }): number;
+  requestFinished(runId: number, reqIndex: number, info: {
+    status: number; headers: Record<string, string>; body: string | null; bodyBytes: number | null;
+  }): void;
+  requestFailed(runId: number, reqIndex: number, error: string): void;
+  runFinished(runId: number, info: {
+    outcome: RunOutcome; error: string | null; resultAfter: unknown; broadcast: boolean;
+    output: {
+      status: string; raw_values: Record<string, unknown>; attribute_values: Record<string, unknown>;
+      dropped: string[]; choices: unknown; refresh_at: number | null;
+    } | null;
+  }): void;
+}
+
+/** One module's queue and budget, as the console shows it. */
+export interface ModuleSnapshot {
+  id: string;
+  name: string;
+  active: boolean;
+  queued_edit: number;
+  queued_refresh: number;
+  running: number;
+  max_concurrent: number;
+  calls_today: number;
+  daily_limit: number | null;
+  per_key: { key: string; count: number }[];
+  daily_limit_per_key: number | null;
 }
 
 interface Job {
@@ -91,6 +132,39 @@ export class IntegrationRunner {
         config_template: m.configTemplate,
         active: m.isActive(this.settings(m)),
       }));
+  }
+
+  /** Queue, concurrency and daily budget for each configured module. */
+  snapshot(): ModuleSnapshot[] {
+    const day = Math.floor(this.now() / 86_400_000);
+    const today = (key: string) => {
+      const u = this.usage.get(key);
+      return u && u.day === day ? u.count : 0;
+    };
+    return [...this.modules.values()]
+      .filter((m) => this.serverConfig[m.id] !== undefined)
+      .map((m) => {
+        const cfg = this.settings(m);
+        const queue = this.queues.get(m.id) ?? [];
+        const prefix = `${m.id}:`;
+        const perKey = [...this.usage.entries()]
+          .filter(([k, u]) => k.startsWith(prefix) && u.day === day)
+          .map(([k, u]) => ({ key: k.slice(prefix.length), count: u.count }))
+          .sort((a, b) => b.count - a.count);
+        return {
+          id: m.id,
+          name: m.name,
+          active: m.isActive(cfg),
+          queued_edit: queue.filter((j) => j.priority === "edit").length,
+          queued_refresh: queue.filter((j) => j.priority === "refresh").length,
+          running: this.running.get(m.id) ?? 0,
+          max_concurrent: cfg.max_concurrent ?? DEFAULT_MAX_CONCURRENT,
+          calls_today: today(m.id),
+          daily_limit: cfg.daily_limit ?? null,
+          per_key: perKey,
+          daily_limit_per_key: cfg.daily_limit_per_key ?? null,
+        };
+      });
   }
 
   /** Requeue results a restart left unprocessed, and start the timer for due retries and refreshes. */
@@ -236,9 +310,29 @@ export class IntegrationRunner {
       if (existing) this.removeResult(existing, item);
       return;
     }
+    const observer = this.opts.observer;
+    const observe = (inputs: unknown) =>
+      observer?.runStarted({
+        module: module.id, itemId: item.id, boardId: board.id, syncKey, priority: job.priority,
+        attempt: (existing?.attempts ?? 0) + 1, inputs, resultBefore: existing ? toWireResult(existing) : null,
+      });
+    const finish = (
+      runId: number | undefined,
+      outcome: RunOutcome,
+      error: string | null,
+      broadcast: boolean,
+      output: Parameters<RunObserver["runFinished"]>[1]["output"] = null,
+    ) => {
+      if (runId === undefined) return;
+      const after = this.db.getIntegrationResult(resultId);
+      observer!.runFinished(runId, { outcome, error, output, broadcast, resultAfter: after ? toWireResult(after) : null });
+    };
+
     const config = this.parseConfig(cfg);
     if (!config.ok) {
-      this.writeConfigError(item, module, existing, config.error);
+      const runId = observe(null);
+      const broadcast = this.writeConfigError(item, module, existing, config.error);
+      finish(runId, "config_error", config.error, broadcast);
       return;
     }
     const inputs = this.inputsFor(module, config.value, job.itemId);
@@ -249,10 +343,12 @@ export class IntegrationRunner {
 
     const now = this.now();
     const serverConfig = this.settings(module);
+    const runId = observe(inputs);
     try {
       this.spend(module, syncKey, serverConfig, now);
     } catch {
-      this.writeQuotaWait(item, module, existing, inputs, now);
+      const broadcast = this.writeQuotaWait(item, module, existing, inputs, now);
+      finish(runId, "quota", "daily limit reached", broadcast);
       return;
     }
     // A refresh keeps showing the old status. An edit shows the spinner while it runs.
@@ -273,38 +369,45 @@ export class IntegrationRunner {
           // The first call was paid for before the run.
           if (!spentFirst) this.spend(module, syncKey, serverConfig, this.now());
           spentFirst = false;
-          return this.fetchImpl(url, { signal: AbortSignal.timeout(serverConfig.timeout_ms ?? DEFAULT_TIMEOUT_MS) });
+          const init = { signal: AbortSignal.timeout(serverConfig.timeout_ms ?? DEFAULT_TIMEOUT_MS) };
+          return runId === undefined ? this.fetchImpl(url, init) : this.observedFetch(runId, url, init, serverConfig);
         },
       });
     } catch (err) {
       const current = this.db.getIntegrationResult(resultId);
       if (err instanceof QuotaError) {
-        this.writeQuotaWait(item, module, current, inputs, this.now());
+        const broadcast = this.writeQuotaWait(item, module, current, inputs, this.now());
+        finish(runId, "quota", "daily limit reached", broadcast);
         return;
       }
+      const message = err instanceof Error ? err.message : String(err);
       console.error(`[integrations] ${module.id} failed for item ${item.id}:`, err);
-      this.writeFailure(item, module, current, inputs, err instanceof Error ? err.message : String(err));
+      const broadcast = this.writeFailure(item, module, current, inputs, message);
+      finish(runId, "error", redact(message, serverConfig), broadcast);
       return;
     }
 
     // Stale discard: the item changed while the call ran, so this answer may be for old inputs.
     const latestInputs = this.inputsFor(module, config.value, job.itemId);
-    if (!latestInputs) return;
-    if (canonical(latestInputs) !== canonical(inputs)) {
-      job.dirty = true;
+    if (!latestInputs || canonical(latestInputs) !== canonical(inputs)) {
+      if (latestInputs) job.dirty = true;
+      finish(runId, "stale", null, false);
       return;
     }
 
     const declared = new Map(module.attributes.map((a) => [a.key, a.type]));
     const values: Record<string, unknown> = {};
+    const dropped: string[] = [];
     for (const [key, raw] of Object.entries(out.attribute_values)) {
       const v = key === "title" ? (typeof raw === "string" ? raw : undefined) : declared.has(key) ? coerceValue(raw, declared.get(key)!) : undefined;
-      if (v === undefined) console.warn(`[integrations] ${module.id}: dropping ${key}=${JSON.stringify(raw)} for item ${item.id}`);
-      else values[key] = v;
+      if (v === undefined) {
+        console.warn(`[integrations] ${module.id}: dropping ${key}=${JSON.stringify(raw)} for item ${item.id}`);
+        dropped.push(key);
+      } else values[key] = v;
     }
 
     const before = this.db.getIntegrationResult(resultId);
-    this.write(item, module, before, {
+    const broadcast = this.write(item, module, before, {
       ...(before ?? this.blank(item, module)),
       status: out.status,
       attribute_values: values,
@@ -317,11 +420,44 @@ export class IntegrationRunner {
       next_refresh_at: out.refresh_at ?? null,
     });
     console.log(`[integrations] ${module.id} ${out.status} for item ${item.id}`);
+    finish(runId, out.status, null, broadcast, {
+      status: out.status, raw_values: out.attribute_values, attribute_values: values, dropped,
+      choices: out.choices ?? null, refresh_at: out.refresh_at ?? null,
+    });
 
     // Cascade: other modules may read what this one produced.
     if (canonical(before?.attribute_values ?? {}) !== canonical(values)) {
       this.onItemChanged(item.id, new Set([...job.chain, module.id]));
     }
+  }
+
+  /** Fetch through the observer, recording a redacted copy of the request and response. */
+  private async observedFetch(runId: number, url: string, init: RequestInit, cfg: IntegrationServerConfig): Promise<Response> {
+    const observer = this.opts.observer!;
+    const req = observer.requestStarted(runId, { method: "GET", url: redactText(url, cfg), headers: {} });
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, init);
+    } catch (err) {
+      observer.requestFailed(runId, req, redact(err, cfg));
+      throw err;
+    }
+    const headers: Record<string, string> = {};
+    res.headers.forEach((v, k) => { headers[k] = redactText(v, cfg); });
+    let body: string | null = null;
+    let bodyBytes: number | null = null;
+    if (observer.captureBodies()) {
+      try {
+        const text = await res.clone().text();
+        bodyBytes = Buffer.byteLength(text);
+        body = redactText(text, cfg);
+      } catch (err) {
+        observer.requestFailed(runId, req, `reading body: ${redact(err, cfg)}`);
+        return res;
+      }
+    }
+    observer.requestFinished(runId, req, { status: res.status, headers, body, bodyBytes });
+    return res;
   }
 
   private inputsFor(module: IntegrationModule, config: Record<string, unknown>, itemId: string): Record<string, unknown> | null {
@@ -370,7 +506,7 @@ export class IntegrationRunner {
    * Store a result row. Bump updated_at and broadcast only when a synced
    * field changed. Scheduling columns alone are written quietly.
    */
-  private write(item: Item, module: IntegrationModule, before: IntegrationResultRow | null, next: IntegrationResultRow): void {
+  private write(item: Item, module: IntegrationModule, before: IntegrationResultRow | null, next: IntegrationResultRow): boolean {
     const wireBefore = before ? canonical({ ...toWireResult(before), updated_at: 0 }) : null;
     const wireAfter = canonical({ ...toWireResult(next), updated_at: 0 });
     const changed = wireBefore !== wireAfter;
@@ -379,16 +515,17 @@ export class IntegrationRunner {
       updated_at: changed ? Math.max(this.now(), (before?.updated_at ?? 0) + 1) : (before?.updated_at ?? next.updated_at),
     };
     this.db.putIntegrationResult(row);
-    if (!changed) return;
+    if (!changed) return false;
     const syncKey = this.db.getItemSyncKey(item.id);
     if (syncKey) this.broadcast(syncKey, null, { type: "entity", entity_type: "integration_result", data: toWireResult(row) });
+    return true;
   }
 
-  private writeFailure(item: Item, module: IntegrationModule, current: IntegrationResultRow | null, inputs: Record<string, unknown>, error: string): void {
+  private writeFailure(item: Item, module: IntegrationModule, current: IntegrationResultRow | null, inputs: Record<string, unknown>, error: string): boolean {
     const attempts = (current?.attempts ?? 0) + 1;
     const delay = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (attempts - 1));
     // Keep the last good values, so the overlay survives a transient failure.
-    this.write(item, module, current, {
+    return this.write(item, module, current, {
       ...(current ?? this.blank(item, module)),
       status: "error",
       error,
@@ -398,8 +535,8 @@ export class IntegrationRunner {
     });
   }
 
-  private writeQuotaWait(item: Item, module: IntegrationModule, current: IntegrationResultRow | null, inputs: Record<string, unknown>, now: number): void {
-    this.write(item, module, current, {
+  private writeQuotaWait(item: Item, module: IntegrationModule, current: IntegrationResultRow | null, inputs: Record<string, unknown>, now: number): boolean {
+    return this.write(item, module, current, {
       ...(current ?? this.blank(item, module)),
       status: "unprocessed",
       error: "quota",
@@ -408,8 +545,8 @@ export class IntegrationRunner {
     });
   }
 
-  private writeConfigError(item: Item, module: IntegrationModule, current: IntegrationResultRow | undefined | null, error: string): void {
-    this.write(item, module, current ?? null, {
+  private writeConfigError(item: Item, module: IntegrationModule, current: IntegrationResultRow | undefined | null, error: string): boolean {
+    return this.write(item, module, current ?? null, {
       ...(current ?? this.blank(item, module)),
       status: "error",
       error: `Config: ${error}`,

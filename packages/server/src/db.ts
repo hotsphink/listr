@@ -52,6 +52,22 @@ export interface ClientRow {
   last_seen: number | null;
 }
 
+export interface GrantRedemptionRow {
+  grant_id: string;
+  at: number;
+  user_id: string;
+  client_id: string | null;
+  sync_key: string | null;
+}
+
+export interface UserKeyRow {
+  user_id: string;
+  key: string;
+  name: string | null;
+  added_at: number;
+  source: string | null;
+}
+
 export interface GrantRow {
   id: string;
   kind: GrantKind;
@@ -86,6 +102,20 @@ const INTEGRATION_RESULTS_SQL = `
     next_refresh_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_integration_results_item ON integration_results(item_id);
+`;
+
+// One row per successful redemption: which grant, who it made or reached, the
+// client that redeemed it, and the key it handed over. Nothing else ties a
+// grant to its outcome.
+const GRANT_REDEMPTIONS_SQL = `
+  CREATE TABLE IF NOT EXISTS grant_redemptions (
+    grant_id  TEXT NOT NULL,
+    at        INTEGER NOT NULL,
+    user_id   TEXT NOT NULL,
+    client_id TEXT,
+    sync_key  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_grant_redemptions_grant ON grant_redemptions(grant_id);
 `;
 
 const SCHEMA_SQL = `
@@ -140,12 +170,16 @@ const SCHEMA_SQL = `
   -- unimplemented, so nothing sets 'ro'; keep the column anyway, since
   -- retrofitting an access level onto an established user_keys table is a
   -- protocol change and an unused column costs nothing.
+  -- \`source\` records how the user came to hold the key: 'grant:<id>',
+  -- 'declared' (sent in hello), 'associated' (associate_key), or 'cli'. NULL
+  -- means the row predates migration 9.
   CREATE TABLE IF NOT EXISTS user_keys (
     user_id  TEXT NOT NULL REFERENCES users(user_id),
     key      TEXT NOT NULL,
     name     TEXT,
     access   TEXT NOT NULL DEFAULT 'rw',
     added_at INTEGER NOT NULL,
+    source   TEXT,
     PRIMARY KEY (user_id, key)
   );
   -- Identity tables ----------------------------------------------------------
@@ -222,6 +256,7 @@ const SCHEMA_SQL = `
     sync_key TEXT NOT NULL,
     PRIMARY KEY (asset_id, sync_key)
   );
+  ${GRANT_REDEMPTIONS_SQL}
   CREATE INDEX IF NOT EXISTS idx_boards ON boards(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_lists ON lists(sync_key, updated_at);
   CREATE INDEX IF NOT EXISTS idx_items ON items(sync_key, updated_at);
@@ -591,6 +626,16 @@ function migrateV8IntegrationOverlay(sql: Database.Database): void {
   run();
 }
 
+// Migration 9: provenance for the console's trust graph. user_keys.source
+// says how a key was acquired, and grant_redemptions ties each redemption to
+// its grant. Existing rows keep source NULL, since their origin is unknown.
+function migrateV9Provenance(sql: Database.Database): void {
+  if (!hasColumn(sql, "user_keys", "source")) {
+    sql.exec(`ALTER TABLE user_keys ADD COLUMN source TEXT`);
+  }
+  sql.exec(GRANT_REDEMPTIONS_SQL);
+}
+
 const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] = [
   { version: 1, run: migrateV1LegacyColumnBaseline },
   { version: 2, run: migrateV2AssetKeys },
@@ -600,6 +645,7 @@ const MIGRATIONS: { version: number; run: (sql: Database.Database) => void }[] =
   { version: 6, run: migrateV6GrantPayloadName },
   { version: 7, run: migrateV7FormatSpec },
   { version: 8, run: migrateV8IntegrationOverlay },
+  { version: 9, run: migrateV9Provenance },
 ];
 
 /** Highest schema version this build knows how to migrate a database to. */
@@ -894,6 +940,38 @@ export function createDbApi(sql: Database.Database) {
       .all() as any[]).map(rowToIntegrationResult);
   }
 
+  /** Per-module result counts by status, plus what the scheduler is waiting on. */
+  function getIntegrationResultStats(now: number, horizonMs: number): {
+    integration_id: string;
+    by_status: Record<string, number>;
+    quota_waits: number;
+    retries_pending: number;
+    refreshes_due: number;
+  }[] {
+    const rows = sql
+      .prepare(
+        `SELECT integration_id, status, count(*) AS n,
+                sum(error = 'quota' AND next_attempt_at IS NOT NULL) AS quota,
+                sum(status = 'error' AND next_attempt_at IS NOT NULL) AS retries,
+                sum(next_refresh_at IS NOT NULL AND next_refresh_at <= ?) AS refreshes
+           FROM integration_results GROUP BY integration_id, status`,
+      )
+      .all(now + horizonMs) as { integration_id: string; status: string; n: number; quota: number; retries: number; refreshes: number }[];
+    const byModule = new Map<string, { integration_id: string; by_status: Record<string, number>; quota_waits: number; retries_pending: number; refreshes_due: number }>();
+    for (const r of rows) {
+      let m = byModule.get(r.integration_id);
+      if (!m) {
+        m = { integration_id: r.integration_id, by_status: {}, quota_waits: 0, retries_pending: 0, refreshes_due: 0 };
+        byModule.set(r.integration_id, m);
+      }
+      m.by_status[r.status] = r.n;
+      m.quota_waits += r.quota ?? 0;
+      m.retries_pending += r.retries ?? 0;
+      m.refreshes_due += r.refreshes ?? 0;
+    }
+    return [...byModule.values()];
+  }
+
   function getIntegrationResultIdsForBoard(boardId: string, integrationId: string): { id: string; sync_key: string }[] {
     return sql
       .prepare(`SELECT r.id AS id, i.sync_key AS sync_key FROM integration_results r
@@ -981,13 +1059,17 @@ export function createDbApi(sql: Database.Database) {
   // the full reasoning. `key` here is never the user's own home key: callers
   // filter that out before calling.
 
-  function associateUserKey(userId: string, key: string, name: string | null): void {
+  // The first recorded source wins, so a later re-declaration does not hide
+  // the grant a key originally came from.
+  function associateUserKey(userId: string, key: string, name: string | null, source: string | null = null): void {
     sql
       .prepare(
-        `INSERT INTO user_keys (user_id, key, name, added_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(user_id, key) DO UPDATE SET name = COALESCE(excluded.name, user_keys.name)`,
+        `INSERT INTO user_keys (user_id, key, name, added_at, source) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, key) DO UPDATE SET
+           name = COALESCE(excluded.name, user_keys.name),
+           source = COALESCE(user_keys.source, excluded.source)`,
       )
-      .run(userId, key, name, Date.now());
+      .run(userId, key, name, Date.now(), source);
   }
 
   function removeUserKey(userId: string, key: string): void {
@@ -1048,6 +1130,14 @@ export function createDbApi(sql: Database.Database) {
 
   // -- Append-only audit trail -----------------------------------------------
 
+  // Observers of the audit trail, such as the console's live trust view.
+  const authEventListeners = new Set<(kind: string) => void>();
+
+  function onAuthEvent(listener: (kind: string) => void): () => void {
+    authEventListeners.add(listener);
+    return () => authEventListeners.delete(listener);
+  }
+
   function logAuthEvent(
     event: { kind: string; actorUserId: string | null; subjectUserId: string | null; detail?: string | null },
     now: number,
@@ -1057,6 +1147,7 @@ export function createDbApi(sql: Database.Database) {
         `INSERT INTO auth_events (at, kind, actor_user_id, subject_user_id, detail) VALUES (?, ?, ?, ?, ?)`,
       )
       .run(now, event.kind, event.actorUserId, event.subjectUserId, event.detail ?? null);
+    for (const listener of authEventListeners) listener(event.kind);
   }
 
   interface AuthEventRow {
@@ -1070,6 +1161,19 @@ export function createDbApi(sql: Database.Database) {
 
   function listAuthEvents(limit = 100): AuthEventRow[] {
     return sql.prepare(`SELECT * FROM auth_events ORDER BY id DESC LIMIT ?`).all(limit) as AuthEventRow[];
+  }
+
+  /** Newest first, optionally filtered by kind prefix and by a user as actor or subject. */
+  function queryAuthEvents(params: { kind?: string; userId?: string; beforeId?: number; limit?: number }): AuthEventRow[] {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (params.kind) { where.push(`kind LIKE ? || '%'`); args.push(params.kind); }
+    if (params.userId) { where.push(`(actor_user_id = ? OR subject_user_id = ?)`); args.push(params.userId, params.userId); }
+    if (params.beforeId !== undefined) { where.push(`id < ?`); args.push(params.beforeId); }
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    return sql
+      .prepare(`SELECT * FROM auth_events ${clause} ORDER BY id DESC LIMIT ?`)
+      .all(...args, params.limit ?? 100) as AuthEventRow[];
   }
 
   // -- Users -----------------------------------------------------------------
@@ -1399,6 +1503,10 @@ export function createDbApi(sql: Database.Database) {
     return getClientById(params.clientId)!;
   }
 
+  function listAllClients(): ClientRow[] {
+    return (sql.prepare(`SELECT * FROM clients ORDER BY created_at`).all() as Parameters<typeof rowToClient>[0][]).map(rowToClient);
+  }
+
   function touchClientLastSeen(clientId: string, now: number): void {
     sql.prepare(`UPDATE clients SET last_seen = ? WHERE client_id = ?`).run(now, clientId);
   }
@@ -1460,6 +1568,18 @@ export function createDbApi(sql: Database.Database) {
       attempts: row.attempts,
       created_at: row.created_at,
     };
+  }
+
+  function listGrants(): GrantRow[] {
+    return (sql.prepare(`SELECT * FROM grants ORDER BY created_at`).all() as Parameters<typeof rowToGrant>[0][]).map(rowToGrant);
+  }
+
+  function listGrantRedemptions(): GrantRedemptionRow[] {
+    return sql.prepare(`SELECT * FROM grant_redemptions ORDER BY at`).all() as GrantRedemptionRow[];
+  }
+
+  function listAllUserKeys(): UserKeyRow[] {
+    return sql.prepare(`SELECT user_id, key, name, added_at, source FROM user_keys ORDER BY added_at`).all() as UserKeyRow[];
   }
 
   function getGrant(grantId: string): GrantRow | null {
@@ -1643,6 +1763,12 @@ export function createDbApi(sql: Database.Database) {
   // the issuer's existing user; share -> hand over a sync key, with no
   // identity effect; guest -> invite and share together, with provisional=1
   // and caps=['sync'] already forced by createGrant, not re-derived here.
+  function recordRedemption(grant: GrantRow, userId: string, clientId: string | undefined | null, syncKey: string | null, now: number): void {
+    sql
+      .prepare(`INSERT INTO grant_redemptions (grant_id, at, user_id, client_id, sync_key) VALUES (?, ?, ?, ?, ?)`)
+      .run(grant.id, now, userId, clientId ?? null, syncKey);
+  }
+
   function applyGrantEffect(grant: GrantRow, effect: RedeemEffectParams, now: number): RedeemEffectResult {
     if (grant.kind === "invite" || grant.kind === "guest") {
       if (!effect.clientId || !effect.pubkeyJwk) {
@@ -1658,9 +1784,10 @@ export function createDbApi(sql: Database.Database) {
       if (alreadyRegistered) {
         const user = getUser(alreadyRegistered.user_id);
         if (!user) throw new Error("applyGrantEffect: redeeming client's user no longer exists");
-        if (grant.payload) associateUserKey(user.user_id, grant.payload, grant.payload_name);
+        if (grant.payload) associateUserKey(user.user_id, grant.payload, grant.payload_name, `grant:${grant.id}`);
+        recordRedemption(grant, user.user_id, effect.clientId, grant.payload, now);
         logAuthEvent(
-          { kind: "grant_effect_share", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: null },
+          { kind: "grant_effect_share", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: JSON.stringify({ grantId: grant.id }) },
           now,
         );
         return { user, syncKey: grant.payload ?? undefined };
@@ -1678,10 +1805,11 @@ export function createDbApi(sql: Database.Database) {
         now,
       );
       if (grant.kind === "guest" && grant.payload) {
-        associateUserKey(user.user_id, grant.payload, grant.payload_name);
+        associateUserKey(user.user_id, grant.payload, grant.payload_name, `grant:${grant.id}`);
       }
+      recordRedemption(grant, user.user_id, effect.clientId, grant.kind === "guest" ? grant.payload : null, now);
       logAuthEvent(
-        { kind: `grant_effect_${grant.kind}`, actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: null },
+        { kind: `grant_effect_${grant.kind}`, actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: JSON.stringify({ grantId: grant.id }) },
         now,
       );
       return { user, client, syncKey: grant.kind === "guest" ? grant.payload ?? undefined : undefined };
@@ -1697,7 +1825,8 @@ export function createDbApi(sql: Database.Database) {
         { clientId: effect.clientId, userId: user.user_id, pubkeyJwk: effect.pubkeyJwk, label: effect.label },
         now,
       );
-      logAuthEvent({ kind: "grant_effect_device", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: null }, now);
+      recordRedemption(grant, user.user_id, effect.clientId, null, now);
+      logAuthEvent({ kind: "grant_effect_device", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: JSON.stringify({ grantId: grant.id }) }, now);
       return { user, client };
     }
 
@@ -1705,8 +1834,9 @@ export function createDbApi(sql: Database.Database) {
       if (!effect.existingUserId) throw new Error("applyGrantEffect: share requires existingUserId");
       const user = getUser(effect.existingUserId);
       if (!user) throw new Error("applyGrantEffect: no such user for share redemption");
-      if (grant.payload) associateUserKey(user.user_id, grant.payload, grant.payload_name);
-      logAuthEvent({ kind: "grant_effect_share", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: null }, now);
+      if (grant.payload) associateUserKey(user.user_id, grant.payload, grant.payload_name, `grant:${grant.id}`);
+      recordRedemption(grant, user.user_id, null, grant.payload, now);
+      logAuthEvent({ kind: "grant_effect_share", actorUserId: grant.issuer_user_id, subjectUserId: user.user_id, detail: JSON.stringify({ grantId: grant.id }) }, now);
       return { user, syncKey: grant.payload ?? undefined };
     }
 
@@ -1788,9 +1918,10 @@ export function createDbApi(sql: Database.Database) {
     // Identity & authorization:
     getUser, findRootUser, createUser, listChildren, listAllUsers, countUsers, setUserCaps, setUserNote, setUserDisplayName,
     setUserState, getEffectiveState, promoteProvisionalUser, setAuthorizedBy, bootstrapRootUser, claimEmptyServer, grantAdminCap,
-    getClientById, getClientsForUser, setClientLabel, registerClient, touchClientLastSeen, getUserForClient,
-    createGrant, getGrant, attemptRedeemGrant, peekGrant, applyGrantEffect, redeemGrant,
-    logAuthEvent, listAuthEvents, resetServerId,
+    getClientById, getClientsForUser, listAllClients, setClientLabel, registerClient, touchClientLastSeen, getUserForClient,
+    createGrant, getGrant, listGrants, listGrantRedemptions, listAllUserKeys, attemptRedeemGrant, peekGrant, applyGrantEffect, redeemGrant,
+    logAuthEvent, onAuthEvent, listAuthEvents, queryAuthEvents, resetServerId,
+    getIntegrationResultStats,
   };
 }
 

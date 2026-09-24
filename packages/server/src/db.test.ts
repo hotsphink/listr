@@ -541,6 +541,28 @@ describe("schema_version migrations", () => {
     }
   });
 
+  it("adds key provenance and grant redemptions to an older database (migration 9)", () => {
+    const { path, cleanup } = makeLegacyDbFile();
+    try {
+      const db = openDb(path);
+      const legacyUser = db.getOrCreateUserByHomeKey("home1");
+      expect(db.listAllUserKeys().find((k) => k.user_id === legacyUser.user_id)?.source).toBeNull();
+
+      const issuer = db.createUser({ authorizedBy: null, caps: ["sync"] }, 100);
+      const recipient = db.createUser({ authorizedBy: null, caps: ["sync"] }, 100);
+      const { grantId, secret } = db.createGrant({ kind: "share", issuerUserId: issuer.user_id, payload: "k" }, 100);
+      db.redeemGrant(grantId, secret, { existingUserId: recipient.user_id }, 200);
+      expect(db.listAllUserKeys().find((k) => k.user_id === recipient.user_id)?.source).toBe(`grant:${grantId}`);
+      expect(db.listGrantRedemptions()).toEqual([{ grant_id: grantId, at: 200, user_id: recipient.user_id, client_id: null, sync_key: "k" }]);
+
+      // A later association keeps the key's original source.
+      db.associateUserKey(recipient.user_id, "k", null, "declared");
+      expect(db.listAllUserKeys().find((k) => k.user_id === recipient.user_id)?.source).toBe(`grant:${grantId}`);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("resets integration results and drops non-TOML integration config (migration 8)", () => {
     const { path, cleanup } = makeLegacyDbFile();
     try {

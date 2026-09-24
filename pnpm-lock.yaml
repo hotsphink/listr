@@ -87,12 +87,21 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.18.1
+      solid-js:
+        specifier: ^1.9.13
+        version: 1.9.13
       tsx:
         specifier: ^4.19.0
         version: 4.22.4
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      vite:
+        specifier: ^6.4.3
+        version: 6.4.3(@types/node@22.19.21)(tsx@4.22.4)(yaml@2.9.1)
+      vite-plugin-solid:
+        specifier: ^2.11.12
+        version: 2.11.12(solid-js@1.9.13)(vite@6.4.3(@types/node@22.19.21)(tsx@4.22.4)(yaml@2.9.1))
       vitest:
         specifier: ^4.1.8
         version: 4.1.9(@types/node@22.19.21)(vite@6.4.3(@types/node@22.19.21)(tsx@4.22.4)(yaml@2.9.1))

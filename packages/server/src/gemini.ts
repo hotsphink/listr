@@ -1,3 +1,5 @@
+import { redact, sanitize } from "./redact.js";
+
 interface AttributeHint {
   key: string;
   label: string;
@@ -107,28 +109,6 @@ function expandUrl(entry: ModelConfig, fields: Record<string, string>): string {
     }
     return value;
   });
-}
-
-// Return a copy of a dict with all secret values replaced with "<redacted>".
-function sanitize(fields: Record<string, string>): Record<string, string> {
-  const safe: Record<string, string> = { ...fields };
-  for (const key of Object.keys(safe)) {
-    if (/key|token|secret|password/i.test(key)) safe[key] = "<redacted>";
-  }
-  return safe;
-}
-
-// Credentials ride in the URL and in provider error bodies, so redact them in
-// anything headed for a log or for the browser. index.ts forwards error text to
-// the client.
-function redact(err: unknown, fields: Record<string, string>): string {
-  let message = err instanceof Error ? err.message : String(err);
-  for (const [k, v] of Object.entries(sanitize(fields))) {
-    if (v === "<redacted>" && fields[k]) {
-      message = message.replaceAll(fields[k], v);
-    }
-  }
-  return message;
 }
 
 async function requestExtraction(

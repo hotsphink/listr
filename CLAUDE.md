@@ -7,7 +7,7 @@ Trello-like list management app with customizable per-board attribute schemas.
 Monorepo with pnpm workspaces:
 - `packages/shared` — TypeScript types, format string parser (no framework dependency)
 - `packages/client` — SolidJS + Vite frontend, Dexie.js for IndexedDB
-- `packages/server` — sync server (Node.js + WebSocket + SQLite)
+- `packages/server` — sync server (Node.js + WebSocket + SQLite); `packages/server/console` is the operator console frontend (SolidJS + Vite) it serves at /console
 
 ## Dependencies / Tools
 - pnpm is used instead of npm or npx.

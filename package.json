@@ -8,6 +8,7 @@
     "server:dev": "pnpm --filter @listr/server dev",
     "server:prod": "pnpm --filter @listr/server prod",
     "server:auth": "pnpm --filter @listr/server auth",
+    "console:build": "pnpm --filter @listr/server console:build",
     "certs:refresh": "bash scripts/refresh-certs.sh",
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter @listr/client test:e2e",

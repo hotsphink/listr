@@ -9,7 +9,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { getProductionDb } from "./db.js";
 import type { EntityType, createDbApi, UserRow, Cap, GrantKind } from "./db.js";
 import { config } from "./config.js";
-import type { IntegrationServerConfig } from "./config.js";
+import type { ConsoleConfig, IntegrationServerConfig } from "./config.js";
 import { extractFromImage } from "./gemini.js";
 import { MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION } from "./protocol.js";
 import { jwkThumbprint, verifyAuthSignature } from "./authCrypto.js";
@@ -18,6 +18,8 @@ import { IntegrationRunner } from "./integration-runner.js";
 import type { Board } from "@listr/shared";
 import type { IntegrationModule } from "./integrations/types.js";
 import type { RunnerOptions } from "./integration-runner.js";
+import { Monitor } from "./console-api/monitor.js";
+import { ConsoleRouter } from "./console-api/router.js";
 
 // Entity types clients may push or delete.
 const SYNCED_ENTITY_TYPES = new Set<string>(["board", "list", "item", "asset"]);
@@ -49,6 +51,7 @@ type DbApi = ReturnType<typeof createDbApi>;
 
 const PORT = config.port ?? 10_000;
 const CERT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../certs");
+const CONSOLE_DIST = join(dirname(fileURLToPath(import.meta.url)), "../console/dist");
 
 // certs/tailscale.crt is a static snapshot with a 90-day lifetime and nothing
 // renews it, so it goes stale silently. Tailscale Funnel on 443 serves the
@@ -74,7 +77,12 @@ export function warnIfCertExpiring(certPath: string): void {
   console.warn(`[cert] ${ts()}   Fix: pnpm certs:refresh, then restart this server.`);
 }
 
-async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<void> {
+/** What the sync server hands its HTTP request handler besides the request. */
+export interface RequestContext {
+  monitor: Monitor;
+}
+
+async function handleImport(req: IncomingMessage, res: ServerResponse, ctx: RequestContext): Promise<void> {
   if (config.tiers.length === 0) {
     res.writeHead(503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "No import model configured on server" }));
@@ -91,7 +99,14 @@ async function handleImport(req: IncomingMessage, res: ServerResponse): Promise<
   const chain = config.tiers.map((t) => `[${t.map((m) => m.model).join(", ")}]`).join(" -> ");
   console.log(`[import] ${new Date().toISOString()} scope=${scope.type} tiers=${chain} image=${imageKB}KB`);
   const t0 = Date.now();
-  const result = await extractFromImage(image, mime_type, scope, config.tiers);
+  let result: Awaited<ReturnType<typeof extractFromImage>>;
+  try {
+    result = await extractFromImage(image, mime_type, scope, config.tiers);
+  } catch (err) {
+    ctx.monitor.importFinished(t0, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  ctx.monitor.importFinished(t0, null);
   console.log(`[import] done in ${((Date.now() - t0) / 1000).toFixed(1)}s, ${result.boards?.length ?? 0} boards`);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify(result));
@@ -122,7 +137,7 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader("Vary", "Origin");
 }
 
-const handler = (req: IncomingMessage, res: ServerResponse) => {
+const handler = (req: IncomingMessage, res: ServerResponse, ctx: RequestContext) => {
     setCorsHeaders(req, res);
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
     if (req.method === "GET" && req.url === "/api/models") {
@@ -137,7 +152,7 @@ const handler = (req: IncomingMessage, res: ServerResponse) => {
       return;
     }
     if (req.method === "POST" && req.url === "/api/import") {
-      handleImport(req, res).catch((err) => {
+      handleImport(req, res, ctx).catch((err) => {
         if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
       });
@@ -157,7 +172,11 @@ export interface SyncServerOptions {
   /** Integration modules to offer. Defaults to the built-in set. Tests override it. */
   integrationModules?: Map<string, IntegrationModule>;
   integrationRunner?: RunnerOptions;
-  requestHandler?: (req: IncomingMessage, res: ServerResponse) => void;
+  requestHandler?: (req: IncomingMessage, res: ServerResponse, ctx: RequestContext) => void;
+  /** Operator console settings. Defaults to the process config's `console`. */
+  console?: ConsoleConfig;
+  /** Where the built console frontend lives. Tests override it. */
+  consoleDistDir?: string;
   /** Which world this server belongs to (dev/prod/...), advertised in
    * `challenge` so clients can refuse to talk to the wrong one. Defaults to the
    * process config's variant; tests override it directly. */
@@ -171,6 +190,8 @@ export interface SyncServerOptions {
 export interface SyncServerHandle {
   httpServer: ReturnType<typeof createHttpServer>;
   wss: WebSocketServer;
+  monitor: Monitor;
+  integrationRunner: IntegrationRunner;
   stop(): void;
 }
 
@@ -200,15 +221,32 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     res.end("Listr sync server running\n");
   });
 
+  const consoleConfig = opts.console ?? config.console ?? {};
+  const monitor = new Monitor({ captureBodies: consoleConfig.capture_bodies ?? true });
+  const stopAuthEvents = dbApi.onAuthEvent(() => monitor.markDirty("trust"));
+  let consoleRouter: ConsoleRouter | null = null;
+
+  // The console gets first look at every request, and /console answers 404
+  // when no password is configured.
+  const dispatch = (req: IncomingMessage, res: ServerResponse) => {
+    if (consoleRouter?.handle(req, res)) return;
+    if (req.url === "/console" || req.url?.startsWith("/console/")) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found\n");
+      return;
+    }
+    requestHandler(req, res, { monitor });
+  };
+
   const certPath = join(opts.certDir ?? CERT_DIR, "tailscale.crt");
   const httpServer = opts.tls === false
-    ? createHttpServer(requestHandler)
+    ? createHttpServer(dispatch)
     : createHttpsServer(
         {
           key: readFileSync(join(opts.certDir ?? CERT_DIR, "tailscale.key")),
           cert: readFileSync(certPath),
         },
-        requestHandler,
+        dispatch,
       );
 
   // Check on a slow timer as well as at startup, since this process can outlive
@@ -245,6 +283,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     verifyClient: (info, callback) => {
       const origin = info.origin;
       if (origin && !ALLOWED_ORIGINS.has(origin)) {
+        monitor.upgradeRejected("origin");
         console.warn(`[ws] ${ts()} rejected upgrade from disallowed origin: ${origin}`);
         callback(false, 403, "Origin not allowed");
         return;
@@ -252,6 +291,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       const ip = ipOf(info.req);
       const count = connectionsPerIp.get(ip) ?? 0;
       if (count >= MAX_CONNECTIONS_PER_IP) {
+        monitor.upgradeRejected("per_ip");
         console.warn(`[ws] ${ts()} rejected upgrade from ${ip}: ${count} connections already open (limit ${MAX_CONNECTIONS_PER_IP})`);
         callback(false, 429, "Too many connections");
         return;
@@ -328,11 +368,53 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     }
   }
 
-  const integrationRunner = new IntegrationRunner(dbApi, opts.integrationModules ?? INTEGRATIONS, opts.integrations ?? {}, broadcast, opts.integrationRunner);
+  const integrationRunner = new IntegrationRunner(
+    dbApi, opts.integrationModules ?? INTEGRATIONS, opts.integrations ?? {}, broadcast,
+    { ...opts.integrationRunner, observer: monitor.runObserver },
+  );
   integrationRunner.start();
+
+  if (consoleConfig.password_hash) {
+    consoleRouter = new ConsoleRouter({
+      db: dbApi,
+      monitor,
+      runner: integrationRunner,
+      httpServer,
+      passwordHash: consoleConfig.password_hash,
+      sessionIdleHours: consoleConfig.session_idle_hours,
+      tls: opts.tls !== false,
+      variant: SERVER_VARIANT,
+      certPath: opts.tls === false ? null : certPath,
+      allowedOrigins: [...ALLOWED_ORIGINS],
+      importTiers: config.tiers,
+      externalUrls: consoleConfig.external_urls ?? [],
+      distDir: opts.consoleDistDir ?? CONSOLE_DIST,
+      tokenBurst: MSG_BURST,
+    });
+    // Browsers drop Secure cookies over plain HTTP except on localhost, so
+    // the session cookie goes without Secure when TLS is off. Say so if that
+    // is anywhere but loopback.
+    if (opts.tls === false) {
+      httpServer.on("listening", () => {
+        const addr = httpServer.address();
+        const host = typeof addr === "object" && addr ? addr.address : "";
+        if (host !== "127.0.0.1" && host !== "::1") {
+          console.warn(`[console] ${ts()} TLS is off and this server listens on ${host}: the console password and session cookie cross the network in the clear.`);
+        }
+      });
+    }
+  }
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     const connIp = ipOf(req);
+    const conn = monitor.connOpened(req);
+    // Every reply and broadcast to this socket goes through send, so wrapping
+    // it here is enough for the console to see all outgoing traffic.
+    const rawSend = ws.send.bind(ws) as (data: unknown, ...rest: unknown[]) => void;
+    (ws as unknown as { send: (data: unknown, ...rest: unknown[]) => void }).send = (data: unknown, ...rest: unknown[]) => {
+      monitor.messageOut(conn, data);
+      rawSend(data, ...rest);
+    };
     // Per-connection message-rate limiting, as a token bucket refilled on
     // every message. Checked before JSON.parse so the cost is bounded
     // regardless of what the client sends.
@@ -371,7 +453,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       const newlyAssociated: string[] = [];
       for (const k of declaredKeys) {
         if (k === user.home_key) continue;
-        dbApi.associateUserKey(user.user_id, k, null);
+        dbApi.associateUserKey(user.user_id, k, null, "declared");
         if (!knownBefore.has(k)) newlyAssociated.push(k);
       }
       const userKeys = dbApi.getUserKeys(user.user_id);
@@ -390,6 +472,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       for (const k of newlyAssociated) notifyUserKeyChange(user.home_key, k, null, ws);
 
       dbApi.touchClientLastSeen(clientId!, Date.now());
+      monitor.connAuthenticated(conn, user.user_id, syncKeys);
       console.log(`[ws] ${ts()} ${keyTag(syncKeys)} connect client=${clientId!.slice(0, 8)} user=${user.user_id.slice(0, 8)} protocol=${clientVersion} keys=${syncKeys.length}`);
       ws.send(JSON.stringify({
         type: "ok",
@@ -415,22 +498,27 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         console.warn(
           `[ws] ${ts()} closing ip=${connIp} client=${clientId?.slice(0, 8) ?? "?"}: sustained rate above ${MSG_REFILL_PER_SEC} msg/sec (burst ${MSG_BURST} exhausted)`,
         );
+        monitor.rateLimited(conn);
         ws.close(1008, "Rate limit exceeded");
         return;
       }
       msgTokens--;
+      monitor.tokenLevel(conn, msgTokens);
 
       let msg: any;
       try {
         msg = JSON.parse(raw.toString());
       } catch {
+        monitor.messageIn(conn, raw.length, { type: "(invalid json)" });
         ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
         return;
       }
+      monitor.messageIn(conn, raw.length, msg ?? {});
 
       // -- hello: version-gate, then issue a challenge -----------------------
       if (msg.type === "hello") {
         clientVersion = typeof msg.protocol_version === "number" ? msg.protocol_version : 0;
+        monitor.connProtocol(conn, clientVersion);
         if (clientVersion < MIN_PROTOCOL_VERSION || clientVersion > MAX_PROTOCOL_VERSION) {
           const range = MIN_PROTOCOL_VERSION === MAX_PROTOCOL_VERSION
             ? `${MIN_PROTOCOL_VERSION}`
@@ -470,6 +558,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
             clientId = helloClientId;
             pubkeyJwk = pubkey;
             declaredKeys = keys;
+            monitor.connChallenged(conn, helloClientId, clientVersion);
 
             const nonce = randomBytes(16).toString("base64url"); // 128 bits
             expectedNonce = nonce;
@@ -505,6 +594,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         expectedNonce = null; // single-use: consumed by this attempt regardless of outcome
 
         if (expired) {
+          monitor.authFailed(conn, "challenge_expired");
           ws.send(JSON.stringify({ type: "error", message: "Challenge expired", reason: "protocol" }));
           ws.close(1008, "Challenge expired");
           return;
@@ -516,6 +606,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         verifyAuthSignature(capturedPubkey, sig, SERVER_ID, nonce, capturedClientId)
           .then((valid) => {
             if (!valid) {
+              monitor.authFailed(conn, "bad_signature");
               console.log(`[ws] ${ts()} auth failed client=${capturedClientId.slice(0, 8)}... bad signature`);
               ws.send(JSON.stringify({ type: "error", message: "Invalid signature", reason: "bad_signature" }));
               ws.close(1008, "Invalid signature");
@@ -539,10 +630,12 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
                 completeAuthentication(claimed.user);
                 return;
               }
+              monitor.connNeedsGrant(conn);
               ws.send(JSON.stringify({ type: "needs_grant" }));
               return;
             }
             if (record.effectiveState !== "active") {
+              monitor.authFailed(conn, record.effectiveState);
               console.log(`[ws] ${ts()} client=${capturedClientId.slice(0, 8)}... rejected: ${record.effectiveState}`);
               ws.send(JSON.stringify({ type: "error", message: `Account is ${record.effectiveState}`, reason: record.effectiveState }));
               ws.close(1008, record.effectiveState);
@@ -696,6 +789,10 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         }
 
         const allAssets = [...assetsById.values()];
+        monitor.pull(conn, keysSince, {
+          boards: allBoards.length, lists: allLists.length, items: allItems.length, assets: allAssets.length,
+          tombstones: allTombstones.length, integration_results: allIntegrationResults.length,
+        });
 
         const pushed = Object.entries(pushCounts).map(([k, v]) => `${k}=${v}`).join(" ");
         for (const k of Object.keys(pushCounts)) delete pushCounts[k];
@@ -759,10 +856,11 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
         const key = typeof msg.key === "string" ? msg.key.trim() : "";
         const name = typeof msg.name === "string" && msg.name ? msg.name : null;
         if (homeKey && userId && key && key !== homeKey) {
-          dbApi.associateUserKey(userId, key, name);
+          dbApi.associateUserKey(userId, key, name, "associated");
           if (!keyToClients.has(key)) keyToClients.set(key, new Set());
           keyToClients.get(key)!.add(ws);
           if (!syncKeys.includes(key)) syncKeys.push(key);
+          monitor.connKeys(conn, syncKeys);
           // Resolve the actual stored name (associateUserKey never clobbers an
           // existing name with null) so siblings learn the real current value.
           const current = dbApi.getUserKeys(userId).find((u) => u.key === key);
@@ -779,6 +877,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
           dbApi.removeUserKey(userId, key);
           keyToClients.get(key)?.delete(ws);
           syncKeys = syncKeys.filter((k) => k !== key);
+          monitor.connKeys(conn, syncKeys);
           notifyUserKeyRemoved(homeKey, key, ws);
         }
         return;
@@ -868,7 +967,8 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code: number, reason: Buffer) => {
+      monitor.connClosed(conn, code, reason.toString());
       const remaining = (connectionsPerIp.get(connIp) ?? 1) - 1;
       if (remaining <= 0) connectionsPerIp.delete(connIp); else connectionsPerIp.set(connIp, remaining);
       if (homeKey) {
@@ -896,9 +996,13 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
   return {
     httpServer,
     wss,
+    monitor,
+    integrationRunner,
     stop() {
       if (certTimer) clearInterval(certTimer);
       integrationRunner.stop();
+      stopAuthEvents();
+      monitor.stop();
       wss.close();
       httpServer.close();
     },

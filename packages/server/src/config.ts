@@ -22,6 +22,16 @@ export interface IntegrationServerConfig {
 
 const NUMERIC_INTEGRATION_SETTINGS = ["max_concurrent", "timeout_ms", "daily_limit", "daily_limit_per_key"] as const;
 
+export interface ConsoleConfig {
+  /** scrypt hash from `pnpm auth console-password`. Missing = console off. */
+  password_hash?: string;
+  session_idle_hours?: number;
+  /** Store integration request and response bodies. Defaults to true. */
+  capture_bodies?: boolean;
+  /** Public URLs that forward to this server, probed from the Ports view. */
+  external_urls?: string[];
+}
+
 export interface Config {
   /** Vision models to try, tried one tier at a time. A tier's models run in
    * parallel and the first usable answer wins. Empty means screenshot import
@@ -36,6 +46,7 @@ export interface Config {
    * server it hands root to whoever connects first. See index.ts. */
   allow_bootstrap?: boolean;
   integrations?: Record<string, IntegrationServerConfig>;
+  console?: ConsoleConfig;
 }
 
 // Accept both the native YAML type and its quoted string spelling, since the
@@ -198,6 +209,18 @@ function parseIntegrations(
   return integrations;
 }
 
+function parseConsole(value: unknown): ConsoleConfig | undefined {
+  const raw = asObject(value);
+  if (!raw) return undefined;
+  const urls = Array.isArray(raw.external_urls) ? raw.external_urls.filter((u): u is string => typeof u === "string") : undefined;
+  return {
+    password_hash: asString(raw.password_hash),
+    session_idle_hours: asNumber(raw.session_idle_hours),
+    capture_bodies: asBool(raw.capture_bodies),
+    external_urls: urls,
+  };
+}
+
 function parseServices(value: unknown): ModelConfig[][] {
   const services = asObject(value);
   if (!services) return [];
@@ -238,6 +261,7 @@ export function loadConfig(): Config {
     config.allow_bootstrap = process.env.LISTR_ALLOW_BOOTSTRAP !== "" && process.env.LISTR_ALLOW_BOOTSTRAP !== "0";
   }
   config.integrations = parseIntegrations(raw.integrations, raw.services);
+  config.console = parseConsole(raw.console);
   return config;
 }
 
