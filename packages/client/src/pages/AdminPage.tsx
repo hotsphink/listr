@@ -14,8 +14,7 @@ import { syncStatus } from "../sync/syncStore.js";
 import { endpointStatuses } from "../store/endpointStatuses.js";
 import type { EndpointStatus } from "../store/endpointStatuses.js";
 import { setSidebarOpen } from "../store/sidebarStore.js";
-import { exportAllData } from "../db/exportImport.js";
-import { triggerDownload } from "../utils/download.js";
+import { requestExport } from "../store/exportRequest.js";
 import ImportModal from "../components/ImportModal.js";
 import GrantModal from "../components/GrantModal.js";
 import RedeemGrantModal from "../components/RedeemGrantModal.js";
@@ -591,11 +590,7 @@ const AdminPage: Component = () => {
           <div class="control-row">
             <button
               type="button"
-              onClick={async () => {
-                const data = await exportAllData();
-                const date = new Date().toISOString().slice(0, 10);
-                triggerDownload(data, `listr-${date}.json`);
-              }}
+              onClick={() => requestExport({ type: "all" })}
             >
               Export All
             </button>

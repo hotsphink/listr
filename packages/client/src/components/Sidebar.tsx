@@ -15,8 +15,7 @@ import ShareIcon from "./ShareIcon.js";
 import { syncStatus } from "../sync/syncStore.js";
 import { generateShareKey } from "../sync/syncKeys.js";
 import { collapsedGroups, toggleGroupCollapsed } from "../store/sidebarGroups.js";
-import { exportAllData, exportBoard, exportList } from "../db/exportImport.js";
-import { triggerDownload } from "../utils/download.js";
+import { requestExport } from "../store/exportRequest.js";
 import { menuPosition } from "../utils/menuPosition.js";
 
 interface Props {
@@ -123,12 +122,7 @@ const Sidebar: Component<Props> = (props) => {
           format: board.format.text,
         })
       },
-      { label: "Export", action: async () => {
-          const data = await exportBoard(board.id);
-          const date = new Date().toISOString().slice(0, 10);
-          triggerDownload(data, `listr-board-${board.name}-${date}.json`);
-        }
-      },
+      { label: "Export", action: () => requestExport({ type: "board", boardId: board.id, name: board.name }) },
       ...(canRemove ? [{
         label: "Remove",
         action: async () => {
@@ -296,11 +290,7 @@ const Sidebar: Component<Props> = (props) => {
         <button
           type="button"
           class="btn-bare sidebar-item sidebar-new"
-          onClick={async () => {
-            const data = await exportAllData();
-            const date = new Date().toISOString().slice(0, 10);
-            triggerDownload(data, `listr-${date}.json`);
-          }}
+          onClick={() => requestExport({ type: "all" })}
         >
           <span aria-hidden="true">↑</span> Export
         </button>

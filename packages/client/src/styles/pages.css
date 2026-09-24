@@ -927,6 +927,11 @@
   text-align: left;
 }
 
+/* A checkbox with its explanation directly under it. */
+.export-option + .export-option {
+  margin-top: var(--space-3);
+}
+
 .share-uses legend,
 .clone-options legend {
   padding: 0;

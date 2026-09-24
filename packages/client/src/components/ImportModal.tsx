@@ -2,7 +2,7 @@ import { type Component, createSignal, Show, For, createMemo, createEffect, onMo
 import { db, type ImportScope, type PendingImport } from "../db/database.js";
 import { createBoard, createList, bulkCreateItems } from "../db/operations.js";
 import { syncClient } from "../sync/SyncClient.js";
-import { isNativeExport, previewNativeImport, applyNativeImport, computeAiImportOrder } from "../db/exportImport.js";
+import { isNativeExport, previewNativeImport, applyNativeImport, computeAiImportOrder, DEFAULT_IMPORT_OPTIONS, type ImportOptions } from "../db/exportImport.js";
 import type { NativeExport, ImportStats } from "../db/exportImport.js";
 import Modal from "./Modal.js";
 
@@ -313,6 +313,13 @@ const ImportModal: Component<Props> = (props) => {
   const [nativeDoc, setNativeDoc] = createSignal<NativeExport | null>(null);
   const [nativeStats, setNativeStats] = createSignal<ImportStats | null>(null);
   const [nativeResult, setNativeResult] = createSignal<ImportStats | null>(null);
+  const [importIntegrations, setImportIntegrations] = createSignal<ImportOptions["integrations"]>(DEFAULT_IMPORT_OPTIONS.integrations);
+
+  // Boards in the file that carry integrations, and whether any of those are enabled.
+  const nativeBoardsWithIntegrations = createMemo(() =>
+    (nativeDoc()?.boards ?? []).filter((b) => !b.deleted && (b.integrations ?? []).length > 0));
+  const nativeHasEnabledIntegrations = createMemo(() =>
+    nativeBoardsWithIntegrations().some((b) => b.integrations!.some((c) => c.enabled)));
   const [pending, setPending] = createSignal<PendingImport | null>(null);
 
   let fileInputRef!: HTMLInputElement;
@@ -359,6 +366,7 @@ const ImportModal: Component<Props> = (props) => {
     setNativeDoc(null);
     setNativeStats(null);
     setNativeResult(null);
+    setImportIntegrations(DEFAULT_IMPORT_OPTIONS.integrations);
   };
 
   const handleClose = () => { reset(); props.onClose(); };
@@ -457,7 +465,7 @@ const ImportModal: Component<Props> = (props) => {
     if (!doc) return;
     setPhase("importing");
     try {
-      const result = await applyNativeImport(doc);
+      const result = await applyNativeImport(doc, { integrations: importIntegrations() });
       setNativeResult(result);
       setPhase("done");
     } catch (e) {
@@ -572,6 +580,40 @@ const ImportModal: Component<Props> = (props) => {
                 </tbody>
               </table>
             )}
+          </Show>
+          <Show when={nativeBoardsWithIntegrations().length > 0}>
+            <fieldset class="form-field clone-options">
+              <legend class="field-label">Integrations</legend>
+              <div class="field-hint">
+                {nativeBoardsWithIntegrations().length === 1
+                  ? "One board in this file has integration settings."
+                  : `${nativeBoardsWithIntegrations().length} boards in this file have integration settings.`}
+              </div>
+              <label class="check-label">
+                <input type="radio" name="import-integrations" checked={importIntegrations() === "none"} onChange={() => setImportIntegrations("none")} />
+                Leave them out
+              </label>
+              <label class="check-label">
+                <input type="radio" name="import-integrations" checked={importIntegrations() === "copy"} onChange={() => setImportIntegrations("copy")} />
+                Import them as they are
+              </label>
+              <label class="check-label">
+                <input type="radio" name="import-integrations" checked={importIntegrations() === "disabled"} onChange={() => setImportIntegrations("disabled")} />
+                Import them all disabled
+              </label>
+              <div class="field-hint">
+                <Show
+                  when={importIntegrations() === "none"}
+                  fallback={
+                    <Show when={importIntegrations() === "copy" && nativeHasEnabledIntegrations()}>
+                      Items on those boards are looked up again, which uses the integrations' API calls.
+                    </Show>
+                  }
+                >
+                  Boards that already exist here keep their own integrations.
+                </Show>
+              </div>
+            </fieldset>
           </Show>
           <Show when={error()}>
             {(err) => <div class="field-error" role="alert">{err()}</div>}

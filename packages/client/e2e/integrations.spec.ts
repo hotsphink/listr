@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { addItemToList, addSyncEndpoint, clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 import { startTestSyncServer, type TestSyncServer } from "./syncServer.js";
@@ -306,6 +307,87 @@ test("the board editor rejects an attribute map value that isn't a key", async (
   await modal.getByLabel("OMDb (movies and TV) config, as TOML").fill("attributes.imdb_rating = 3\n");
   await expect(modal.getByRole("alert")).toContainText('attributes.imdb_rating must be an attribute key in quotes');
   await expect(modal.getByRole("button", { name: "Create" })).toBeDisabled();
+});
+
+test("exports and imports integration settings and values only as chosen", async ({ page }) => {
+  test.setTimeout(180_000);
+  await joinServer(page);
+  await createBoard(page, "Exported", [
+    { key: "imdb", label: "IMDB Rating", type: "number" },
+    { key: "imdb_id", label: "IMDB ID" },
+  ]);
+  const modal = page.locator(".modal");
+  await page.locator(".sidebar-board", { hasText: "Exported" }).first().click({ button: "right" });
+  await page.locator(".context-menu-item", { hasText: "Edit" }).first().click();
+  await modal.getByRole("button", { name: "+ Add integration" }).click({ timeout: 30_000 });
+  await modal.getByLabel("OMDb (movies and TV) config, as TOML").fill('attributes.imdb_rating = "imdb"\n');
+  await modal.getByRole("button", { name: "Save" }).click();
+  await modal.waitFor({ state: "hidden" });
+  await createListInBoard(page, "Films", "Exported");
+
+  // One item OMDb matched by itself, and one whose pick released the typed title.
+  await addItemToList(page, "The Matrix");
+  const items = page.locator(".list-view-item:not(.inline-add-item)");
+  await expect(items.first()).toContainText("8.7", { timeout: 30_000 });
+  await addItemToList(page, "neo matrix");
+  await page.getByRole("button", { name: "Several integration matches. Choose one." }).click({ timeout: 30_000 });
+  await modal.getByRole("button", { name: "The Matrix Reloaded (2003, movie)" }).click();
+  await expect(items.nth(1)).toContainText("The Matrix Reloaded", { timeout: 30_000 });
+
+  const exportBoard = async (withValues: boolean) => {
+    await page.locator(".sidebar-board", { hasText: "Exported" }).first().click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Export" }).click();
+    await expect(modal.locator("h2")).toHaveText('Export "Exported"');
+    await expect(modal.getByLabel("Integration settings")).toBeChecked();
+    await modal.getByLabel("Values integrations filled in").setChecked(withValues);
+    const download = page.waitForEvent("download");
+    await modal.getByRole("button", { name: "Export", exact: true }).click();
+    const doc = JSON.parse(readFileSync((await (await download).path())!, "utf-8"));
+    await expect(modal).toHaveCount(0);
+    return doc;
+  };
+
+  // Settings only: the config travels, integration values don't, and the pick does.
+  const settingsOnly = await exportBoard(false);
+  const [board] = settingsOnly.boards;
+  expect(board.integrations).toEqual([expect.objectContaining({ integration_id: "omdb", enabled: true, config: 'attributes.imdb_rating = "imdb"\n' })]);
+  const [matched, picked] = board.lists[0].items;
+  expect(matched).toMatchObject({ title: "The Matrix", attributes: {} });
+  expect(picked).toMatchObject({ title: "", choices: { imdb_id: { value: "tt0234215", query: { title: "neo matrix" } } } });
+
+  // With values: integration values are written into the items as ordinary values.
+  const withValues = await exportBoard(true);
+  expect(withValues.boards[0].lists[0].items[0].attributes).toMatchObject({ imdb: 8.7, imdb_id: "tt0133093" });
+  expect(withValues.boards[0].lists[0].items[1].title).toBe("The Matrix Reloaded");
+
+  const importInto = async (choice: string) => {
+    await clearDatabase(page);
+    await joinServer(page);
+    await page.locator(".sidebar-item", { hasText: "Import" }).click();
+    await page.locator('input[type="file"][accept="image/*,.json"]').setInputFiles({
+      name: "export.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(settingsOnly)),
+    });
+    const group = modal.getByRole("group", { name: "Integrations" });
+    await expect(group).toContainText("One board in this file has integration settings.");
+    await group.getByLabel(choice).check();
+    await modal.getByRole("button", { name: "Apply" }).click();
+    await modal.getByRole("button", { name: "Done" }).click();
+    await page.locator(".sidebar-board", { hasText: "Exported" }).first().click();
+  };
+
+  // All disabled: nothing will fill in the released title, so it goes back to what was typed.
+  await importInto("Import them all disabled");
+  await expect(items.nth(1)).toHaveText(/neo matrix/);
+  await page.locator(".sidebar-board", { hasText: "Exported" }).first().click({ button: "right" });
+  await page.locator(".context-menu-item", { hasText: "Edit" }).first().click();
+  await expect(modal.getByLabel("OMDb (movies and TV) config, as TOML")).toHaveValue('attributes.imdb_rating = "imdb"\n');
+  await expect(modal.getByLabel("Enabled")).not.toBeChecked();
+  await modal.getByRole("button", { name: "Cancel" }).click();
+
+  // As they are: the integration runs, and the official title and mapped rating come back.
+  await importInto("Import them as they are");
+  await expect(items.first()).toContainText("8.7", { timeout: 30_000 });
+  await expect(items.nth(1)).toContainText("The Matrix Reloaded", { timeout: 30_000 });
 });
 
 test("a title with no match shows the not-found badge", async ({ page }) => {

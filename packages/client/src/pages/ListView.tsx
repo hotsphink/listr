@@ -7,8 +7,7 @@ import { applyPick, compileFormat, computeOverlay, resolveOverlay, effectiveValu
 import type { AttributeDefinition, Board, Integration, IntegrationResult, Item, List, IntegrationStatus, TodoState } from "@listr/shared";
 import { db } from "../db/database.js";
 import { createItem, updateItem, updateItemAttribute, deleteItem, updateList, deleteList, createList, resolveChain, updateBoard, deleteBoard, computeCrossListMove } from "../db/operations.js";
-import { exportList, exportBoard } from "../db/exportImport.js";
-import { triggerDownload } from "../utils/download.js";
+import { requestExport } from "../store/exportRequest.js";
 import { menuPosition } from "../utils/menuPosition.js";
 import ImportModal from "../components/ImportModal.js";
 import type { ImportScope } from "../components/ImportModal.js";
@@ -575,7 +574,7 @@ const ListView: Component = () => {
       { label: "Share", action: () => { setBoardCtxMenu(null); setSharingBoard(b); } },
       { label: "Clone", action: () => { setBoardCtxMenu(null); setCloningBoard(b); } },
       { label: "Import", action: () => { setBoardCtxMenu(null); setBoardImportScope({ type: "board", id: b.id, name: b.name, schema: b.schema, format: b.format.text }); } },
-      { label: "Export", action: async () => { setBoardCtxMenu(null); const data = await exportBoard(b.id); triggerDownload(data, `listr-board-${b.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
+      { label: "Export", action: () => { setBoardCtxMenu(null); void requestExport({ type: "board", boardId: b.id, name: b.name }); } },
       { label: "Delete", danger: true, action: async () => { setBoardCtxMenu(null); if (!confirm(`Delete "${b.name}" and all its lists and items?`)) return; await deleteBoard(b.id); } },
     ];
   });
@@ -616,7 +615,7 @@ const ListView: Component = () => {
     return [
       { label: "Edit", action: () => { setListCtxMenu(null); setEditingList(list); } },
       { label: "Import", action: () => { setListCtxMenu(null); b && setListImportScope({ type: "list", id: list.id, name: list.name, schema: b.schema, format: (list.format ?? b.format).text }); } },
-      { label: "Export", action: async () => { setListCtxMenu(null); const data = await exportList(list.id); triggerDownload(data, `listr-list-${list.name}-${new Date().toISOString().slice(0, 10)}.json`); } },
+      { label: "Export", action: () => { setListCtxMenu(null); void requestExport({ type: "list", listId: list.id, boardId: list.board_id, name: list.name }); } },
       { label: "Delete", danger: true, action: async () => { setListCtxMenu(null); if (!confirm(`Delete "${list.name}" and all its items?`)) return; await deleteList(list.id); } },
     ];
   });

@@ -3,6 +3,7 @@ import { HashRouter, Route, useNavigate, useLocation } from "@solidjs/router";
 import { liveQuery } from "dexie";
 import { from } from "solid-js";
 import Sidebar from "./components/Sidebar.js";
+import ExportModal from "./components/ExportModal.js";
 import ListView from "./pages/ListView.js";
 import AdminPage from "./pages/AdminPage.js";
 import TestRunner from "./pages/TestRunner.js";
@@ -105,6 +106,7 @@ const Layout: Component<{ children?: any }> = (props) => {
         </Show>
         {props.children}
       </main>
+      <ExportModal />
       <div id="drag-cancel-zone" class="drag-cancel-zone" classList={{ active: isDragging() }} aria-hidden="true">
         ✕ Cancel
       </div>

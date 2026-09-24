@@ -1,4 +1,4 @@
-import { ENTITY_SCHEMA_VERSION, computeOverlay, orderResults, withOverlay, type Board, upgradeBoardRecord, upgradeListRecord, type AttributeDefinition, type FormatSpec, type Item, type List, type ViewMode } from "@listr/shared";
+import { ENTITY_SCHEMA_VERSION, computeOverlay, orderResults, withOverlay, type Board, upgradeBoardRecord, upgradeListRecord, type AttributeDefinition, type FormatSpec, type Integration, type Item, type ItemChoice, type List, type ViewMode } from "@listr/shared";
 import { db } from "./database.js";
 import { boardAttributeMaps } from "../utils/integrationConfig.js";
 import { syncClient } from "../sync/SyncClient.js";
@@ -41,7 +41,44 @@ interface ExportedBoard {
   macros?: Record<string, string>;
   /** Custom sync namespace this board uses instead of the default (see Board.sync_key). */
   sync_key?: string;
+  /** Integration config, attribute maps included. Absent when the export left integrations out. */
+  integrations?: Integration[];
   lists: ExportedList[];
+}
+
+/** What an export carries beyond the boards, lists and items themselves. */
+export interface ExportOptions {
+  /** Each board's integration config, attribute maps included. */
+  integrations: boolean;
+  /**
+   * Values integrations filled in, written into items as ordinary values. On
+   * import they become the user's own and override the integration.
+   */
+  integrationValues: boolean;
+}
+
+export const DEFAULT_EXPORT_OPTIONS: ExportOptions = { integrations: true, integrationValues: false };
+
+/** What an import takes from integrations in the file. */
+export interface ImportOptions {
+  /** Leave them out, take them as they are, or take them all disabled. */
+  integrations: "none" | "copy" | "disabled";
+}
+
+export const DEFAULT_IMPORT_OPTIONS: ImportOptions = { integrations: "copy" };
+
+/** A board's fields in an export, without its lists. */
+function boardFields(board: Board, options: ExportOptions): Omit<ExportedBoard, "lists"> {
+  return {
+    id: board.id,
+    name: board.name,
+    color: board.color,
+    position: board.position,
+    schema: board.schema,
+    format: board.format,
+    sync_key: board.sync_key,
+    ...(options.integrations && board.integrations?.length ? { integrations: board.integrations } : {}),
+  };
 }
 
 interface ExportedList {
@@ -62,6 +99,8 @@ interface ExportedItem {
   deleted?: 1;
   title: string;
   attributes: Record<string, unknown>;
+  /** The user's picks from integration choices. */
+  choices?: Record<string, ItemChoice>;
 }
 
 export interface ImportStats {
@@ -116,8 +155,9 @@ export function extractReferencedAssetIds(
   return ids;
 }
 
-/** Items as the board shows them, with integration values overlaid. */
-async function withIntegrationValues(board: Board, items: Item[]): Promise<Item[]> {
+/** Items as the export writes them: with integration values overlaid only when asked. */
+async function itemsForExport(board: Board, items: Item[], options: ExportOptions): Promise<Item[]> {
+  if (!options.integrationValues || !items.length) return items;
   const results = await db.integration_results.where("item_id").anyOf(items.map((i) => i.id)).toArray();
   if (!results.length) return items;
   const maps = boardAttributeMaps(board);
@@ -145,11 +185,12 @@ function buildListEntry(list: List, items: Item[]) {
       id: item.id,
       title: item.title,
       attributes: item.attributes,
+      ...(item.choices ? { choices: item.choices } : {}),
     })),
   };
 }
 
-export async function exportAllData(): Promise<NativeExport> {
+export async function exportAllData(options: ExportOptions = DEFAULT_EXPORT_OPTIONS): Promise<NativeExport> {
   const [allBoards, lists, allItems, tombstoneRows, allAssets] = await Promise.all([
     db.boards.orderBy("position").toArray(),
     db.lists.orderBy("position").toArray(),
@@ -157,12 +198,6 @@ export async function exportAllData(): Promise<NativeExport> {
     db.tombstones.toArray(),
     db.assets.toArray(),
   ]);
-
-  const itemsByList = new Map<string, Item[]>();
-  for (const list of lists) {
-    const raw = allItems.filter((i) => i.list_id === list.id);
-    itemsByList.set(list.id, resolveChain(raw));
-  }
 
   const listsByBoard = new Map<string, List[]>();
   for (const list of lists) {
@@ -179,28 +214,25 @@ export async function exportAllData(): Promise<NativeExport> {
   return {
     listr_export: "3",
     exported_at: Date.now(),
-    boards: allBoards.map((board) => ({
-      id: board.id,
-      name: board.name,
-      color: board.color,
-      position: board.position,
-      schema: board.schema,
-      format: board.format,
-      sync_key: board.sync_key,
-      lists: (listsByBoard.get(board.id) ?? []).map((list) =>
-        buildListEntry(list, itemsByList.get(list.id) ?? [])
-      ),
+    boards: await Promise.all(allBoards.map(async (board) => {
+      const boardLists = listsByBoard.get(board.id) ?? [];
+      const ids = new Set(boardLists.map((l) => l.id));
+      const items = await itemsForExport(board, allItems.filter((i) => ids.has(i.list_id)), options);
+      return {
+        ...boardFields(board, options),
+        lists: boardLists.map((list) => buildListEntry(list, resolveChain(items.filter((i) => i.list_id === list.id)))),
+      };
     })),
     tombstones,
     assets: allAssets.map(assetToSync),
   };
 }
 
-export async function exportBoard(boardId: string): Promise<NativeExport> {
+export async function exportBoard(boardId: string, options: ExportOptions = DEFAULT_EXPORT_OPTIONS): Promise<NativeExport> {
   const board = await db.boards.get(boardId);
   if (!board) throw new Error(`Board ${boardId} not found`);
   const lists = await db.lists.where("board_id").equals(boardId).sortBy("position");
-  const allItems = await withIntegrationValues(board, await db.items.where("list_id").anyOf(lists.map((l) => l.id)).toArray());
+  const allItems = await itemsForExport(board, await db.items.where("list_id").anyOf(lists.map((l) => l.id)).toArray(), options);
   const itemsByList = new Map<string, Item[]>();
   for (const list of lists) {
     const raw = allItems.filter((i) => i.list_id === list.id);
@@ -211,30 +243,26 @@ export async function exportBoard(boardId: string): Promise<NativeExport> {
     listr_export: "3",
     exported_at: Date.now(),
     boards: [{
-      id: board.id, name: board.name, color: board.color, position: board.position,
-      schema: board.schema, format: board.format,
-      sync_key: board.sync_key,
+      ...boardFields(board, options),
       lists: lists.map((list) => buildListEntry(list, itemsByList.get(list.id) ?? [])),
     }],
     assets,
   };
 }
 
-export async function exportList(listId: string): Promise<NativeExport> {
+export async function exportList(listId: string, options: ExportOptions = DEFAULT_EXPORT_OPTIONS): Promise<NativeExport> {
   const list = await db.lists.get(listId);
   if (!list) throw new Error(`List ${listId} not found`);
   const board = await db.boards.get(list.board_id);
   if (!board) throw new Error(`Board ${list.board_id} not found`);
   const rawItems = await db.items.where("list_id").equals(listId).toArray();
-  const items = resolveChain(await withIntegrationValues(board, rawItems));
+  const items = resolveChain(await itemsForExport(board, rawItems, options));
   const assets = await exportAssetsByIds(extractReferencedAssetIds(board, [list], items));
   return {
     listr_export: "3",
     exported_at: Date.now(),
     boards: [{
-      id: board.id, name: board.name, color: board.color, position: board.position,
-      schema: board.schema, format: board.format,
-      sync_key: board.sync_key,
+      ...boardFields(board, options),
       lists: [buildListEntry(list, items)],
     }],
     assets,
@@ -347,7 +375,13 @@ export async function previewNativeImport(doc: NativeExport): Promise<ImportStat
   return stats;
 }
 
-export async function applyNativeImport(doc: NativeExport): Promise<ImportStats> {
+/** The integrations an imported board gets, or undefined to leave the board's own alone. */
+function importedIntegrations(board: ExportedBoard, options: ImportOptions): Integration[] | undefined {
+  if (options.integrations === "none" || !board.integrations) return undefined;
+  return board.integrations.map((cfg) => ({ ...cfg, enabled: options.integrations === "copy" && cfg.enabled }));
+}
+
+export async function applyNativeImport(doc: NativeExport, options: ImportOptions = DEFAULT_IMPORT_OPTIONS): Promise<ImportStats> {
   const stats = emptyStats();
 
   // Apply deletions first — the regular upsert loop below re-reads boardSet/
@@ -383,6 +417,10 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
     }
 
     const format = upgradeBoardRecord(board).format!;
+    const integrations = importedIntegrations(board, options);
+    // Whether an enabled integration will be there to fill in titles that picks released.
+    const localBoard = boardSet.has(board.id) ? await db.boards.get(board.id) : undefined;
+    const activeIntegrations = (integrations ?? localBoard?.integrations ?? []).some((c) => c.enabled);
     if (boardSet.has(board.id)) {
       await db.boards.update(board.id, {
         name: board.name,
@@ -390,6 +428,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         schema: board.schema,
         format,
         sync_key: board.sync_key,
+        ...(integrations ? { integrations } : {}),
         updated_at: timestamp,
         schema_version: ENTITY_SCHEMA_VERSION,
       });
@@ -403,6 +442,7 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
         schema: board.schema,
         format,
         sync_key: board.sync_key,
+        ...(integrations ? { integrations } : {}),
         created_at: timestamp,
         updated_at: timestamp,
         schema_version: ENTITY_SCHEMA_VERSION,
@@ -460,10 +500,17 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
           continue;
         }
 
+        // A pick can release the typed title so the integration's shows instead. With
+        // no enabled integration to show one, go back to what the user typed.
+        const released = item.choices ? Object.values(item.choices).find((c) => typeof c.query?.title === "string")?.query?.title : undefined;
+        const title = item.title === "" && !activeIntegrations && typeof released === "string" ? released : item.title;
+        const choices = item.choices ? { choices: item.choices } : {};
+
         if (itemSet.has(item.id)) {
           await db.items.update(item.id, {
-            title: item.title,
+            title,
             attributes: item.attributes,
+            ...choices,
             updated_at: timestamp,
             schema_version: ENTITY_SCHEMA_VERSION,
           });
@@ -472,9 +519,10 @@ export async function applyNativeImport(doc: NativeExport): Promise<ImportStats>
           await db.items.add({
             id: item.id,
             list_id: list.id,
-            title: item.title,
+            title,
             after_id: null, // will be fixed in the chain-build step below
             attributes: item.attributes,
+            ...choices,
             created_at: timestamp,
             updated_at: timestamp,
             schema_version: ENTITY_SCHEMA_VERSION,
