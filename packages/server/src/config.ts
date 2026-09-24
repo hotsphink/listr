@@ -47,6 +47,8 @@ export interface Config {
   allow_bootstrap?: boolean;
   integrations?: Record<string, IntegrationServerConfig>;
   console?: ConsoleConfig;
+  /** Browser origins allowed to connect. Missing = the local dev client only. */
+  allowed_origins?: string[];
 }
 
 // Accept both the native YAML type and its quoted string spelling, since the
@@ -69,6 +71,15 @@ function asNumber(value: unknown): number | undefined {
     return Number.isNaN(n) ? undefined : n;
   }
   return undefined;
+}
+
+function asStringList(value: unknown, name: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    console.error(`[config] ${name} must be a list, ignoring it`);
+    return undefined;
+  }
+  return value.filter((v): v is string => typeof v === "string");
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
@@ -262,6 +273,7 @@ export function loadConfig(): Config {
   }
   config.integrations = parseIntegrations(raw.integrations, raw.services);
   config.console = parseConsole(raw.console);
+  config.allowed_origins = asStringList(raw.allowed_origins, "allowed_origins");
   return config;
 }
 

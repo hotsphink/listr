@@ -501,6 +501,23 @@ describe("sync server: WS integration", () => {
     await waitForOpen(ws); // would hang/reject if verifyClient refused it
     ws.close();
   });
+
+  it("takes allowed origins from its options, ignoring a trailing slash", async () => {
+    const other = createSyncServer(openDb(":memory:"), { tls: false, allowedOrigins: ["https://app.example/"] });
+    await new Promise<void>((resolve) => other.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    const otherPort = (other.httpServer.address() as AddressInfo).port;
+    const outcome = (origin: string) => new Promise<number | "open">((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${otherPort}/sync`, { headers: { origin } });
+      ws.once("open", () => { ws.close(); resolve("open"); });
+      ws.once("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+    });
+    try {
+      expect(await outcome("https://app.example")).toBe("open");
+      expect(await outcome("http://localhost:3000")).toBe(403);
+    } finally {
+      other.stop();
+    }
+  });
 });
 
 describe("redeem_grant: registration plumbing", () => {

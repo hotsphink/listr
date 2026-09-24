@@ -99,7 +99,7 @@ export async function startTestSyncServer(options: TestSyncServerOptions = {}): 
   // JoinPage's manual-host form applies when it derives `secure`.
   writeFileSync(configPath, `tls: false\nport: ${port}\ndb_path: ${dataDir}\n${options.extraConfig ?? ""}`);
 
-  // The app runs on the e2e port, which the server's built-in origin list doesn't include.
+  // The app runs on the e2e port, which the throwaway config's allowed_origins doesn't include.
   const env = { ...process.env, LISTR_VARIANT: "dev", LISTR_CONFIG_PATH: configPath, LISTR_EXTRA_ORIGINS: E2E_APP_URL };
 
   // The server comes up first, because it is what creates the database and

@@ -112,22 +112,18 @@ async function handleImport(req: IncomingMessage, res: ServerResponse, ctx: Requ
   res.end(JSON.stringify(result));
 }
 
-const ALLOWED_ORIGINS = new Set([
-  "https://hotsphink.github.io",
-  "https://listr.aapx.org",
-  "https://listr-sync.aapx.org",
-  "https://listr-dev.aapx.org",
-  "https://finkripper.heron-moth.ts.net",
-  "https://finkripper.heron-moth.ts.net:10000",
-  "https://finkripper.heron-moth.ts.net:8443",
-  "https://finkripper.heron-moth.ts.net:3000",
-  "https://finktop.heron-moth.ts.net",
-  "https://finkripper.local",
-  "http://localhost:3000",
-  "https://localhost:3000",
-  // Comma-separated extras, such as the e2e harness's app origin.
-  ...(process.env.LISTR_EXTRA_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean),
-]);
+// Browser origins allowed to talk to this server, from the config file's
+// `allowed_origins` plus LISTR_EXTRA_ORIGINS (comma-separated, used by the e2e
+// harness for its own app port).
+export function originSet(configured: string[] | undefined): Set<string> {
+  const extras = (process.env.LISTR_EXTRA_ORIGINS ?? "").split(",");
+  return new Set([...(configured ?? DEFAULT_ORIGINS), ...extras].map((o) => o.trim().replace(/\/+$/, "")).filter(Boolean));
+}
+
+// A config with no `allowed_origins` still lets a local dev client connect.
+const DEFAULT_ORIGINS = ["http://localhost:3000", "https://localhost:3000"];
+
+const ALLOWED_ORIGINS = originSet(config.allowed_origins);
 
 function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
   const origin = req.headers.origin ?? "";
@@ -177,6 +173,8 @@ export interface SyncServerOptions {
   console?: ConsoleConfig;
   /** Where the built console frontend lives. Tests override it. */
   consoleDistDir?: string;
+  /** Browser origins allowed to connect. Defaults to the process config's `allowed_origins`. */
+  allowedOrigins?: string[];
   /** Which world this server belongs to (dev/prod/...), advertised in
    * `challenge` so clients can refuse to talk to the wrong one. Defaults to the
    * process config's variant; tests override it directly. */
@@ -222,6 +220,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
   });
 
   const consoleConfig = opts.console ?? config.console ?? {};
+  const allowedOrigins = opts.allowedOrigins ? originSet(opts.allowedOrigins) : ALLOWED_ORIGINS;
   const monitor = new Monitor({ captureBodies: consoleConfig.capture_bodies ?? true });
   const stopAuthEvents = dbApi.onAuthEvent(() => monitor.markDirty("trust"));
   let consoleRouter: ConsoleRouter | null = null;
@@ -282,7 +281,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
     maxPayload: MAX_WS_PAYLOAD_BYTES,
     verifyClient: (info, callback) => {
       const origin = info.origin;
-      if (origin && !ALLOWED_ORIGINS.has(origin)) {
+      if (origin && !allowedOrigins.has(origin)) {
         monitor.upgradeRejected("origin");
         console.warn(`[ws] ${ts()} rejected upgrade from disallowed origin: ${origin}`);
         callback(false, 403, "Origin not allowed");
@@ -385,7 +384,7 @@ export function createSyncServer(dbApi: DbApi, opts: SyncServerOptions = {}): Sy
       tls: opts.tls !== false,
       variant: SERVER_VARIANT,
       certPath: opts.tls === false ? null : certPath,
-      allowedOrigins: [...ALLOWED_ORIGINS],
+      allowedOrigins: [...allowedOrigins],
       importTiers: config.tiers,
       externalUrls: consoleConfig.external_urls ?? [],
       distDir: opts.consoleDistDir ?? CONSOLE_DIST,
