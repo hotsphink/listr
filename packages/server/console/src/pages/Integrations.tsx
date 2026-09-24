@@ -83,7 +83,9 @@ function ImportCard(props: { s: ConsoleImportStats }) {
         <Show when={s().configured} fallback={<Badge tone="muted">not configured</Badge>}><Badge tone="good">configured</Badge></Show>
       </header>
       <Show when={s().configured}>
-        <p class="muted small">Tiers: {s().tiers.map((t) => t.join(" + ")).join(" then ")}</p>
+        <ol class="plain-list muted small">
+          <For each={s().tiers}>{(t, i) => <li>Tier {i() + 1}: {t.join(", ")}</li>}</For>
+        </ol>
       </Show>
       <div class="module-grid">
         <div><div class="mini-label">Calls</div><div class="num big">{s().calls}</div><div class="muted small">since restart</div></div>
