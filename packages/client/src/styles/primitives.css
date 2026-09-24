@@ -246,9 +246,9 @@ button:disabled,
   margin-bottom: var(--space-6);
 }
 
-/* Checkboxes and colour swatches keep their intrinsic size; everything else
- * fills the field. */
-.form-field input:not([type="checkbox"]):not([type="color"]),
+/* Checkboxes, radios and colour swatches keep their intrinsic size; everything
+ * else fills the field. */
+.form-field input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
 .form-field select,
 .form-field textarea {
   width: 100%;

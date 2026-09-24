@@ -120,3 +120,39 @@ test.describe("board groups", () => {
     await expect(page.locator(".share-url-text")).toHaveCount(0);
   });
 });
+
+test.describe("board groups and cloning", () => {
+  test.beforeEach(async ({ page }) => {
+    await clearDatabase(page);
+  });
+
+  test("a clone of a board in a named group joins the group, and a clone of an individually shared board does not", async ({ page }) => {
+    await page.locator(".sidebar-item.sidebar-new", { hasText: "+ New Board Group" }).click();
+    await page.locator(".modal .form-field input").first().fill("Team Trip");
+    await page.getByRole("button", { name: "Create" }).click();
+    await expect(page.locator(".modal")).toHaveCount(0);
+
+    const clone = async (source: string) => {
+      await page.locator(".sidebar-board", { hasText: source }).first().click({ button: "right" });
+      await page.locator(".context-menu-item", { hasText: "Clone" }).click();
+      await page.getByRole("button", { name: "Clone", exact: true }).click();
+      await expect(page.locator(".modal")).toHaveCount(0);
+    };
+
+    await clone("Team Trip");
+    const teamGroup = page.locator(".sidebar-group").filter({ has: page.locator(".sidebar-group-title", { hasText: "Team Trip" }) });
+    await expect(teamGroup.locator(".sidebar-board", { hasText: "Clone of Team Trip" })).toBeVisible();
+
+    // An individually shared board has its own key, which the clone must not inherit.
+    await page.locator(".sidebar-item.sidebar-new.board", { hasText: "+ New Board" }).click();
+    await page.locator(".modal .form-field input").first().fill("Solo Board");
+    await page.getByRole("button", { name: "Create" }).click();
+    await page.locator(".sidebar-board", { hasText: "Solo Board" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Share" }).click();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await clone("Solo Board");
+    const sharedGroup = page.locator(".sidebar-group").filter({ has: page.locator(".sidebar-group-title", { hasText: "Shared Boards" }) });
+    await expect(page.locator(".sidebar-board", { hasText: "Clone of Solo Board" })).toBeVisible();
+    await expect(sharedGroup.locator(".sidebar-board", { hasText: "Clone of Solo Board" })).toHaveCount(0);
+  });
+});

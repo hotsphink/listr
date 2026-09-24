@@ -301,6 +301,65 @@ export async function createBoard(
   return board;
 }
 
+export interface CloneBoardOptions {
+  name: string;
+  /** Leave integrations out, copy them as they are, or copy them all disabled. */
+  integrations: "none" | "copy" | "disabled";
+  /** "none", list names and settings only, or lists with their items. */
+  lists: "none" | "names" | "items";
+}
+
+/**
+ * Create a copy of a board's configuration: color, schema and format, and
+ * optionally its integrations, lists and items. A clone of a board in a named
+ * board group joins that group. Any other clone lands in the user's own boards,
+ * so cloning a board someone shared never shares the clone back.
+ */
+export async function cloneBoard(sourceId: string, options: CloneBoardOptions): Promise<Board> {
+  const source = await db.boards.get(sourceId);
+  if (!source) throw new Error(`Board ${sourceId} not found`);
+  const group = source.sync_key ? await db.board_groups.get(source.sync_key) : undefined;
+  const board = await createBoard(options.name, source.color, {
+    schema: structuredClone(source.schema),
+    format: source.format.text,
+    syncKey: group ? source.sync_key : undefined,
+    integrations: options.integrations === "none" || !source.integrations ? undefined
+      : source.integrations.map((cfg) => ({ ...structuredClone(cfg), enabled: options.integrations === "copy" && cfg.enabled })),
+  });
+  if (options.lists === "none") return board;
+
+  const lists = await db.lists.where("board_id").equals(sourceId).sortBy("position");
+  for (const list of lists) {
+    const copy = await createList(list.name, board.id);
+    await updateList(copy.id, { icon: list.icon, format: list.format, view_mode: list.view_mode });
+    if (options.lists !== "items") continue;
+
+    // Copy attribute values verbatim, timestamp attributes and integration picks included, in the same order.
+    const items = resolveChain(await db.items.where("list_id").equals(list.id).toArray());
+    const timestamp = now();
+    let prevId: string | null = null;
+    const newItems: Item[] = items.map((item) => {
+      const id = generateId();
+      const clone: Item = {
+        id,
+        list_id: copy.id,
+        title: item.title,
+        after_id: prevId,
+        created_at: timestamp,
+        updated_at: timestamp,
+        attributes: structuredClone(item.attributes),
+        ...(item.choices ? { choices: structuredClone(item.choices) } : {}),
+        schema_version: ENTITY_SCHEMA_VERSION,
+      };
+      prevId = id;
+      return clone;
+    });
+    await db.items.bulkAdd(newItems);
+    for (const item of newItems) syncClient.pushEntity("item", item);
+  }
+  return board;
+}
+
 export async function updateBoard(
   id: string,
   updates: Partial<Pick<Board, "name" | "color" | "position" | "schema" | "format" | "sync_key" | "integrations">>,

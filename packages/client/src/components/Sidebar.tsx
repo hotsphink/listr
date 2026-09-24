@@ -9,6 +9,7 @@ import ContextMenu, { type MenuItem } from "./ContextMenu.js";
 import BoardFormModal from "./BoardFormModal.js";
 import ImportModal, { type ImportScope } from "./ImportModal.js";
 import BoardShareModal from "./BoardShareModal.js";
+import CloneBoardModal from "./CloneBoardModal.js";
 import ScanShareModal from "./ScanShareModal.js";
 import ShareIcon from "./ShareIcon.js";
 import { syncStatus } from "../sync/syncStore.js";
@@ -43,6 +44,7 @@ const Sidebar: Component<Props> = (props) => {
   const [showCreateBoard, setShowCreateBoard] = createSignal(false);
   const [importScope, setImportScope] = createSignal<ImportScope | null>(null);
   const [sharingBoard, setSharingBoard] = createSignal<Board | undefined>();
+  const [cloningBoard, setCloningBoard] = createSignal<Board | undefined>();
   const [sharingGroup, setSharingGroup] = createSignal<{ key: string; name: string } | undefined>();
   const [creatingGroupKey, setCreatingGroupKey] = createSignal<string | null>(null);
   const [showScanShare, setShowScanShare] = createSignal(false);
@@ -112,6 +114,7 @@ const Sidebar: Component<Props> = (props) => {
       { label: "Rename", action: () => setRenamingId(board.id) },
       { label: "Edit", action: () => setEditingBoard(board) },
       { label: "Share", action: () => setSharingBoard(board) },
+      { label: "Clone", action: () => setCloningBoard(board) },
       { label: "Import", action: () => setImportScope({
           type: "board",
           id: board.id,
@@ -339,6 +342,8 @@ const Sidebar: Component<Props> = (props) => {
           />
         )}
       </Show>
+
+      <CloneBoardModal board={cloningBoard()} onClose={() => setCloningBoard(undefined)} />
 
       <BoardShareModal
         open={sharingBoard() !== undefined || sharingGroup() !== undefined}

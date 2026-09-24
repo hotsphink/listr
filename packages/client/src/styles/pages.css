@@ -875,7 +875,8 @@
 
 /* A fieldset only there to group radio options; it draws nothing of its own. */
 .join-keep-options,
-.share-uses {
+.share-uses,
+.clone-options {
   border: none;
   padding: 0;
   margin: 0;
@@ -888,7 +889,8 @@
   text-align: left;
 }
 
-.share-uses legend {
+.share-uses legend,
+.clone-options legend {
   padding: 0;
   margin-bottom: var(--space-2);
 }

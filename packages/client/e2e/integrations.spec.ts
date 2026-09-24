@@ -154,6 +154,66 @@ test("the context menu offers no match choice without options", async ({ page })
   await expect(page.locator(".context-menu-item", { hasText: "Choose match" })).toHaveCount(0);
 });
 
+test("cloning a board copies its integrations as asked", async ({ page }) => {
+  test.setTimeout(120_000);
+  await joinServer(page);
+  await page.locator(".sidebar-item.sidebar-new.board").click();
+  const modal = page.locator(".modal");
+  await modal.locator(".form-field input").first().fill("Originals");
+  await modal.getByRole("button", { name: "+ Add integration" }).click({ timeout: 30_000 });
+  await modal.getByRole("button", { name: "Create" }).click();
+  await modal.waitFor({ state: "hidden" });
+
+  const cloneAs = async (name: string, choice: string) => {
+    await page.locator(".sidebar-board", { hasText: "Originals" }).first().click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Clone" }).click();
+    await modal.getByLabel("Name", { exact: true }).fill(name);
+    await modal.getByRole("group", { name: "Integrations" }).getByLabel(choice).check();
+    await modal.getByRole("button", { name: "Clone", exact: true }).click();
+    await expect(page.locator(".page-header h1")).toHaveText(name);
+    await page.getByRole("button", { name: `Actions for board ${name}` }).click();
+    await page.locator(".context-menu-item", { hasText: "Edit" }).first().click();
+    await expect(modal.locator("h2")).toHaveText("Edit Board");
+  };
+  const config = modal.getByLabel("OMDb (movies and TV) config, as TOML");
+
+  await cloneAs("As Is", "Integrations as they are");
+  await expect(config).toBeVisible();
+  await expect(modal.getByLabel("Enabled")).toBeChecked();
+  await modal.getByRole("button", { name: "Cancel" }).click();
+
+  await cloneAs("Disabled", "Integrations, all disabled");
+  await expect(config).toBeVisible();
+  await expect(modal.getByLabel("Enabled")).not.toBeChecked();
+  await modal.getByRole("button", { name: "Cancel" }).click();
+
+  await cloneAs("Without", "No integrations");
+  await expect(config).toHaveCount(0);
+});
+
+test("a board whose only integration is disabled still offers to clone it", async ({ page }) => {
+  test.setTimeout(120_000);
+  await joinServer(page);
+  await page.locator(".sidebar-item.sidebar-new.board").click();
+  const modal = page.locator(".modal");
+  await modal.locator(".form-field input").first().fill("Paused");
+  await modal.getByRole("button", { name: "+ Add integration" }).click({ timeout: 30_000 });
+  await modal.getByLabel("Enabled").uncheck();
+  await modal.getByRole("button", { name: "Create" }).click();
+  await modal.waitFor({ state: "hidden" });
+
+  await page.locator(".sidebar-board", { hasText: "Paused" }).first().click({ button: "right" });
+  await page.locator(".context-menu-item", { hasText: "Clone" }).click();
+  await expect(modal.getByLabel("Integrations as they are")).toBeChecked();
+  await modal.getByRole("button", { name: "Clone", exact: true }).click();
+  await expect(page.locator(".page-header h1")).toHaveText("Clone of Paused");
+
+  await page.getByRole("button", { name: "Actions for board Clone of Paused" }).click();
+  await page.locator(".context-menu-item", { hasText: "Edit" }).first().click();
+  await expect(modal.getByLabel("OMDb (movies and TV) config, as TOML")).toBeVisible();
+  await expect(modal.getByLabel("Enabled")).not.toBeChecked();
+});
+
 test("a title with no match shows the not-found badge", async ({ page }) => {
   test.setTimeout(120_000);
   await joinServer(page);

@@ -15,7 +15,7 @@ test.describe("sidebar board context menu", () => {
 
     const menu = page.locator(".context-menu");
     await expect(menu).toBeVisible();
-    await expect(menu.locator(".context-menu-item")).toHaveCount(6);
+    await expect(menu.locator(".context-menu-item")).toHaveText(["Rename", "Edit", "Share", "Clone", "Import", "Export", "Delete"]);
   });
 
   test("context menu closes on Escape", async ({ page }) => {
