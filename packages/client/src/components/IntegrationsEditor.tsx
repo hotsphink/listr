@@ -1,6 +1,7 @@
 import { type Component, For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { parse as parseToml } from "smol-toml";
 import { addMissingSettings, type AttributeDefinition, type Integration, type IntegrationInfo } from "@listr/shared";
+import { boardAttributeMaps } from "../utils/integrationConfig.js";
 
 interface Props {
   integrations: Integration[];
@@ -22,15 +23,20 @@ interface Row {
 
 let nextUid = 0;
 
-/** The TOML parse error for a config, or null when it parses. */
+/** What's wrong with a config: a TOML parse error, or a bad attribute map. Null when it's fine. */
 export function tomlError(text: string | undefined): string | null {
   if (!text) return null;
+  let parsed: Record<string, unknown>;
   try {
-    parseToml(text);
-    return null;
+    parsed = parseToml(text) as Record<string, unknown>;
   } catch (err) {
-    return err instanceof Error ? err.message.split("\n")[0] : String(err);
+    return "TOML error: " + (err instanceof Error ? err.message.split("\n")[0] : String(err));
   }
+  const map = parsed.attributes;
+  if (map === undefined) return null;
+  if (typeof map !== "object" || map === null || Array.isArray(map)) return "attributes must map value keys to attribute keys, like attributes.imdb_rating = \"imdb\"";
+  const bad = Object.entries(map).find(([, target]) => typeof target !== "string");
+  return bad ? `attributes.${bad[0]} must be an attribute key in quotes, or "" to leave the value out` : null;
 }
 
 const IntegrationsEditor: Component<Props> = (props) => {
@@ -94,7 +100,13 @@ const IntegrationsEditor: Component<Props> = (props) => {
           const row = () => (last = rows().find((r) => r.uid === uid) ?? last)!;
           const module = () => info(row().value.integration_id);
           const error = () => tomlError(row().value.config);
-          const missingAttrs = () => (module()?.attributes ?? []).filter((a) => !props.schema.some((s) => s.key === a.key));
+          // The module's attributes the board lacks, under the keys the row's map sends them to.
+          const missingAttrs = () => {
+            const map = boardAttributeMaps({ integrations: [row().value] })[row().value.integration_id] ?? {};
+            return (module()?.attributes ?? [])
+              .map((a) => ({ ...a, key: map[a.key] ?? a.key }))
+              .filter((a, i, all) => a.key !== "" && !props.schema.some((s) => s.key === a.key) && all.findIndex((b) => b.key === a.key) === i);
+          };
           return (
             <div class="integration-entry">
               <div class="control-row">
@@ -154,7 +166,7 @@ const IntegrationsEditor: Component<Props> = (props) => {
                   spellcheck={false}
                 />
                 <Show when={error()}>
-                  <div class="field-error" role="alert">TOML error: {error()}</div>
+                  <div class="field-error" role="alert">{error()}</div>
                 </Show>
                 <div class="control-row">
                   <button

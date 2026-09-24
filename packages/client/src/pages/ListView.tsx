@@ -23,6 +23,7 @@ import InlineAddItem, { DUMMY_ITEM_ID } from "../components/InlineAddItem.js";
 import ItemFormModal from "../components/ItemFormModal.js";
 import IntegrationChoiceModal from "../components/IntegrationChoiceModal.js";
 import { availableIntegrations } from "../store/integrationCatalog.js";
+import { boardAttributeMaps } from "../utils/integrationConfig.js";
 import MultiItemFormModal from "../components/MultiItemFormModal.js";
 import ListFormModal, { type ListFormData } from "../components/ListFormModal.js";
 import BoardFormModal, { type BoardFormData } from "../components/BoardFormModal.js";
@@ -311,16 +312,20 @@ const ListView: Component = () => {
     onCleanup(() => sub.unsubscribe());
   });
 
-  // Recompute overlays from results, item picks and the board's integration order and schema.
+  // Which board attribute each integration value fills, from the integrations' configs.
+  const attributeMapsForBoard = createMemo(() => boardAttributeMaps(board()));
+
+  // Recompute overlays from results, item picks, and the board's integration order, maps and schema.
   createEffect(() => {
     const b = board();
     const sch = schema();
+    const maps = attributeMapsForBoard();
     const byId = new Map([...itemsByList().values()].flat().map((i) => [i.id, i]));
     const next: Record<string, Overlay> = {};
     for (const [itemId, results] of resultsByItemId()) {
       const item = byId.get(itemId);
       if (!item) continue;
-      const overlay = computeOverlay(item, orderResults(results, b?.integrations), sch);
+      const overlay = computeOverlay(item, orderResults(results, b?.integrations), sch, maps);
       if (overlay) next[itemId] = overlay;
     }
     setOverlays(reconcile(next));
@@ -338,14 +343,21 @@ const ListView: Component = () => {
     return worst;
   };
 
-  /** Which integration each overlay value of the item being edited came from, by display name. */
-  const editingSources = createMemo(() => {
+  /**
+   * For the item being edited: which integration each overlay value came from,
+   * by display name, and the integration values that couldn't be shown.
+   */
+  const editingOverlayInfo = createMemo(() => {
     const item = editingItem();
     if (!item) return undefined;
-    const resolved = resolveOverlay(item, orderResults(resultsByItemId().get(item.id) ?? [], board()?.integrations), schema());
+    const resolved = resolveOverlay(item, orderResults(resultsByItemId().get(item.id) ?? [], board()?.integrations), schema(), attributeMapsForBoard());
     if (!resolved) return undefined;
     const names = new Map(availableIntegrations().map((m) => [m.id, m.name]));
-    return Object.fromEntries(Object.entries(resolved.sources).map(([key, id]) => [key, names.get(id) ?? id]));
+    const name = (id: string) => names.get(id) ?? id;
+    return {
+      sources: Object.fromEntries(Object.entries(resolved.sources).map(([key, id]) => [key, name(id)])),
+      unshown: resolved.unshown.map((u) => ({ ...u, source: name(u.integration_id) })),
+    };
   });
 
   /** The item as readers see it, with integration values overlaid. */
@@ -1419,12 +1431,12 @@ const ListView: Component = () => {
               schema={schema()}
               initial={editingItem()}
               overlay={editingItem() ? overlays[editingItem()!.id] : undefined}
-              overlaySources={editingSources()}
+              overlaySources={editingOverlayInfo()?.sources}
+              unshown={editingOverlayInfo()?.unshown}
             />
 
             <IntegrationChoiceModal
               item={pickingItem()}
-              current={pickingItem() ? overlays[pickingItem()!.id] : undefined}
               results={pickingItem() ? orderResults(resultsByItemId().get(pickingItem()!.id) ?? [], board()?.integrations) : []}
               onClose={() => setPickingItemId(null)}
               onPick={handlePick}

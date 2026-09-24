@@ -1074,6 +1074,9 @@ describe("sync server: integrations", () => {
     const { ws, ok } = await connectReady([]);
     expect(ok.integrations).toEqual([expect.objectContaining({ id: "omdb", active: false })]);
     expect(ok.integrations[0].config_template).toContain("refresh_days");
+    // Every value the module produces can be mapped to a board attribute.
+    expect(ok.integrations[0].config_template).toContain('# attributes.imdb_rating = "imdb_rating"');
+    expect(ok.integrations[0].config_template).toContain('# attributes.rotten_tomatoes = "rotten_tomatoes"');
     ws.close();
   });
 

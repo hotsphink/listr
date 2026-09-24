@@ -216,6 +216,21 @@ describe("IntegrationRunner", () => {
     expect(results().filter((r) => r.integration_id === "fake" && r.status === "complete")).toHaveLength(1);
   });
 
+  it("lets a cascaded module read another's value under the board's mapped key", async () => {
+    const reader = new FakeModule("reader", ["score"], (_item, effective) =>
+      effective.attributes.released !== undefined ? { released: effective.attributes.released } : null);
+    db.upsertEntity("board", board([
+      { integration_id: "fake", enabled: true, config: 'attributes.year = "released"' },
+      { integration_id: "reader", enabled: true },
+    ], ["released", "score"]) as any, KEY);
+    fake.auto = () => ({ status: "complete", attribute_values: { year: 1999 } });
+    reader.auto = (ctx) => ({ status: "complete", attribute_values: { score: Number(ctx.inputs.released) + 1 } });
+    const runner = makeRunner([fake, reader]);
+    runner.onItemChanged("i1");
+    await runner.idle();
+    expect(result("i1", "reader")!.attribute_values).toEqual({ score: 2000 });
+  });
+
   it("waits for the next UTC day once the daily limit is reached", async () => {
     fake.auto = () => ({ status: "complete", attribute_values: {} });
     const runner = makeRunner([fake], { fake: { daily_limit: 1 } });

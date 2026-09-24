@@ -1,6 +1,6 @@
 import { parse as parseToml } from "smol-toml";
 import {
-  coerceValue, computeOverlay, orderResults, withOverlay,
+  attributeMapTemplate, attributeMaps, coerceValue, computeOverlay, orderResults, withOverlay,
   type Board, type Integration, type IntegrationResult, type Item, type List,
 } from "@listr/shared";
 import type { IntegrationModule, IntegrationRunResult } from "./integrations/types.js";
@@ -129,7 +129,7 @@ export class IntegrationRunner {
         id: m.id,
         name: m.name,
         attributes: m.attributes,
-        config_template: m.configTemplate,
+        config_template: m.configTemplate + attributeMapTemplate(m.attributes.map((a) => a.key)),
         active: m.isActive(this.settings(m)),
       }));
   }
@@ -465,10 +465,14 @@ export class IntegrationRunner {
     return ctx ? module.inputsOf(ctx.item, this.effectiveFor(module, ctx), config) : null;
   }
 
-  /** The item with every other module's overlay applied. A module never reads its own output. */
+  /**
+   * The item with every other module's overlay applied, under the board's
+   * attribute keys. A module never reads its own output.
+   */
   private effectiveFor(module: IntegrationModule, ctx: { item: Item; board: Board; results: IntegrationResult[] }): Item {
     const others = ctx.results.filter((r) => r.integration_id !== module.id);
-    return withOverlay(ctx.item, computeOverlay(ctx.item, orderResults(others, ctx.board.integrations), ctx.board.schema ?? []));
+    const maps = attributeMaps(ctx.board.integrations, parseToml);
+    return withOverlay(ctx.item, computeOverlay(ctx.item, orderResults(others, ctx.board.integrations), ctx.board.schema ?? [], maps));
   }
 
   // -- Budget --------------------------------------------------------------

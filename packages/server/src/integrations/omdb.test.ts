@@ -9,7 +9,11 @@ const item = (over: Partial<Item> = {}): Item => ({
   id: "i1", list_id: "l1", title: "matrix", after_id: null, created_at: 1, updated_at: 1, attributes: {}, ...over,
 });
 
-const MATRIX = { Response: "True", imdbID: "tt0133093", Title: "The Matrix", Year: "1999", Genre: "Action, Sci-Fi", imdbRating: "8.7", imdbVotes: "2,000,000", Runtime: "136 min", Rated: "N/A", Type: "movie" };
+const MATRIX = {
+  Response: "True", imdbID: "tt0133093", Title: "The Matrix", Year: "1999", Genre: "Action, Sci-Fi", imdbRating: "8.7",
+  imdbVotes: "2,000,000", Runtime: "136 min", Rated: "N/A", Type: "movie",
+  Ratings: [{ Source: "Internet Movie Database", Value: "8.7/10" }, { Source: "Rotten Tomatoes", Value: "83%" }],
+};
 const SEARCH = {
   Response: "True",
   Search: [
@@ -39,12 +43,12 @@ async function run(it: Item, answers: Record<string, unknown>, config: Record<st
 
 describe("OmdbIntegration.inputsOf", () => {
   it("prefers a user-set imdb_id", () => {
-    expect(omdb.inputsOf(item({ attributes: { imdb_id: "tt1" } }), item(), {})).toEqual({ imdb_id: "tt1", type: "" });
+    expect(omdb.inputsOf(item({ attributes: { imdb_id: "tt1" } }), item(), {})).toEqual({ imdb_id: "tt1", type: "", v: 2 });
   });
   it("searches on a released title's stored query, not the overlay", () => {
     const it = item({ title: "", choices: { imdb_id: { value: "tt1", options_key: "k", query: { title: "matrix" } } } });
     const effective = { ...it, title: "The Matrix" };
-    expect(omdb.inputsOf(it, effective, {})).toEqual({ title: "matrix", pick: { value: "tt1", options_key: "k" }, type: "" });
+    expect(omdb.inputsOf(it, effective, {})).toEqual({ title: "matrix", pick: { value: "tt1", options_key: "k" }, type: "", v: 2 });
   });
   it("has nothing to look up without a title or id", () => {
     expect(omdb.inputsOf(item({ title: "" }), item(), {})).toBeNull();
@@ -66,6 +70,8 @@ describe("OmdbIntegration.run", () => {
     expect(out.choices?.imdb_id.releases).toEqual(["title"]);
     expect(out.attribute_values).toMatchObject({ imdb_id: "tt0133093", title: "The Matrix", year: "1999", imdb_rating: "8.7" });
     expect(out.attribute_values).not.toHaveProperty("rated");
+    expect(out.attribute_values.rotten_tomatoes).toBe("83");
+    expect(out.attribute_values.runtime_minutes).toBe("136");
   });
 
   it("is ambiguous when several titles match and none was picked", async () => {

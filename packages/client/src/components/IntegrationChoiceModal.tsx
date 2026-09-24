@@ -1,5 +1,5 @@
 import { type Component, For, Show, createMemo } from "solid-js";
-import type { IntegrationChoice, IntegrationResult, Item, Overlay } from "@listr/shared";
+import type { IntegrationChoice, IntegrationResult, Item } from "@listr/shared";
 import Modal from "./Modal.js";
 
 interface Props {
@@ -7,8 +7,6 @@ interface Props {
   item: Item | undefined;
   /** The item's results, in priority order. */
   results: IntegrationResult[];
-  /** The item's overlay, to mark the option that currently shows. */
-  current?: Overlay;
   onClose: () => void;
   onPick: (attr: string, choice: IntegrationChoice, value: string) => void;
 }
@@ -21,13 +19,11 @@ const IntegrationChoiceModal: Component<Props> = (props) => {
     const r = withChoices.find((x) => x.status === "ambiguous") ?? withChoices[0];
     if (!r) return null;
     const [attr, choice] = Object.entries(r.choices!)[0];
-    return { attr, choice };
+    return { attr, choice, chosen: r.attribute_values[attr] };
   });
 
-  const isCurrent = (attr: string, value: string) => {
-    const shown = props.item?.attributes[attr] ?? props.current?.[attr];
-    return shown === value;
-  };
+  // The option the result settled on, by the integration's own key, so a board mapping doesn't hide it.
+  const isCurrent = (value: string) => pending()?.chosen === value;
 
   return (
     <Modal open={props.item !== undefined && pending() !== null} onClose={props.onClose}>
@@ -43,11 +39,11 @@ const IntegrationChoiceModal: Component<Props> = (props) => {
                 <button
                   type="button"
                   class="move-to-list-item"
-                  aria-current={isCurrent(p().attr, option.value) ? "true" : undefined}
+                  aria-current={isCurrent(option.value) ? "true" : undefined}
                   onClick={() => props.onPick(p().attr, p().choice, option.value)}
                 >
                   {option.label}
-                  <Show when={isCurrent(p().attr, option.value)}>
+                  <Show when={isCurrent(option.value)}>
                     <span class="field-hint"> (current)</span>
                   </Show>
                 </button>

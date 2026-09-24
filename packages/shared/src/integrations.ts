@@ -78,43 +78,124 @@ export function orderResults(results: IntegrationResult[], integrations: Integra
 }
 
 /**
- * The winning integration value for each attribute of one item, and the
- * integration each came from. The overlay holds values even for attributes the
- * user has set, since user values are read live and win in effectiveValue.
- * Return null when nothing applies.
+ * Per integration, which board attribute each of its values fills, from the
+ * `attributes` table of its TOML config. A value mapped to "" is left out, and
+ * an unmapped value fills the attribute with its own key.
+ */
+export type AttributeMaps = Record<string, Record<string, string>>;
+
+/**
+ * Read each integration's attribute map from its config. `parse` is the
+ * caller's TOML parser. A config that doesn't parse maps nothing.
+ */
+export function attributeMaps(integrations: Integration[] | undefined, parse: (text: string) => unknown): AttributeMaps {
+  const maps: AttributeMaps = {};
+  for (const cfg of integrations ?? []) {
+    if (!cfg.config) continue;
+    let table: unknown;
+    try {
+      table = (parse(cfg.config) as Record<string, unknown>)?.attributes;
+    } catch {
+      continue;
+    }
+    if (!table || typeof table !== "object") continue;
+    const map: Record<string, string> = {};
+    for (const [key, target] of Object.entries(table as Record<string, unknown>)) {
+      if (typeof target === "string") map[key] = target;
+    }
+    maps[cfg.integration_id] = map;
+  }
+  return maps;
+}
+
+/** An integration value the overlay couldn't show, and why. */
+export interface UnshownValue {
+  integration_id: string;
+  /** The integration's own key for the value. */
+  key: string;
+  /** The board attribute it maps to. */
+  target: string;
+  value: unknown;
+  /** No board attribute has the target key, or the value doesn't convert to that attribute's type. */
+  reason: "no_attribute" | "wrong_type";
+  /** The target attribute's type, for wrong_type. */
+  type?: AttributeType;
+}
+
+export interface ResolvedOverlay {
+  values: Overlay;
+  /** The integration each value came from, by board attribute key. */
+  sources: Record<string, string>;
+  unshown: UnshownValue[];
+}
+
+/**
+ * The winning integration value for each board attribute of one item, the
+ * integration each came from, and the values that couldn't be shown. The
+ * overlay holds values even for attributes the user has set, since user values
+ * are read live and win in effectiveValue. Return null when nothing applies.
  */
 export function resolveOverlay(
   item: Item,
   ordered: IntegrationResult[],
   schema: AttributeDefinition[],
-): { values: Overlay; sources: Record<string, string> } | null {
+  maps: AttributeMaps = {},
+): ResolvedOverlay | null {
   const types = new Map(schema.map((a) => [a.key, a.type]));
-  let values: Overlay | null = null;
+  const values: Overlay = {};
   const sources: Record<string, string> = {};
+  const unshown: UnshownValue[] = [];
   for (const result of ordered) {
+    const map = maps[result.integration_id] ?? {};
     for (const [key, raw] of Object.entries(result.attribute_values)) {
-      if (values && key in values) continue;
+      const target = map[key] ?? key;
+      if (target === "" || target in values) continue;
       // A pick made against a different option set is stale, so its value no longer shows.
       const choice = result.choices?.[key];
       const pick = item.choices?.[key];
       if (choice && pick && pick.options_key !== choice.options_key) continue;
       let value: unknown;
-      if (key === "title") value = typeof raw === "string" && raw !== "" ? raw : undefined;
-      else {
-        const type = types.get(key);
-        value = type ? coerceValue(raw, type) : undefined;
+      if (target === "title") {
+        value = typeof raw === "string" && raw !== "" ? raw : undefined;
+      } else {
+        const type = types.get(target);
+        if (!type) {
+          unshown.push({ integration_id: result.integration_id, key, target, value: raw, reason: "no_attribute" });
+          continue;
+        }
+        value = coerceValue(raw, type);
+        if (value === undefined) {
+          unshown.push({ integration_id: result.integration_id, key, target, value: raw, reason: "wrong_type", type });
+          continue;
+        }
       }
       if (value === undefined) continue;
-      (values ??= {})[key] = value;
-      sources[key] = result.integration_id;
+      values[target] = value;
+      sources[target] = result.integration_id;
     }
   }
-  return values ? { values, sources } : null;
+  // A value shadowed by a higher-priority integration's isn't missing, just outranked.
+  const stillUnshown = unshown.filter((u) => !(u.target in values));
+  return Object.keys(values).length || stillUnshown.length ? { values, sources, unshown: stillUnshown } : null;
 }
 
-/** The overlay values alone. See resolveOverlay. */
-export function computeOverlay(item: Item, ordered: IntegrationResult[], schema: AttributeDefinition[]): Overlay | null {
-  return resolveOverlay(item, ordered, schema)?.values ?? null;
+/** The overlay values alone, or null when there are none. See resolveOverlay. */
+export function computeOverlay(item: Item, ordered: IntegrationResult[], schema: AttributeDefinition[], maps: AttributeMaps = {}): Overlay | null {
+  const values = resolveOverlay(item, ordered, schema, maps)?.values;
+  return values && Object.keys(values).length ? values : null;
+}
+
+/**
+ * Commented-out `attributes.<key>` lines for every value a module produces, to
+ * append to its config template.
+ */
+export function attributeMapTemplate(keys: string[]): string {
+  if (!keys.length) return "";
+  return [
+    "# Board attribute each value fills, when the board's key differs. \"\" leaves the value out.",
+    ...keys.map((k) => `# attributes.${k} = "${k}"`),
+    "",
+  ].join("\n");
 }
 
 /** What a reader sees for one attribute: the user's value if set, else the overlay's. */
@@ -183,7 +264,10 @@ export function applyPick(
 // -- TOML config templates -------------------------------------------------------
 
 // A setting line, set or commented out: `key = value` or `# key = value`.
-const SETTING_RE = /^\s*#?\s*([A-Za-z0-9_-]+)\s*=/;
+// Keys may be dotted, like `attributes.year`.
+const SETTING_RE = /^\s*#?\s*([A-Za-z0-9_.-]+)\s*=/;
+// An uncommented table header, such as `[attributes]`.
+const TABLE_RE = /^\s*\[([A-Za-z0-9_.-]+)\]\s*(#.*)?$/;
 
 interface TemplateEntry {
   key: string;
@@ -208,19 +292,29 @@ function templateEntries(template: string): TemplateEntry[] {
   return entries;
 }
 
-/** Keys a TOML text mentions, whether set or commented out. */
+/**
+ * Keys a TOML text mentions, whether set or commented out, as full dotted
+ * paths: `year = 1` under `[attributes]` is `attributes.year`.
+ */
 export function mentionedSettings(text: string): Set<string> {
   const keys = new Set<string>();
+  let table = "";
   for (const line of text.split("\n")) {
+    const header = TABLE_RE.exec(line);
+    if (header) {
+      table = header[1] + ".";
+      continue;
+    }
     const m = SETTING_RE.exec(line);
-    if (m) keys.add(m[1]);
+    if (m) keys.add(table + m[1]);
   }
   return keys;
 }
 
 /**
- * Append every template setting the text doesn't mention yet, commented out
- * and with its comment from the template. Leave existing lines alone.
+ * Add every template setting the text doesn't mention yet, commented out and
+ * with its comment from the template. Leave existing lines alone. The new
+ * lines go before the first table header, if any, so they stay top-level keys.
  */
 export function addMissingSettings(text: string, template: string): string {
   const present = mentionedSettings(text);
@@ -228,6 +322,13 @@ export function addMissingSettings(text: string, template: string): string {
     .filter((e) => !present.has(e.key))
     .map((e) => e.lines.map((l) => (SETTING_RE.test(l) && !l.trim().startsWith("#") ? `# ${l.trim()}` : l)).join("\n"));
   if (!blocks.length) return text;
+  const added = blocks.join("\n\n");
+  const lines = text.split("\n");
+  const firstTable = lines.findIndex((l) => TABLE_RE.test(l));
+  if (firstTable >= 0) {
+    const before = lines.slice(0, firstTable).join("\n").replace(/\s+$/, "");
+    return (before ? before + "\n\n" : "") + added + "\n\n" + lines.slice(firstTable).join("\n");
+  }
   const base = text.replace(/\s+$/, "");
-  return (base ? base + "\n\n" : "") + blocks.join("\n\n") + "\n";
+  return (base ? base + "\n\n" : "") + added + "\n";
 }

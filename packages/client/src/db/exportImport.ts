@@ -1,5 +1,6 @@
 import { ENTITY_SCHEMA_VERSION, computeOverlay, orderResults, withOverlay, type Board, upgradeBoardRecord, upgradeListRecord, type AttributeDefinition, type FormatSpec, type Item, type List, type ViewMode } from "@listr/shared";
 import { db } from "./database.js";
+import { boardAttributeMaps } from "../utils/integrationConfig.js";
 import { syncClient } from "../sync/SyncClient.js";
 import { deleteBoard, deleteList, deleteItem, resolveChain } from "./operations.js";
 import { assetToSync, assetFromSync, registerAsset } from "../sync/assetStore.js";
@@ -119,9 +120,10 @@ export function extractReferencedAssetIds(
 async function withIntegrationValues(board: Board, items: Item[]): Promise<Item[]> {
   const results = await db.integration_results.where("item_id").anyOf(items.map((i) => i.id)).toArray();
   if (!results.length) return items;
+  const maps = boardAttributeMaps(board);
   return items.map((item) => {
     const own = orderResults(results.filter((r) => r.item_id === item.id), board.integrations);
-    return withOverlay(item, computeOverlay(item, own, board.schema));
+    return withOverlay(item, computeOverlay(item, own, board.schema, maps));
   });
 }
 

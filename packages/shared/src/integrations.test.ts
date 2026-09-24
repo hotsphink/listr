@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { AttributeDefinition, IntegrationResult, Item } from "./types.js";
 import {
-  addMissingSettings, applyPick, coerceValue, computeOverlay, effectiveValue, optionsKey, orderResults, resolveOverlay, withOverlay,
+  addMissingSettings, applyPick, attributeMaps, attributeMapTemplate, coerceValue, computeOverlay, effectiveValue, mentionedSettings,
+  optionsKey, orderResults, resolveOverlay, withOverlay,
 } from "./integrations.js";
 
 const attr = (key: string, type: AttributeDefinition["type"]): AttributeDefinition =>
@@ -54,7 +55,44 @@ describe("overlay", () => {
 
   it("records which integration each value came from", () => {
     const r = resolveOverlay(item(), [result("a", { year: 1999 }), result("b", { year: 2000, imdb_id: "tt1" })], schema);
-    expect(r).toEqual({ values: { year: 1999, imdb_id: "tt1" }, sources: { year: "a", imdb_id: "b" } });
+    expect(r).toEqual({ values: { year: 1999, imdb_id: "tt1" }, sources: { year: "a", imdb_id: "b" }, unshown: [] });
+  });
+
+  it("fills the board attribute each value is mapped to, and leaves out values mapped to nothing", () => {
+    const r = resolveOverlay(item(), [result("a", { imdb_rating: 8.7, runtime: 136, poster: "p" })], [attr("imdb", "number"), attr("duration", "duration"), attr("poster", "url")], {
+      a: { imdb_rating: "imdb", runtime: "duration", poster: "" },
+    });
+    expect(r?.values).toEqual({ imdb: 8.7, duration: 136 });
+    expect(r?.sources).toEqual({ imdb: "a", duration: "a" });
+    expect(r?.unshown).toEqual([]);
+  });
+
+  it("reports values with no attribute or of the wrong type, but not ones another integration filled", () => {
+    const r = resolveOverlay(
+      item(),
+      [result("a", { year: 1999 }), result("b", { year: 2000, imdb_rating: 8.7, votes: 7.5 })],
+      [attr("year", "integer"), attr("votes", "integer")],
+    );
+    expect(r?.values).toEqual({ year: 1999 });
+    expect(r?.unshown).toEqual([
+      { integration_id: "b", key: "imdb_rating", target: "imdb_rating", value: 8.7, reason: "no_attribute" },
+      { integration_id: "b", key: "votes", target: "votes", value: 7.5, reason: "wrong_type", type: "integer" },
+    ]);
+    expect(computeOverlay(item(), [result("a", { junk: 1 })], schema)).toBeNull();
+    expect(resolveOverlay(item(), [result("a", { junk: 1 })], schema)?.unshown).toHaveLength(1);
+  });
+
+  it("reads attribute maps from each integration's TOML, skipping configs that don't parse", () => {
+    const parse = (text: string) => {
+      if (text === "bad") throw new Error("bad");
+      return text === "mapped" ? { attributes: { imdb_rating: "imdb", junk: 3 } } : {};
+    };
+    const maps = attributeMaps([
+      { integration_id: "a", enabled: true, config: "mapped" },
+      { integration_id: "b", enabled: true, config: "bad" },
+      { integration_id: "c", enabled: true },
+    ], parse);
+    expect(maps).toEqual({ a: { imdb_rating: "imdb" } });
   });
 
   it("returns null when nothing applies", () => {
@@ -101,6 +139,21 @@ describe("optionsKey", () => {
   });
 });
 
+describe("attributeMapTemplate", () => {
+  it("lists every key commented out, under one comment", () => {
+    expect(attributeMapTemplate(["year", "imdb_id"])).toBe(
+      '# Board attribute each value fills, when the board\'s key differs. "" leaves the value out.\n# attributes.year = "year"\n# attributes.imdb_id = "imdb_id"\n',
+    );
+    expect(attributeMapTemplate([])).toBe("");
+  });
+});
+
+describe("mentionedSettings", () => {
+  it("names dotted keys and keys under a table by their full path", () => {
+    expect([...mentionedSettings('a = 1\n# attributes.year = "y"\n[attributes]\nimdb = "i"\n')]).toEqual(["a", "attributes.year", "attributes.imdb"]);
+  });
+});
+
 describe("addMissingSettings", () => {
   const template = "# Days between refreshes.\n# refresh_days = 30\n\n# Kind of title.\n# type = \"\"\n";
   it("appends missing settings with their comments", () => {
@@ -112,6 +165,13 @@ describe("addMissingSettings", () => {
     const text = "# refresh_days = 1\ntype = \"movie\"\n";
     expect(addMissingSettings(text, template)).toBe(text);
   });
+  it("adds dotted settings, and puts new lines before a table so they stay top-level", () => {
+    const tpl = "# Days.\n# refresh_days = 30\n\n# Map.\n# attributes.year = \"year\"\n# attributes.plot = \"plot\"\n";
+    expect(addMissingSettings('[attributes]\nyear = "released"\n', tpl)).toBe(
+      '# Days.\n# refresh_days = 30\n\n# attributes.plot = "plot"\n\n[attributes]\nyear = "released"\n',
+    );
+  });
+
   it("fills an empty box with the whole template", () => {
     expect(addMissingSettings("", template)).toBe(
       "# Days between refreshes.\n# refresh_days = 30\n\n# Kind of title.\n# type = \"\"\n",

@@ -5,6 +5,10 @@ import type { IntegrationModule, IntegrationRunContext, IntegrationRunResult } f
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REFRESH_DAYS = 30;
 const MAX_OPTIONS = 10;
+// Part of every run's inputs. Bump it when the module starts producing new
+// values, so existing results rerun the next time their item or board changes.
+// 2: rotten_tomatoes.
+const OUTPUT_VERSION = 2;
 // services.omdb.base_url overrides this, for tests against a fake.
 const DEFAULT_BASE_URL = "https://www.omdbapi.com/";
 
@@ -32,6 +36,7 @@ interface OmdbDetail {
   Type?: string;
   totalSeasons?: string;
   Metascore?: string;
+  Ratings?: { Source: string; Value: string }[];
 }
 
 interface OmdbSearch {
@@ -64,6 +69,7 @@ function detailValues(d: OmdbDetail): Record<string, unknown> {
     runtime_minutes: given(d.Runtime)?.match(/^(\d+)\s*min/)?.[1],
     media_type: given(d.Type),
     total_seasons: given(d.totalSeasons),
+    rotten_tomatoes: given(d.Ratings?.find((r) => r.Source === "Rotten Tomatoes")?.Value)?.match(/^(\d+)%$/)?.[1],
   };
   for (const key of Object.keys(values)) if (values[key] === undefined) delete values[key];
   return values;
@@ -94,6 +100,7 @@ export class OmdbIntegration implements IntegrationModule {
     { key: "runtime_minutes", type: "duration", label: "Runtime" },
     { key: "media_type", type: "text", label: "Type" },
     { key: "total_seasons", type: "integer", label: "Seasons" },
+    { key: "rotten_tomatoes", type: "integer", label: "Rotten Tomatoes" },
   ];
   readonly configTemplate = [
     "# Days until a lookup is refreshed, so ratings stay current.",
@@ -113,12 +120,12 @@ export class OmdbIntegration implements IntegrationModule {
   inputsOf(item: Item, _effective: Item, config: Record<string, unknown>): Record<string, unknown> | null {
     const type = typeof config.type === "string" ? config.type : "";
     const userId = item.attributes.imdb_id;
-    if (isSet(userId)) return { imdb_id: String(userId), type };
+    if (isSet(userId)) return { imdb_id: String(userId), type, v: OUTPUT_VERSION };
     const pick = item.choices?.imdb_id;
     // A title released by a pick was only a query. Search on what the user typed, never on the overlay.
     const title = isSet(item.title) ? item.title.trim() : pick?.query?.title;
     if (typeof title !== "string" || title === "") return null;
-    return { title, pick: pick ? { value: pick.value, options_key: pick.options_key } : null, type };
+    return { title, pick: pick ? { value: pick.value, options_key: pick.options_key } : null, type, v: OUTPUT_VERSION };
   }
 
   async run(ctx: IntegrationRunContext): Promise<IntegrationRunResult> {

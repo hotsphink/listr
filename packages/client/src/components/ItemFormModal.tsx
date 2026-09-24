@@ -1,7 +1,8 @@
 import { type Component, createSignal, createEffect, For, Show } from "solid-js";
-import { formatDurationShort, isSet, type AttributeDefinition, type AttributeType, type Item, type Overlay } from "@listr/shared";
+import { formatDurationShort, isSet, type AttributeDefinition, type AttributeType, type Item, type Overlay, type UnshownValue } from "@listr/shared";
 import Modal from "./Modal.js";
 import AttributeEditor, { showsPlaceholder } from "./AttributeEditor.js";
+import { ATTRIBUTE_TYPES } from "./SchemaEditor.js";
 
 interface Props {
   open: boolean;
@@ -15,6 +16,20 @@ interface Props {
   overlay?: Overlay;
   /** Display name of the integration each overlay value came from, by attribute key. */
   overlaySources?: Record<string, string>;
+  /** Integration values the board has no fitting attribute for, with their integration's display name. */
+  unshown?: (UnshownValue & { source: string })[];
+}
+
+const MAX_UNSHOWN_VALUE = 40;
+
+/** Why one integration value isn't shown, as a sentence fragment. */
+function describeUnshown(u: UnshownValue): string {
+  let value = Array.isArray(u.value) ? u.value.join(", ") : String(u.value);
+  if (value.length > MAX_UNSHOWN_VALUE) value = value.slice(0, MAX_UNSHOWN_VALUE - 3) + "...";
+  const mapped = u.target !== u.key ? `, mapped to ${u.target},` : "";
+  if (u.reason === "no_attribute") return `${u.key} (${value})${mapped} has no ${u.target} attribute on this board`;
+  const type = ATTRIBUTE_TYPES.find((t) => t.value === u.type)?.label ?? u.type;
+  return `${u.key} (${value})${mapped} doesn't fit the ${type} attribute ${u.target}`;
 }
 
 let seq = 0;
@@ -51,6 +66,12 @@ const ItemFormModal: Component<Props> = (props) => {
     !isSet(typeof own === "string" ? own.trim() : own) && isSet(props.overlay?.[key]) ? props.overlay![key] : undefined;
 
   const source = (key: string) => props.overlaySources?.[key] ?? "an integration";
+
+  const unshownBySource = () => {
+    const groups = new Map<string, UnshownValue[]>();
+    for (const u of props.unshown ?? []) groups.set(u.source, [...(groups.get(u.source) ?? []), u]);
+    return [...groups.entries()];
+  };
 
   const handleSubmit = (e: Event) => {
     e.preventDefault();
@@ -102,6 +123,17 @@ const ItemFormModal: Component<Props> = (props) => {
               </div>
             );
           }}
+        </For>
+        <For each={unshownBySource()}>
+          {([source, values]) => (
+            <div class="field-hint integration-note integration-unshown" role="note">
+              <div>{source} values this board doesn't show:</div>
+              <ul>
+                <For each={values}>{(u) => <li>{describeUnshown(u)}.</li>}</For>
+              </ul>
+              <div>Add those attributes, or map the values to existing ones in the board's integration config.</div>
+            </div>
+          )}
         </For>
         <div class="actions">
           {props.initial && props.onDelete && (

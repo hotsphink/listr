@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { addItemToList, addSyncEndpoint, clearDatabase, createListInBoard } from "./helpers.js";
+import { addItemToList, addSyncEndpoint, clearDatabase, createBoard, createListInBoard } from "./helpers.js";
 import { startTestSyncServer, type TestSyncServer } from "./syncServer.js";
 
 /**
@@ -20,7 +20,10 @@ const SEARCH = {
   ],
 };
 const DETAILS: Record<string, object> = {
-  tt0133093: { Response: "True", imdbID: "tt0133093", Title: "The Matrix", Year: "1999", Type: "movie" },
+  tt0133093: {
+    Response: "True", imdbID: "tt0133093", Title: "The Matrix", Year: "1999", Type: "movie", Runtime: "136 min", imdbRating: "8.7",
+    Ratings: [{ Source: "Rotten Tomatoes", Value: "83%" }],
+  },
   tt0234215: { Response: "True", imdbID: "tt0234215", Title: "The Matrix Reloaded", Year: "2003", Type: "movie", Genre: "Action, Sci-Fi" },
 };
 
@@ -83,7 +86,7 @@ test("an ambiguous OMDb match is resolved with the picker, and the official titl
   await expect(config).toHaveValue(/refresh_days = 7\n\n# Only match.*\n# type = ""/);
 
   await modal.getByRole("button", { name: "Add OMDb (movies and TV) attributes to schema" }).click();
-  await expect(modal.locator(".schema-entry")).toHaveCount(16);
+  await expect(modal.locator(".schema-entry")).toHaveCount(17);
   await modal.getByRole("button", { name: "Create" }).click();
   await modal.waitFor({ state: "hidden" });
 
@@ -234,6 +237,75 @@ test("a board whose only integration is disabled still offers to clone it", asyn
   await page.locator(".context-menu-item", { hasText: "Edit" }).first().click();
   await expect(modal.getByLabel("OMDb (movies and TV) config, as TOML")).toBeVisible();
   await expect(modal.getByLabel("Enabled")).not.toBeChecked();
+});
+
+test("values for attributes the board names differently show once mapped, with no new lookups", async ({ page }) => {
+  test.setTimeout(120_000);
+  await joinServer(page);
+  // Attribute keys that differ from OMDb's imdb_rating, rotten_tomatoes and runtime_minutes.
+  await createBoard(page, "Renamed", [
+    { key: "imdb", label: "IMDB Rating", type: "number" },
+    { key: "rotten", label: "Rotten Tomatoes Rating", type: "number" },
+    { key: "duration", label: "Duration", type: "duration" },
+    { key: "imdb_id", label: "IMDB ID" },
+  ]);
+  const modal = page.locator(".modal");
+  const editBoard = async () => {
+    await page.locator(".sidebar-board", { hasText: "Renamed" }).first().click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Edit" }).first().click();
+    await expect(modal.locator("h2")).toHaveText("Edit Board");
+  };
+  await editBoard();
+  await modal.getByRole("button", { name: "+ Add integration" }).click({ timeout: 30_000 });
+  await modal.getByRole("button", { name: "Save" }).click();
+  await modal.waitFor({ state: "hidden" });
+  await createListInBoard(page, "Queue", "Renamed");
+
+  // One exact match, so OMDb settles on it by itself.
+  await addItemToList(page, "The Matrix");
+  const item = page.locator(".list-view-item:not(.inline-add-item)").first();
+  await expect(item).toContainText("tt0133093", { timeout: 30_000 });
+  await expect(item).not.toContainText("8.7");
+
+  // The editor says which values aren't shown and why.
+  await item.dblclick();
+  const unshown = modal.locator(".integration-unshown");
+  await expect(unshown).toContainText("OMDb (movies and TV) values this board doesn't show:");
+  await expect(unshown).toContainText("imdb_rating (8.7) has no imdb_rating attribute on this board.");
+  await expect(unshown).toContainText("rotten_tomatoes (83) has no rotten_tomatoes attribute on this board");
+  await expect(unshown).toContainText("runtime_minutes (136) has no runtime_minutes attribute on this board");
+  await modal.getByRole("button", { name: "Cancel" }).click();
+
+  // Map them in the board's config. The values then show without another call to OMDb.
+  const calls = requests.length;
+  await editBoard();
+  const config = modal.getByLabel("OMDb (movies and TV) config, as TOML");
+  await expect(config).toHaveValue(/# attributes\.imdb_rating = "imdb_rating"/);
+  await config.fill('attributes.imdb_rating = "imdb"\nattributes.rotten_tomatoes = "rotten"\nattributes.runtime_minutes = "duration"\nattributes.plot = ""\n');
+  await modal.getByRole("button", { name: "Save" }).click();
+  await modal.waitFor({ state: "hidden" });
+  await expect(item).toContainText("8.7");
+  await expect(item).toContainText("83");
+
+  await item.dblclick();
+  await expect(modal.getByLabel("IMDB Rating", { exact: true })).toHaveAttribute("placeholder", "8.7");
+  await expect(modal.getByLabel("Rotten Tomatoes Rating", { exact: true })).toHaveAttribute("placeholder", "83");
+  await expect(unshown).not.toContainText("imdb_rating");
+  await expect(unshown).not.toContainText("plot");
+  await modal.getByRole("button", { name: "Cancel" }).click();
+  expect(requests.length).toBe(calls);
+});
+
+test("the board editor rejects an attribute map value that isn't a key", async ({ page }) => {
+  test.setTimeout(120_000);
+  await joinServer(page);
+  await page.locator(".sidebar-item.sidebar-new.board").click();
+  const modal = page.locator(".modal");
+  await modal.locator(".form-field input").first().fill("Bad Map");
+  await modal.getByRole("button", { name: "+ Add integration" }).click({ timeout: 30_000 });
+  await modal.getByLabel("OMDb (movies and TV) config, as TOML").fill("attributes.imdb_rating = 3\n");
+  await expect(modal.getByRole("alert")).toContainText('attributes.imdb_rating must be an attribute key in quotes');
+  await expect(modal.getByRole("button", { name: "Create" })).toBeDisabled();
 });
 
 test("a title with no match shows the not-found badge", async ({ page }) => {

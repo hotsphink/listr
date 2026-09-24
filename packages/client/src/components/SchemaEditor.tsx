@@ -2,7 +2,7 @@ import { type Component, For, Index, Show, Switch, Match } from "solid-js";
 import type { AttributeDefinition, AttributeType } from "@listr/shared";
 import { parseDecimal } from "./AttributeEditor.js";
 
-const ATTRIBUTE_TYPES: { value: AttributeType; label: string }[] = [
+export const ATTRIBUTE_TYPES: { value: AttributeType; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "number", label: "Number" },
   { value: "integer", label: "Whole Number" },
