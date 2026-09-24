@@ -46,6 +46,7 @@ optional, and a missing file just means defaults.
 | `services.model_families` | What a group of models shares, one entry per family. `name` identifies it, `models` lists the models it covers, and `api_key` plus a `url` template are the usual shared contents, though any key may go here. |
 | `services.vision.tiers` | Which models answer a screenshot import, as a list of tiers. Tiers are tried in order, and the models within one tier all run at once. With none configured, `/api/import` answers 503 and everything else works fine. |
 | `allow_bootstrap` | Let the first client to connect claim an empty server as root. See below. `LISTR_ALLOW_BOOTSTRAP` overrides it. |
+| (environment only) | `LISTR_EXTRA_ORIGINS` adds comma-separated origins to the built-in list of web origins allowed to connect. The e2e harness uses it for its own app port. |
 | `services.<id>` | Settings for the integration with that id, such as `services.omdb.api_key`. Any key other than `model_families` and `vision` names an integration, and only integrations named here are offered to clients. `max_concurrent` (default 4) caps runs at once, `timeout_ms` (default 10000) caps each external call, and `daily_limit` and `daily_limit_per_key` cap external calls per UTC day overall and per sync key. OMDb defaults those limits to 1000 and 500. How often results refresh is set per board, in the integration's own config. |
 | `integrations` | Older spelling of the same per-integration settings, keyed by integration id. `services` wins where both name one id. |
 

@@ -20,6 +20,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { E2E_APP_URL } from "./ports.js";
 
 const E2E_DIR = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = join(E2E_DIR, "../../server");
@@ -30,7 +31,7 @@ const SERVER_ENTRY = join(SERVER_DIR, "src/index.ts");
 /** Where the *app* is served. The join link carries no route, so this only has
  * to be a page that loads the client; the recipient resolves the sync server
  * themselves. Matches playwright.config.ts's baseURL. */
-const APP_URL = "https://localhost:3000/";
+const APP_URL = `${E2E_APP_URL}/`;
 
 export interface GrantOptions {
   kind: "invite" | "device" | "share" | "guest";
@@ -91,7 +92,8 @@ export async function startTestSyncServer(): Promise<TestSyncServer> {
   // JoinPage's manual-host form applies when it derives `secure`.
   writeFileSync(configPath, `tls: false\nport: ${port}\ndb_path: ${dataDir}\n`);
 
-  const env = { ...process.env, LISTR_VARIANT: "dev", LISTR_CONFIG_PATH: configPath };
+  // The app runs on the e2e port, which the server's built-in origin list doesn't include.
+  const env = { ...process.env, LISTR_VARIANT: "dev", LISTR_CONFIG_PATH: configPath, LISTR_EXTRA_ORIGINS: E2E_APP_URL };
 
   // The server comes up first, because it is what creates the database and
   // runs the migrations; auth-cli refuses to operate on a file that is not

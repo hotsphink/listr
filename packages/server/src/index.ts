@@ -110,6 +110,8 @@ const ALLOWED_ORIGINS = new Set([
   "https://finkripper.local",
   "http://localhost:3000",
   "https://localhost:3000",
+  // Comma-separated extras, such as the e2e harness's app origin.
+  ...(process.env.LISTR_EXTRA_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean),
 ]);
 
 function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
