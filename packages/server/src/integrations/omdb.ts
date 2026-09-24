@@ -5,6 +5,8 @@ import type { IntegrationModule, IntegrationRunContext, IntegrationRunResult } f
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REFRESH_DAYS = 30;
 const MAX_OPTIONS = 10;
+// services.omdb.base_url overrides this, for tests against a fake.
+const DEFAULT_BASE_URL = "https://www.omdbapi.com/";
 
 // OMDb reports a miss as an error string with Response "False".
 const NOT_FOUND_ERRORS = new Set(["Movie not found!", "Series or episode not found!", "Incorrect IMDb ID.", "Too many results."]);
@@ -163,7 +165,8 @@ export class OmdbIntegration implements IntegrationModule {
     const apiKey = ctx.serverConfig.api_key;
     if (!apiKey) throw new Error("OMDb API key not configured");
     const type = typeof ctx.inputs.type === "string" && ctx.inputs.type ? `&type=${encodeURIComponent(ctx.inputs.type)}` : "";
-    const resp = await ctx.fetch(`https://www.omdbapi.com/?apikey=${encodeURIComponent(apiKey)}&${query}${type}`);
+    const base = typeof ctx.serverConfig.base_url === "string" ? ctx.serverConfig.base_url : DEFAULT_BASE_URL;
+    const resp = await ctx.fetch(`${base}?apikey=${encodeURIComponent(apiKey)}&${query}${type}`);
     const data = await resp.json() as T;
     if (data.Response === "True" || NOT_FOUND_ERRORS.has(data.Error ?? "")) return data;
     throw new Error(data.Error ?? `OMDb HTTP ${resp.status}`);

@@ -50,6 +50,8 @@ export interface TestSyncServer {
    * can seed it into `sync_endpoints.last_server_id` to stand for a client
    * that has spoken to this server before. */
   serverId: string;
+  /** Everything the server has printed so far, for diagnosing a failure. */
+  output(): string;
   /** Issue a grant and return its join link as a path, ready for page.goto. */
   issueGrant(options: GrantOptions): string;
   stop(): Promise<void>;
@@ -80,7 +82,12 @@ async function waitForServer(port: number, timeoutMs: number): Promise<void> {
   }
 }
 
-export async function startTestSyncServer(): Promise<TestSyncServer> {
+export interface TestSyncServerOptions {
+  /** YAML appended to the server's config file, such as a `services:` section. */
+  extraConfig?: string;
+}
+
+export async function startTestSyncServer(options: TestSyncServerOptions = {}): Promise<TestSyncServer> {
   const dir = mkdtempSync(join(tmpdir(), "listr-e2e-sync-"));
   const dataDir = join(dir, "data");
   mkdirSync(dataDir);
@@ -90,7 +97,7 @@ export async function startTestSyncServer(): Promise<TestSyncServer> {
   // tls: false keeps the certs out of it. The page is https, but a ws:// URL
   // to loopback is not treated as mixed content, which is the same rule
   // JoinPage's manual-host form applies when it derives `secure`.
-  writeFileSync(configPath, `tls: false\nport: ${port}\ndb_path: ${dataDir}\n`);
+  writeFileSync(configPath, `tls: false\nport: ${port}\ndb_path: ${dataDir}\n${options.extraConfig ?? ""}`);
 
   // The app runs on the e2e port, which the server's built-in origin list doesn't include.
   const env = { ...process.env, LISTR_VARIANT: "dev", LISTR_CONFIG_PATH: configPath, LISTR_EXTRA_ORIGINS: E2E_APP_URL };
@@ -137,6 +144,8 @@ export async function startTestSyncServer(): Promise<TestSyncServer> {
     port,
     rootUserId,
     serverId,
+
+    output: () => output.join(""),
 
     issueGrant(options: GrantOptions): string {
       const args = [
